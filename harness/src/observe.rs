@@ -41,6 +41,11 @@ pub struct Observation {
     pub results: Vec<ActionResult>,
 }
 
+/// A URL without its fragment: the page, whatever part of it the address points into.
+pub fn without_fragment(url: &str) -> &str {
+    url.split('#').next().unwrap_or(url)
+}
+
 /// The window onto the page, in screenshot pixels.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

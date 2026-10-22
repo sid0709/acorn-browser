@@ -298,6 +298,9 @@ impl Session {
         if result.error.is_some() {
             return Vec::new();
         }
+        for exp in &result.failed {
+            self.unverified(&exp.label, exp.y);
+        }
         result.failed.iter().map(|exp| format!("{:?} does not show {:?} (screen {})", exp.label, exp.value, result.zone)).collect()
     }
 }

@@ -10,13 +10,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::action::{self, Action, Kind};
 use crate::change;
+use crate::focus;
 use crate::memory::{self, Turn};
 use crate::gate::Gate;
 use crate::model::{self, REPLY_SCHEMA_NAME};
 use crate::prompt;
 use crate::recover;
 use crate::review;
-use crate::observe::{ActionResult, Observation};
+use crate::observe::{self, ActionResult, Observation};
 use crate::ports::{Browser, Decider, Error, ErrorKind, Message, Model, Role, Usage};
 use crate::profile::Profile;
 use crate::session::Session;
@@ -126,6 +127,11 @@ pub struct Step {
     /// Asks the browser to make its next look a survey of the whole page.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub survey: bool,
+    /// With `survey`, where the fields still to fill lie on the page (screenshot pixels from its
+    /// top): the survey adds a screen centred on one that none of its screens shows clear of the
+    /// window's edges.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub survey_focus: Vec<f64>,
 }
 
 /// Why a step could not be answered.
@@ -212,7 +218,14 @@ impl Agent {
     pub fn step(&self, id: &str, obs: Observation) -> Result<Step, StepError> {
         let session = self.session(id).ok_or(StepError::NoSession)?;
         let mut s = session.lock().unwrap();
-        self.step_locked(&mut s, obs)
+        let url = obs.url.clone();
+        let mut step = self.step_locked(&mut s, obs)?;
+        // Every answer that asks for a survey says where the fields still to fill lie, however
+        // it was made (the model, a check).
+        if step.survey {
+            step.survey_focus = s.survey_focus(&url);
+        }
+        Ok(step)
     }
 
     fn step_locked(&self, s: &mut Session, obs: Observation) -> Result<Step, StepError> {
@@ -240,6 +253,11 @@ impl Agent {
             self.start_review(s, shot);
         }
         self.collect_reviews(s);
+        // A click that reached no control: the model is told where it clicked and how to aim, and
+        // the field goes to the survey that follows.
+        let unreached = focus::unreached_notes(&obs.results, &s.by_id);
+        s.notes.extend(unreached);
+        s.note_unreached_fields(&obs.results);
         // What happened to every action sent since the model last looked, which may be several
         // batches of one plan.
         let results: Vec<ActionResult> = s.carried.iter().cloned().chain(obs.results.iter().cloned()).collect();
@@ -373,6 +391,8 @@ impl Agent {
         // What this plan fills in, by zone, for the reviews of its zones.
         s.plan_gen += 1;
         s.expect = review::expectations_of(&planned, &obs);
+        s.expect_url = observe::without_fragment(&obs.url).to_string();
+        s.plan_scroll_y = obs.viewport.scroll_y;
         // The line that stands for the step once it is folded names the whole plan, not only
         // the batch that goes out first.
         let summary = memory::summary_line(number, &s.message, &planned);
@@ -403,6 +423,7 @@ impl Agent {
             usage: s.usage,
             dropped,
             survey,
+            survey_focus: Vec::new(),
         };
         if step.status != Status::Working {
             s.finished = true;
@@ -483,7 +504,7 @@ fn first_failure(results: &[ActionResult]) -> String {
 /// Ends the run with no actions: the person is told why and what they can do.
 fn end(s: &mut Session, status: Status, message: String, stop: StopInfo) -> Step {
     s.finished = true;
-    Step { status, message, stop: Some(stop), actions: Vec::new(), number: s.step, usage: s.usage, dropped: Vec::new(), survey: false }
+    Step { status, message, stop: Some(stop), number: s.step, usage: s.usage, ..Default::default() }
 }
 
 #[cfg(test)]

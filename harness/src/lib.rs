@@ -9,6 +9,7 @@
 
 pub mod action;
 pub mod change;
+pub mod focus;
 pub mod gate;
 pub mod map;
 pub mod mark;

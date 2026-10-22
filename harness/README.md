@@ -50,7 +50,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 24. Async review, no waiting
 - [x] 25. Abort the batch on a wrong fill
 - [x] 26. Point check before a plan
-- [ ] 27. Missed-click guidance
+- [x] 27. Missed-click guidance
 
 **F. To-do and map**
 - [ ] 28. To-do list from the survey

@@ -7,6 +7,7 @@ use std::time::{Instant, SystemTime};
 
 use crate::action::{Action, Batch};
 use crate::change::Signature;
+use crate::focus::FocusTarget;
 use crate::memory::Memory;
 use crate::observe::{ActionResult, Viewport};
 use crate::ports::Usage;
@@ -62,9 +63,14 @@ pub struct Session {
     /// The window as the last look saw it, to check the pictures sent mid-batch against.
     pub viewport: Viewport,
     /// Counts the plans the model has made, and what the current one fills in, by zone, for the
-    /// reviews of its zones.
+    /// reviews of its zones; the page it was made on, and where the page was scrolled then.
     pub plan_gen: u32,
     pub expect: BTreeMap<u32, Vec<Expectation>>,
+    pub expect_url: String,
+    pub plan_scroll_y: f64,
+    /// The fields whose fill did not verify since the model last looked, for the survey that
+    /// follows to show whole.
+    pub retry: Vec<FocusTarget>,
     /// The reviews running beside the plan, shared with the threads that run them.
     pub reviews: Arc<Reviews>,
     /// Asks for the next look to be a survey: something was found that the model must see the
@@ -110,6 +116,9 @@ impl Session {
             viewport: Viewport::default(),
             plan_gen: 0,
             expect: BTreeMap::new(),
+            expect_url: String::new(),
+            plan_scroll_y: 0.0,
+            retry: Vec::new(),
             reviews: Arc::new(Reviews::default()),
             survey_again: false,
             last_signature: None,
