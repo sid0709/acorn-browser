@@ -110,6 +110,19 @@ pub struct StopInfo {
     pub action: String,
 }
 
+/// A question for the person, which the run goes on without an answer to: the model chose the
+/// most likely answer meanwhile. An answer, when one comes (`Agent::answer`), reaches the model
+/// as a message, and it redoes what the answer changes.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Question {
+    /// Given by the harness, as `q<step>`.
+    pub id: String,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
+}
+
 /// The harness's answer to one look: what to do next, and how the run stands.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -144,6 +157,10 @@ pub struct Step {
     /// map says nothing is settled any more.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settled: Option<SettledMap>,
+    /// The questions asked of the person this step. The run goes on; an answer comes back
+    /// through `Agent::answer`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub questions: Vec<Question>,
 }
 
 /// Why a step could not be answered.
@@ -249,6 +266,28 @@ impl Agent {
         if !text.is_empty() {
             s.inbox.push(model::clip_text(text, MAX_MESSAGE_CHARS));
         }
+        Ok(())
+    }
+
+    /// Takes the person's answer to a question the run asked (`Step::questions`). It reaches the
+    /// model as a message, naming the question, so it redoes what the answer changes. An answer
+    /// to a question the run did not ask is a plain message.
+    pub fn answer(&self, id: &str, question_id: &str, text: &str) -> Result<(), StepError> {
+        let session = self.session(id).ok_or(StepError::NoSession)?;
+        let mut s = session.lock().unwrap();
+        s.touch();
+        let text = model::clip_text(text.trim(), MAX_MESSAGE_CHARS);
+        if text.is_empty() {
+            return Ok(());
+        }
+        let message = match s.questions.iter_mut().find(|q| q.id == question_id) {
+            Some(question) => {
+                question.answer = Some(text.clone());
+                format!("Answer to your question {:?}: {text}", question.text)
+            }
+            None => text,
+        };
+        s.inbox.push(message);
         Ok(())
     }
 
@@ -440,6 +479,17 @@ impl Agent {
         }
         s.message = reply.message.trim().to_string();
         s.note_fields(&reply, &obs);
+        // A question for the person is kept, and sent with the step; the run goes on. One the
+        // run already asked, in the same words, is not asked again.
+        let questions: Vec<Question> = reply
+            .question
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty() && !s.questions.iter().any(|asked| asked.text == *text))
+            .map(|text| Question { id: format!("q{number}"), text: model::clip_text(text, MAX_MESSAGE_CHARS), answer: None })
+            .into_iter()
+            .collect();
+        s.questions.extend(questions.iter().cloned());
 
         let screens: Vec<f64> = obs.survey.iter().map(|screen| screen.scroll_y).collect();
         let (planned, mut dropped) = model::check_actions(number, std::mem::take(&mut reply.actions), &obs.viewport, self.config.plan_limit(checks), &screens);
@@ -501,6 +551,7 @@ impl Agent {
             survey_focus: Vec::new(),
             fields: Vec::new(),
             settled: None,
+            questions,
         };
         if step.status != Status::Working {
             s.finished = true;
@@ -706,6 +757,21 @@ mod tests {
         assert_eq!(step.status, Status::Stuck);
         assert_eq!(step.stop.unwrap().reason, StopReason::RepeatedFailure);
         assert_eq!(first_failure(&[refused("a"), ActionResult { id: "b".into(), ok: true, ..Default::default() }]), "");
+    }
+
+    #[test]
+    fn a_question_is_sent_with_the_step_and_its_answer_reaches_the_model() {
+        let reply = r#"{"status":"working","message":"","question":"Which card should I use, the blue one or the red one?","actions":[{"kind":"wait","ms":100}]}"#;
+        let (model, seen) = crate::testing::Replying::new(reply);
+        let agent = Agent::new(Config { max_stale: 100, ..Config::default() }, model);
+        let id = agent.start(Task::new("buy a kettle"), Profile::default());
+        let step = agent.step(&id, look()).unwrap();
+        assert_eq!(step.questions, vec![Question { id: "q1".into(), text: "Which card should I use, the blue one or the red one?".into(), answer: None }]);
+        agent.answer(&id, "q1", "the blue one").unwrap();
+        agent.answer(&id, "q9", "and no gift wrap").unwrap();
+        assert!(agent.step(&id, look()).unwrap().questions.is_empty());
+        let seen = seen.lock().unwrap();
+        assert!(seen[1].contains("- Answer to your question \"Which card should I use, the blue one or the red one?\": the blue one\n- and no gift wrap\n"), "{}", seen[1]);
     }
 
     #[test]

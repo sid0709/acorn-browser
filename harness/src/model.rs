@@ -40,6 +40,10 @@ pub struct Reply {
     /// Why the run ends for the person, when it does.
     #[serde(default)]
     pub stop: Option<StopInfo>,
+    /// A question for the person that the run can go on without an answer to; `None` when there
+    /// is none this step.
+    #[serde(default)]
+    pub question: Option<String>,
     /// The screens of a survey the model will not need to come back to; `None` when the look is
     /// not a survey.
     #[serde(default)]
@@ -322,6 +326,7 @@ pub fn reply_schema(survey: bool, checks: bool) -> Value {
         ("status", json!({"type": "string", "enum": ["working", "done", "need_person", "stuck"]})),
         ("message", string.clone()),
         ("stop", stop),
+        ("question", null_string.clone()),
     ];
     if survey {
         // The screens the model will not come back to: asked last of the notes, before the plan.

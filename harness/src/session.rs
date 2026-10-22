@@ -14,6 +14,7 @@ use crate::observe::{ActionResult, Viewport};
 use crate::ports::Usage;
 use crate::profile::Profile;
 use crate::review::{Expectation, Reviews};
+use crate::run::Question;
 use crate::task::Task;
 use crate::todo::FieldState;
 
@@ -38,6 +39,8 @@ pub struct Session {
     pub stopped_for: String,
     /// What the person wrote since the model last looked, oldest first.
     pub inbox: Vec<String>,
+    /// Every question the run asked the person, with the answer when one came.
+    pub questions: Vec<Question>,
     /// The model's own notes to itself, carried from step to step and shown with each look.
     pub memo: String,
     /// The model's latest line for the person, shown again while its plan runs on without it.
@@ -126,6 +129,7 @@ impl Session {
             finished: false,
             stopped_for: String::new(),
             inbox: Vec::new(),
+            questions: Vec::new(),
             memo: String::new(),
             message: String::new(),
             usage: Usage::default(),

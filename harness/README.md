@@ -60,7 +60,7 @@ One step, one commit. Build must pass; tests stay minimal.
 
 **G. Intervention and report**
 - [x] 32. User message queue
-- [ ] 33. Question queue (keep going)
+- [x] 33. Question queue (keep going)
 - [ ] 34. End report
 - [ ] 35. Trace, tracesum-compatible
 
