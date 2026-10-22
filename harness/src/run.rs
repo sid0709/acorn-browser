@@ -364,6 +364,11 @@ impl Agent {
         // A run that did not turn surveys on is not told they exist; one the model asks for anyway is ignored.
         let survey_asked = survey_asked && s.task.survey;
         action::inherit_zones(&mut planned);
+        // Each labelled point of a plan made from a survey is checked against its label before
+        // the plan runs; a doubt is told to the model, never acted on.
+        if reply.status == Status::Working {
+            self.check_plan_points(s, &planned, &obs);
+        }
         self.gate.apply(s, &obs, &mut reply, &mut planned, &mut dropped);
         // What this plan fills in, by zone, for the reviews of its zones.
         s.plan_gen += 1;

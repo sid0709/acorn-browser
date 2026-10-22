@@ -49,7 +49,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 23. Skip the model when the checkpoint holds
 - [x] 24. Async review, no waiting
 - [x] 25. Abort the batch on a wrong fill
-- [ ] 26. Point check before a plan
+- [x] 26. Point check before a plan
 - [ ] 27. Missed-click guidance
 
 **F. To-do and map**

@@ -246,6 +246,11 @@ fn plural(n: u32) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
+/// A count with its noun: "1 field", "2 fields".
+pub(crate) fn count(n: usize, noun: &str) -> String {
+    if n == 1 { format!("1 {noun}") } else { format!("{n} {noun}s") }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

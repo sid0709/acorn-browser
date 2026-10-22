@@ -19,6 +19,7 @@ use crate::change;
 use crate::model;
 use crate::observe::{Observation, Viewport, ZoneShot};
 use crate::ports::{Decider, Decision, Part, Question, Usage};
+use crate::prompt;
 use crate::run::{Agent, StepError};
 use crate::session::Session;
 
@@ -252,7 +253,7 @@ impl Agent {
         }
         let mut note = format!(
             "The harness looked at each part of the page right after it was filled in and found {} that {} not show what was planned: {}. Put them right in one answer; the screenshots you are given show the page as it is.",
-            count(wrong.len(), "field"),
+            prompt::count(wrong.len(), "field"),
             if wrong.len() == 1 { "does" } else { "do" },
             wrong.join("; ")
         );
@@ -299,11 +300,6 @@ impl Session {
         }
         result.failed.iter().map(|exp| format!("{:?} does not show {:?} (screen {})", exp.label, exp.value, result.zone)).collect()
     }
-}
-
-/// A count with its noun: "1 field", "2 fields".
-fn count(n: usize, noun: &str) -> String {
-    if n == 1 { format!("1 {noun}") } else { format!("{n} {noun}s") }
 }
 
 #[cfg(test)]
