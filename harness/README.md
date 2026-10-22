@@ -45,7 +45,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 21. Context overflow: compact and retry
 
 **E. Verification**
-- [ ] 22. Checkpoint: expected screen after a batch
+- [x] 22. Checkpoint: expected screen after a batch
 - [ ] 23. Skip the model when the checkpoint holds
 - [ ] 24. Async review, no waiting
 - [ ] 25. Abort the batch on a wrong fill
