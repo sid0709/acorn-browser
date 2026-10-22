@@ -12,8 +12,9 @@ use crate::change;
 use crate::gate::Gate;
 use crate::model::{self, REPLY_SCHEMA_NAME};
 use crate::prompt;
+use crate::recover;
 use crate::observe::{ActionResult, Observation};
-use crate::ports::{Browser, Error, Message, Model, ModelRequest, Role, Usage};
+use crate::ports::{Browser, Error, Message, Model, Role, Usage};
 use crate::profile::Profile;
 use crate::session::Session;
 use crate::task::{StopReason, Task};
@@ -248,12 +249,15 @@ impl Agent {
             Message { role: Role::System, text: prompt::system_prompt(&s.task, &s.profile, &self.config), images: Vec::new(), cache: true },
             Message { role: Role::User, text, images, cache: false },
         ];
-        let response = self
-            .model
-            .complete(ModelRequest { messages, schema_name: REPLY_SCHEMA_NAME.to_string(), schema: model::reply_schema(s.task.survey, self.config.checks) })
-            .map_err(StepError::Model)?;
-        s.usage.add(response.usage);
-        let mut reply = model::parse_reply(&response.content).map_err(StepError::Reply)?;
+        let answer = recover::ask(self.model.as_ref(), messages, REPLY_SCHEMA_NAME, model::reply_schema(s.task.survey, self.config.checks)).map_err(|e| match e {
+            recover::AskError::Model(err) => StepError::Model(err),
+            recover::AskError::Reply { why, usage } => {
+                s.usage.add(usage);
+                StepError::Reply(why)
+            }
+        })?;
+        s.usage.add(answer.usage);
+        let mut reply = answer.reply;
 
         // Only a step the model answered counts: a retry of a failed call sends the same screen.
         s.step = number;
@@ -377,7 +381,7 @@ fn end(s: &mut Session, status: Status, message: String, stop: StopInfo) -> Step
 mod tests {
     use super::*;
     use crate::observe::Viewport;
-    use crate::ports::ModelResponse;
+    use crate::ports::{ModelRequest, ModelResponse};
 
     struct Fixed(&'static str);
 
