@@ -14,6 +14,7 @@ use crate::observe::{ActionResult, Observation};
 use crate::ports::{Decider, Decision, Error, Part, Question, Verdicts};
 use crate::run::{Agent, Status, Step};
 use crate::session::Session;
+use crate::trace::{CheckTrace, ModelCall};
 
 /// The keys the checker's three answers come back under.
 pub const ASK_MATCHES: &str = "matches";
@@ -29,7 +30,8 @@ pub struct Verdict {
 }
 
 /// The thresholds that turn a verdict into an outcome.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Thresholds {
     /// At or above this, the screen matches what was expected.
     pub match_at: f64,
@@ -58,6 +60,17 @@ pub enum Outcome {
     Wait,
     /// Give the screenshot to the driving model, for this reason.
     Look(String),
+}
+
+impl Outcome {
+    /// The outcome as the trace names it.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Outcome::Continue => "continue",
+            Outcome::Wait => "wait",
+            Outcome::Look(_) => "model",
+        }
+    }
 }
 
 /// Asks the checker whether a screenshot shows what the model expected, whether something is in
@@ -193,17 +206,36 @@ impl Agent {
             self.abandon(s, "The screen did not change after them, so it is not what you expected.");
             return None;
         }
-        let (verdict, verdicts) = match look(decider.as_ref(), &obs.screenshot, &expect) {
+        let started = std::time::SystemTime::now();
+        let looked = look(decider.as_ref(), &obs.screenshot, &expect);
+        s.pending_calls.push(ModelCall::decision(&format!("expected: {expect}"), looked.as_ref().map(|(_, verdicts)| verdicts), started));
+        let (verdict, verdicts) = match looked {
             Ok(looked) => looked,
-            Err(_) => {
+            Err(err) => {
                 // A checker that fails is not worth asking again this run; the model looks instead.
                 s.checks_off = true;
+                s.last_check = Some(CheckTrace { expect, outcome: Outcome::Look(String::new()).name().to_string(), error: err.to_string(), ..Default::default() });
                 self.abandon(s, "The screen could not be checked, so the rest of your plan did not run.");
                 return None;
             }
         };
         s.usage.add(verdicts.usage);
-        match judge(verdict, &self.config.checkpoint, s.load_waits) {
+        let outcome = judge(verdict, &self.config.checkpoint, s.load_waits);
+        s.last_check = Some(CheckTrace {
+            expect: expect.clone(),
+            matches: verdict.matches,
+            blocked: verdict.blocked,
+            loading: verdict.loading,
+            outcome: outcome.name().to_string(),
+            reason: match &outcome {
+                Outcome::Look(reason) => reason.clone(),
+                _ => String::new(),
+            },
+            model: verdicts.model.clone(),
+            latency_ms: verdicts.latency.as_millis() as i64,
+            error: String::new(),
+        });
+        match outcome {
             Outcome::Continue => {
                 s.carried = results.to_vec();
                 s.stale = 0;

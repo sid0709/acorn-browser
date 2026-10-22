@@ -2,12 +2,12 @@
 //! (here), retry a transport failure with backoff (`retry_delay`), and, later, compact when the
 //! context window is exceeded.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde_json::Value;
 
 use crate::model::{self, Reply};
-use crate::ports::{Error, ErrorKind, Message, Model, ModelRequest, Role, Usage};
+use crate::ports::{Error, ErrorKind, Message, Model, ModelRequest, ModelResponse, Role, Usage};
 
 /// The first backoff, doubled each retry.
 pub const RETRY_BASE: Duration = Duration::from_millis(500);
@@ -61,7 +61,8 @@ pub fn with_retries<T>(
 /// parse.
 pub const MAX_ASK_ATTEMPTS: usize = 2;
 
-/// A model answer that parsed, with the raw text and what the attempts cost together.
+/// A model answer that parsed, with the raw text, what the attempts cost together, and the
+/// calls made, for the trace.
 #[derive(Clone, Debug)]
 pub struct Answer {
     pub reply: Reply,
@@ -69,16 +70,39 @@ pub struct Answer {
     pub usage: Usage,
     /// How many requests were sent (a repair makes two).
     pub attempts: u32,
+    pub calls: Vec<Call>,
 }
 
-/// Why `ask` gave up.
+/// One request to the model, as it was sent and answered, for the trace.
+#[derive(Clone, Debug)]
+pub struct Call {
+    pub messages: Vec<Sent>,
+    /// Marks the second call, which tells the model its first answer was refused.
+    pub repair: bool,
+    pub started: SystemTime,
+    pub response: Result<ModelResponse, Error>,
+}
+
+/// One message as it was sent, with its images counted rather than kept.
+#[derive(Clone, Debug)]
+pub struct Sent {
+    pub role: Role,
+    pub text: String,
+    pub images: usize,
+}
+
+/// Why `ask` gave up. Each carries the calls made, for the trace.
 #[derive(Debug)]
 pub enum AskError {
     /// The model call itself failed; `recover` does not retry transport here, the client does.
-    Model(Error),
+    Model { error: Error, calls: Vec<Call> },
     /// The reply did not parse, even after a repair. Carries the last parse error and the cost
     /// so far, so the caller can still charge it.
-    Reply { why: String, usage: Usage },
+    Reply { why: String, usage: Usage, calls: Vec<Call> },
+}
+
+fn sent(messages: &[Message]) -> Vec<Sent> {
+    messages.iter().map(|m| Sent { role: m.role, text: m.text.clone(), images: m.images.len() }).collect()
 }
 
 /// Asks the model for one step and reads its reply. When the reply does not parse, the model is
@@ -88,14 +112,19 @@ pub enum AskError {
 pub fn ask(model: &(dyn Model + Send + Sync), mut messages: Vec<Message>, schema_name: &str, schema: Value) -> Result<Answer, AskError> {
     let mut usage = Usage::default();
     let mut last = String::new();
+    let mut calls = Vec::new();
     for attempt in 0..MAX_ASK_ATTEMPTS {
-        let response = model
-            .complete(ModelRequest { messages: messages.clone(), schema_name: schema_name.to_string(), schema: schema.clone() })
-            .map_err(AskError::Model)?;
+        let started = SystemTime::now();
+        let response = model.complete(ModelRequest { messages: messages.clone(), schema_name: schema_name.to_string(), schema: schema.clone() });
+        calls.push(Call { messages: sent(&messages), repair: attempt > 0, started, response: response.clone() });
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => return Err(AskError::Model { error, calls }),
+        };
         usage.add(response.usage);
         match model::parse_reply(&response.content) {
             Ok(reply) => {
-                return Ok(Answer { reply, content: response.content.trim().to_string(), usage, attempts: attempt as u32 + 1 });
+                return Ok(Answer { reply, content: response.content.trim().to_string(), usage, attempts: attempt as u32 + 1, calls });
             }
             Err(why) => {
                 last = why.clone();
@@ -112,7 +141,7 @@ pub fn ask(model: &(dyn Model + Send + Sync), mut messages: Vec<Message>, schema
             }
         }
     }
-    Err(AskError::Reply { why: last, usage })
+    Err(AskError::Reply { why: last, usage, calls })
 }
 
 #[cfg(test)]

@@ -23,6 +23,7 @@ use crate::prompt;
 use crate::run::{Agent, StepError};
 use crate::session::Session;
 use crate::todo::FieldStatus;
+use crate::trace::ModelCall;
 
 /// The most characters of a value a review asks about.
 pub const MAX_EXPECT_CHARS: usize = 120;
@@ -55,6 +56,8 @@ pub struct ReviewResult {
     pub failed: Vec<Expectation>,
     pub usage: Usage,
     pub error: Option<String>,
+    /// The call, for the trace.
+    pub call: ModelCall,
 }
 
 /// What the browser does with the rest of its batch once a zone's photo is taken in.
@@ -309,7 +312,11 @@ fn review_zone(decider: &(dyn Decider + Send + Sync), shot: ZoneShot, exps: Vec<
     let questions = exps.iter().enumerate().map(|(i, exp)| (expect_key(i + 1), expect_question(exp))).collect();
     let state = vec![Part::Text("A screenshot of part of a page that has just been filled in.".to_string()), Part::Image(shot.screenshot)];
     let mut result = ReviewResult { zone: shot.zone, plan_gen, asked: exps.clone(), ..Default::default() };
-    match decider.decide(Decision { state, questions }) {
+    let labels: Vec<String> = exps.iter().enumerate().map(|(i, exp)| format!("{} {:?}", i + 1, exp.label)).collect();
+    let started = std::time::SystemTime::now();
+    let answered = decider.decide(Decision { state, questions });
+    result.call = ModelCall::decision(&format!("what zone {} shows: {}", shot.zone, labels.join(", ")), answered.as_ref(), started);
+    match answered {
         Ok(verdicts) => {
             result.usage = verdicts.usage;
             for (i, exp) in exps.into_iter().enumerate() {
@@ -329,8 +336,9 @@ impl Session {
     /// where a field found not showing what was planned goes back to empty and the rest are
     /// ticked off. What it found wrong is kept for the note of the next look. A review that
     /// failed found nothing: the survey that follows shows the zone.
-    pub(crate) fn apply_review(&mut self, result: ReviewResult) {
+    pub(crate) fn apply_review(&mut self, mut result: ReviewResult) {
         self.usage.add(result.usage);
+        self.pending_calls.push(std::mem::take(&mut result.call));
         if result.plan_gen == self.plan_gen {
             self.reviewed.insert(result.zone, result.error.is_none() && result.failed.is_empty());
         }

@@ -17,6 +17,7 @@ use crate::review::{Expectation, Reviews};
 use crate::run::{Question, Status, StopInfo};
 use crate::task::Task;
 use crate::todo::FieldState;
+use crate::trace::{CheckTrace, ModelCall};
 
 /// One application of the harness to one task, from the first look to the end.
 #[derive(Debug)]
@@ -27,6 +28,12 @@ pub struct Session {
     pub created: SystemTime,
     /// When the run last did anything, for expiring idle sessions.
     pub touched: Instant,
+    /// When the harness got the look being answered, for the trace's timing.
+    pub step_started: SystemTime,
+    /// The decision model's calls made since the last trace entry, which carries them; and the
+    /// last checkpoint as the trace shows it, until an entry carries it.
+    pub pending_calls: Vec<ModelCall>,
+    pub last_check: Option<CheckTrace>,
     /// Counts every step asked, the failed ones included; names the trace entries.
     pub seq: u32,
     /// Counts the steps the model took.
@@ -128,6 +135,9 @@ impl Session {
             profile,
             created: SystemTime::now(),
             touched: Instant::now(),
+            step_started: SystemTime::now(),
+            pending_calls: Vec::new(),
+            last_check: None,
             seq: 0,
             step: 0,
             step_limit,

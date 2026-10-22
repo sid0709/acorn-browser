@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
@@ -26,10 +26,12 @@ use crate::report::Report;
 use crate::session::Session;
 use crate::task::{StopReason, Task};
 use crate::todo::FieldState;
+use crate::trace::{self, ModelCall, SessionTrace, StartTrace, StepTrace, Tracer};
 use crate::verify::Thresholds;
 
 /// The knobs of the loop.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Config {
     /// The most actions one reply may plan.
     pub max_actions: usize,
@@ -202,12 +204,14 @@ pub struct Agent {
     /// plan filled in; `None` turns both off. Shared with the threads the reviews run on.
     pub(crate) decider: Option<Arc<dyn Decider + Send + Sync>>,
     gate: Gate,
+    /// Writes every step to disk, when a trace folder is set (`with_trace_dir`).
+    pub(crate) trace: Option<Tracer>,
     sessions: Mutex<HashMap<String, Arc<Mutex<Session>>>>,
 }
 
 impl Agent {
     pub fn new(config: Config, model: Box<dyn Model + Send + Sync>) -> Self {
-        Agent { config, model, decider: None, gate: Gate, sessions: Mutex::new(HashMap::new()) }
+        Agent { config, model, decider: None, gate: Gate, trace: None, sessions: Mutex::new(HashMap::new()) }
     }
 
     /// Wires in the decision model that checks the screen after each batch of a plan, so the
@@ -226,6 +230,23 @@ impl Agent {
     pub fn start(&self, task: Task, profile: Profile) -> String {
         let session = Session::new(task, profile);
         let id = session.id.clone();
+        if let Some(tracer) = &self.trace {
+            let system = prompt::system_prompt(&session.task, &session.profile, &self.config, self.checks_available());
+            let info = SessionTrace {
+                started: trace::rfc3339(session.created),
+                start: StartTrace {
+                    url: session.task.start_url.as_deref().unwrap_or(""),
+                    goal: &session.task.goal,
+                    survey: session.task.survey,
+                    max_steps: session.task.persistence.max_steps,
+                },
+                model: self.model.name(),
+                screen_model: self.decider.as_ref().map(|d| d.name().to_string()).unwrap_or_default(),
+                config: &self.config,
+            };
+            // A trace that cannot be written never stops a run.
+            let _ = tracer.record_session(&id, &system, &info);
+        }
         self.sessions.lock().unwrap().insert(id.clone(), Arc::new(Mutex::new(session)));
         id
     }
@@ -323,17 +344,19 @@ impl Agent {
             return Err(StepError::SessionOver);
         }
         s.seq += 1;
+        s.step_started = SystemTime::now();
         if !obs.viewport.has_size() {
-            return Err(StepError::BadObservation("the viewport has no size".to_string()));
+            return Err(self.refuse(s, &obs, "the viewport has no size".to_string()));
         }
-        let (sig, width, height) = change::signature(&obs.screenshot).map_err(StepError::BadObservation)?;
+        let (sig, width, height) = match change::signature(&obs.screenshot) {
+            Ok(read) => read,
+            Err(why) => return Err(self.refuse(s, &obs, why)),
+        };
         // The model measures coordinates in the image it is shown. If the image is not the size
         // the viewport says, every point it gives would land somewhere else on the page.
         if width.abs_diff(obs.viewport.width) > change::SIZE_TOLERANCE || height.abs_diff(obs.viewport.height) > change::SIZE_TOLERANCE {
-            return Err(StepError::BadObservation(format!(
-                "the screenshot is {width}x{height} pixels but the viewport says {}x{}",
-                obs.viewport.width, obs.viewport.height
-            )));
+            let why = format!("the screenshot is {width}x{height} pixels but the viewport says {}x{}", obs.viewport.width, obs.viewport.height);
+            return Err(self.refuse(s, &obs, why));
         }
         s.viewport = obs.viewport;
         s.see_page(&obs.url);
@@ -356,8 +379,10 @@ impl Agent {
         // batches of one plan.
         let results: Vec<ActionResult> = s.carried.iter().cloned().chain(obs.results.iter().cloned()).collect();
         if s.at_step_limit() {
-            return Ok(end(
+            return Ok(self.end_run(
                 s,
+                &obs,
+                0,
                 Status::Stuck,
                 format!("The run reached its limit of {} steps.", s.step_limit),
                 StopInfo {
@@ -375,8 +400,10 @@ impl Agent {
             stale = s.stale + 1;
         }
         if stale >= self.config.max_stale {
-            return Ok(end(
+            return Ok(self.end_run(
                 s,
+                &obs,
+                stale,
                 Status::Stuck,
                 format!("The page did not change for {stale} steps in a row."),
                 StopInfo {
@@ -394,6 +421,15 @@ impl Agent {
         // The model's plan may go on without it: when the checker confirms the screen after a
         // batch, the next batch goes out here and the model is not asked.
         if let Some(step) = self.continue_plan(s, &obs, &results, &sig, stale) {
+            let mut entry = entry_for(s, &obs, stale);
+            entry.step = s.step;
+            entry.source = trace::SOURCE_CHECK.to_string();
+            entry.check = s.last_check.take();
+            entry.status = step.status;
+            entry.message = step.message.clone();
+            entry.dropped = step.dropped.clone();
+            entry.usage = s.usage;
+            self.record(s, entry, &obs.screenshot, &obs.survey, &step.actions, Vec::new());
             return Ok(step);
         }
         // A plan refused whole, the same way, step after step, is a loop the model cannot see out
@@ -408,8 +444,10 @@ impl Agent {
             1
         };
         if self.config.max_failed_steps > 0 && streak >= self.config.max_failed_steps {
-            return Ok(end(
+            return Ok(self.end_run(
                 s,
+                &obs,
+                stale,
                 Status::Stuck,
                 format!("The same action failed {streak} steps in a row: {failure}"),
                 StopInfo {
@@ -449,6 +487,7 @@ impl Agent {
         // The prompt may still be too long for the model; one overflow folds the history to its
         // most recent turn and the step is tried once more.
         let mut compacted_for_overflow = false;
+        let mut calls: Vec<ModelCall> = Vec::new();
         let answer = loop {
             let mut messages = vec![Message { role: Role::System, text: system.clone(), cache: true, ..Default::default() }];
             messages.extend(s.memory.history(self.config.keep_images));
@@ -457,16 +496,28 @@ impl Agent {
                 last.cache = true;
             }
             messages.push(Message { role: Role::User, text: text.clone(), images: images.clone(), cache: false });
+            let history_tokens = s.memory.budget_used(system.len() / 4);
+            let driving = |made: &[recover::Call]| made.iter().map(|call| ModelCall::driving(call, history_tokens, self.config.history_tokens)).collect::<Vec<_>>();
             match recover::ask(self.model.as_ref(), messages, REPLY_SCHEMA_NAME, schema.clone()) {
-                Ok(answer) => break answer,
-                Err(recover::AskError::Model(err)) if err.kind == ErrorKind::ContextWindow && !compacted_for_overflow && !s.memory.is_empty() => {
+                Ok(answer) => {
+                    calls.extend(driving(&answer.calls));
+                    break answer;
+                }
+                Err(recover::AskError::Model { error, calls: made }) if error.kind == ErrorKind::ContextWindow && !compacted_for_overflow && !s.memory.is_empty() => {
+                    calls.extend(driving(&made));
                     compacted_for_overflow = true;
                     s.memory.fold_to(1);
                     continue;
                 }
-                Err(recover::AskError::Model(err)) => return Err(StepError::Model(err)),
-                Err(recover::AskError::Reply { why, usage }) => {
+                Err(recover::AskError::Model { error, calls: made }) => {
+                    calls.extend(driving(&made));
+                    self.fail(s, &obs, stale, error.to_string(), calls);
+                    return Err(StepError::Model(error));
+                }
+                Err(recover::AskError::Reply { why, usage, calls: made }) => {
                     s.usage.add(usage);
+                    calls.extend(driving(&made));
+                    self.fail(s, &obs, stale, why.clone(), calls);
                     return Err(StepError::Reply(why));
                 }
             }
@@ -570,7 +621,67 @@ impl Agent {
             s.finished = true;
             s.stopped_for = step.message.clone();
         }
+        let mut entry = entry_for(s, &obs, stale);
+        entry.step = number;
+        entry.observation = reply.observation.clone();
+        entry.memo = s.memo.clone();
+        entry.status = step.status;
+        entry.message = step.message.clone();
+        entry.stop = step.stop.clone();
+        entry.dropped = step.dropped.clone();
+        entry.check = s.last_check.take();
+        entry.usage = s.usage;
+        self.record(s, entry, &obs.screenshot, &obs.survey, &step.actions, calls);
         Ok(step)
+    }
+
+    /// Refuses a look the harness cannot read, and says so in the trace.
+    fn refuse(&self, s: &mut Session, obs: &Observation, why: String) -> StepError {
+        let mut entry = entry_for(s, obs, 0);
+        entry.error = format!("bad observation: {why}");
+        self.record(s, entry, &obs.screenshot, &[], &[], Vec::new());
+        StepError::BadObservation(why)
+    }
+
+    /// Records a step the model did not answer: the calls made and why it failed.
+    fn fail(&self, s: &mut Session, obs: &Observation, stale: u32, error: String, calls: Vec<ModelCall>) {
+        let mut entry = entry_for(s, obs, stale);
+        entry.error = error;
+        entry.usage = s.usage;
+        self.record(s, entry, &obs.screenshot, &obs.survey, &[], calls);
+    }
+
+    /// Ends the run with no actions: the person is told why and what they can do, and the trace
+    /// why the harness gave up.
+    fn end_run(&self, s: &mut Session, obs: &Observation, stale: u32, status: Status, message: String, stop: StopInfo) -> Step {
+        s.finished = true;
+        s.stopped_for = message.clone();
+        let mut entry = entry_for(s, obs, stale);
+        entry.status = status;
+        entry.message = message.clone();
+        entry.stop = Some(stop.clone());
+        self.record(s, entry, &obs.screenshot, &obs.survey, &[], Vec::new());
+        Step { status, message, stop: Some(stop), number: s.step, usage: s.usage, ..Default::default() }
+    }
+}
+
+/// The entry of the trace for a look, before the step fills in what it decided.
+fn entry_for(s: &Session, obs: &Observation, stale: u32) -> StepTrace {
+    StepTrace {
+        seq: s.seq,
+        step: s.step + 1,
+        at: trace::rfc3339(SystemTime::now()),
+        url: obs.url.clone(),
+        title: obs.title.clone(),
+        viewport: obs.viewport,
+        focus: obs.focus.clone(),
+        notes: obs.notes.clone(),
+        results: obs.results.clone(),
+        stale,
+        survey_screens: obs.survey.len(),
+        memo: s.memo.clone(),
+        usage: s.usage,
+        ..Default::default()
     }
 }
 
@@ -644,13 +755,6 @@ fn first_failure(results: &[ActionResult]) -> String {
         }
     }
     first
-}
-
-/// Ends the run with no actions: the person is told why and what they can do.
-fn end(s: &mut Session, status: Status, message: String, stop: StopInfo) -> Step {
-    s.finished = true;
-    s.stopped_for = message.clone();
-    Step { status, message, stop: Some(stop), number: s.step, usage: s.usage, ..Default::default() }
 }
 
 #[cfg(test)]

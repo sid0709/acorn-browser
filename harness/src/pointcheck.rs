@@ -21,6 +21,7 @@ use crate::prompt;
 use crate::review::LIKELY;
 use crate::run::Agent;
 use crate::session::Session;
+use crate::trace::ModelCall;
 
 /// The start of the key of the question about a numbered point: `p1`, `p2`, ...
 const ASK_POINT_PREFIX: &str = "p";
@@ -66,6 +67,7 @@ fn zone_image(obs: &Observation, zone: u32) -> &str {
 struct ZoneCheck {
     verdicts: Vec<(String, f64)>,
     usage: Usage,
+    call: ModelCall,
 }
 
 impl Agent {
@@ -89,6 +91,7 @@ impl Agent {
         let mut doubted = BTreeSet::new();
         for check in checks {
             s.usage.add(check.usage);
+            s.pending_calls.push(check.call);
             doubted.extend(check.verdicts.into_iter().filter(|(_, p)| *p < LIKELY).map(|(id, _)| id));
         }
         if doubted.is_empty() {
@@ -101,18 +104,26 @@ impl Agent {
 
 /// Asks the decision model about the labelled points on one screen.
 fn check_zone_points(decider: &(dyn Decider + Send + Sync), zone: u32, actions: &[Action], obs: &Observation) -> ZoneCheck {
-    let Ok(marked) = mark::mark_screenshot(zone_image(obs, zone), actions) else { return ZoneCheck::default() };
+    let prompt = format!("points on screen {zone}: {}", actions.iter().enumerate().map(|(i, a)| format!("{} {:?}", i + 1, a.label)).collect::<Vec<_>>().join(", "));
+    let Ok(marked) = mark::mark_screenshot(zone_image(obs, zone), actions) else {
+        let call = ModelCall { kind: crate::trace::KIND_DECISION.to_string(), error: "the points could not be drawn".to_string(), ..Default::default() };
+        return ZoneCheck { call, ..Default::default() };
+    };
     let questions = actions.iter().enumerate().map(|(i, action)| (point_key(i + 1), point_question(i + 1, &action.label))).collect();
     let state = vec![
         Part::Text("A screenshot of a web page, with the points that are about to be clicked or typed at marked by numbered red rings.".to_string()),
         Part::Image(marked),
     ];
-    match decider.decide(Decision { state, questions }) {
+    let started = std::time::SystemTime::now();
+    let answered = decider.decide(Decision { state, questions });
+    let call = ModelCall::decision(&prompt, answered.as_ref(), started);
+    match answered {
         Ok(verdicts) => ZoneCheck {
             verdicts: actions.iter().enumerate().filter_map(|(i, action)| verdicts.yes(&point_key(i + 1)).map(|p| (action.id.clone(), p))).collect(),
             usage: verdicts.usage,
+            call,
         },
-        Err(_) => ZoneCheck::default(),
+        Err(_) => ZoneCheck { call, ..Default::default() },
     }
 }
 

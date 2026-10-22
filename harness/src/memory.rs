@@ -155,8 +155,8 @@ pub fn summary_line(number: u32, message: &str, actions: &[Action]) -> String {
     line
 }
 
-/// One short phrase saying what an action did, for the history.
-fn describe(action: &Action) -> String {
+/// One short phrase saying what an action did, for the history and the trace.
+pub(crate) fn describe(action: &Action) -> String {
     match &action.kind {
         Kind::Type { text, secret: true } => format!("type [{} secret characters]", text.chars().count()),
         Kind::Type { text, secret: false } => format!("type {:?}", clip(text, 60)),

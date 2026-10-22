@@ -62,7 +62,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 32. User message queue
 - [x] 33. Question queue (keep going)
 - [x] 34. End report
-- [ ] 35. Trace, tracesum-compatible
+- [x] 35. Trace, tracesum-compatible
 
 **H. Gate**
 - [ ] 36. Verify "done"
