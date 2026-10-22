@@ -8,7 +8,7 @@ use std::time::{Instant, SystemTime};
 use crate::action::{Action, Batch};
 use crate::change::Signature;
 use crate::focus::FocusTarget;
-use crate::gate::FieldHold;
+use crate::gate::{CommitState, FieldHold, ListHold};
 use crate::map::{Coverage, Settled};
 use crate::memory::Memory;
 use crate::observe::{ActionResult, Viewport};
@@ -58,6 +58,12 @@ pub struct Session {
     pub stop_passes: u32,
     pub captcha_passes: u32,
     pub field_hold: FieldHold,
+    /// The click that sends the page, as the last plan kept it; how many times a send was held
+    /// on this page for the to-do list; and that the page refused the last send, so the next is
+    /// held for one look.
+    pub commit: CommitState,
+    pub list_hold: ListHold,
+    pub send_refused: bool,
     /// What the person wrote since the model last looked, oldest first.
     pub inbox: Vec<String>,
     /// Every question the run asked the person, with the answer when one came; the ones the gate
@@ -165,6 +171,9 @@ impl Session {
             stop_passes: 0,
             captcha_passes: 0,
             field_hold: FieldHold::default(),
+            commit: CommitState::default(),
+            list_hold: ListHold::default(),
+            send_refused: false,
             inbox: Vec::new(),
             questions: Vec::new(),
             asked_now: Vec::new(),

@@ -23,6 +23,14 @@
 //!   with what follows it, a question goes to the person, and the rest of the plan goes on; the
 //!   answer sets the allowance and tells the model. A click the person reserved for themselves
 //!   is held, and when nothing else is left the run ends ready for them.
+//! - The fixed rules, whatever the person allows. A click that sends the page or goes on is
+//!   held when part of the plan could not be carried out: a recorded run pressed Submit with a
+//!   required field it had not filled, which turned every unanswered question red. It is held
+//!   while the to-do list still has a required field empty on the page, even one the same plan
+//!   fills, a few times per page: the click goes out on a later look, once a survey shows the
+//!   list clear. And when the page refused the click that sent it (the form is still there, with
+//!   messages that answers are missing or wrong), the next such click is held for one look, so
+//!   what the page asked for is set first.
 
 use std::collections::BTreeMap;
 use std::time::SystemTime;
@@ -49,6 +57,29 @@ const ASK_DONE: &str = "done";
 const ASK_HUMAN_CHECK: &str = "human_check";
 /// The start of the key of the question about a numbered empty field: `f1`, `f2`, ...
 const ASK_PERSON_FIELD_PREFIX: &str = "f";
+/// The key of the question whether the page refused the click that sent it.
+const ASK_SEND_REFUSED: &str = "send_refused";
+/// How many times on one page the click that sends it or goes on is held for fields the to-do
+/// list still has empty: a field the model cannot fill does not keep the page from being sent
+/// for ever.
+pub const MAX_LIST_HOLDS: u32 = 3;
+
+/// The click that sends the page or goes on, as the plan kept it: the page it was on, whether
+/// it went through, and whether it commits something beyond the page.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CommitState {
+    pub id: String,
+    pub url: String,
+    pub done: bool,
+    pub send: bool,
+}
+
+/// How many times the click that sends the page was held on one page for the to-do list.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ListHold {
+    pub url: String,
+    pub count: u32,
+}
 
 /// A stop sent back for the fields the model read as empty: the page it was on and the fields
 /// that were left to fill, so a pass that filled none of them is not sent back again.
@@ -61,8 +92,15 @@ pub struct FieldHold {
 impl Agent {
     /// Applies the rules to the model's reply before its plan goes out. `number` names the step,
     /// for an action the gate puts in.
-    pub(crate) fn gate(&self, s: &mut Session, obs: &Observation, reply: &mut Reply, planned: &mut Vec<Action>, dropped: &mut Vec<String>, number: u32) {
+    pub(crate) fn gate(&self, s: &mut Session, obs: &Observation, reply: &mut Reply, planned: &mut Vec<Action>, dropped: &mut Vec<String>, number: u32, lost: usize) {
+        if reply.status == Status::Working {
+            hold_commits_lost(s, planned, dropped, lost);
+            hold_for_list(s, obs, planned, dropped);
+        }
         let held = if reply.status == Status::Working { self.hold_irreversible(s, planned, dropped) } else { None };
+        if reply.status == Status::Working {
+            hold_refused_send(s, planned, dropped);
+        }
         // The click the person reserved for themselves was all that was left: the run ends
         // ready for them, and no confirmation of "done" is asked of the screen.
         if let Some(kind) = s.held_reserved
@@ -130,6 +168,45 @@ impl Agent {
             }
         }
         Some(allowance)
+    }
+
+    /// Says whether the page refused the click that sent it: the click went through, the look
+    /// after it is on the same address, and the decision model reads on the screenshots that the
+    /// form is still there with messages that answers are missing or wrong, not a confirmation
+    /// or the next step. The model is told, with the fields it read as empty, and the next such
+    /// click is held for one look. A recorded run sent a page again at once, twice in two
+    /// minutes, and the page refused it as possible spam. The session is locked.
+    pub(crate) fn note_refused_send(&self, s: &mut Session, obs: &Observation) {
+        if !s.commit.done || s.commit.url != without_fragment(&obs.url) || !self.checks_on(s) {
+            return;
+        }
+        // This send is judged once: the next plan's send is a new one.
+        s.commit = CommitState::default();
+        let Some(decider) = self.decider.as_ref() else { return };
+        let mut questions = BTreeMap::new();
+        questions.insert(
+            ASK_SEND_REFUSED.to_string(),
+            Question::yes_no("The button that sends this form was just pressed. Does the page still show the same form, with messages that some answers are missing or wrong (text beside fields, or a list of problems), rather than a confirmation, a new step of the form with other questions, or a page that asks for something else?"),
+        );
+        let started = SystemTime::now();
+        let answered = decider.decide(Decision { state: page_state(obs), questions });
+        s.pending_calls.push(ModelCall::decision("the page refused the send", answered.as_ref(), started));
+        let Ok(verdicts) = answered else { return };
+        s.usage.add(verdicts.usage);
+        if verdicts.yes(ASK_SEND_REFUSED).unwrap_or(0.0) < crate::review::LIKELY {
+            return;
+        }
+        let left: Vec<String> = s.empty_fields_on(&obs.url).iter().map(|n| n.to_string()).collect();
+        let named = if left.is_empty() {
+            "Read on the survey which answers the page says are missing or wrong.".to_string()
+        } else {
+            format!("You read these fields as empty: {}. Read on the survey which answers the page says are missing or wrong.", quoted(&left))
+        };
+        s.send_refused = true;
+        s.notes.push(format!(
+            "The page did not accept the click that sends it: it still shows the form, with messages about its answers. {named} An answer that looks chosen on the screen may not be registered by the page. Set each such field again: for a choice, open its list and click the option you want; for a box, click it, clear it and enter the value again. A message beside a field that already shows the right answer may be left from the last send: do not change that field, it clears when the page is sent again. Plan only those fields on this look. The click that sends the page is held until your next look, when you have seen the fields set."
+        ));
+        s.survey_again = true;
     }
 
     /// Says whether a stop is sent back, with the note that tells the model why.
@@ -326,6 +403,119 @@ fn done_question(task: &Task) -> BTreeMap<String, Question> {
     questions
 }
 
+/// The plan without the clicks the model named as the one that sends the page or goes on to the
+/// next (and what follows each up to the next point), and those clicks.
+fn without_commits(planned: &[Action]) -> (Vec<Action>, Vec<Action>) {
+    let mut kept = Vec::new();
+    let mut held = Vec::new();
+    let mut dropping = false;
+    for action in planned {
+        if action.point().is_some() {
+            dropping = action.commit != crate::action::Commit::None;
+        }
+        if dropping { held.push(action.clone()) } else { kept.push(action.clone()) }
+    }
+    (kept, held)
+}
+
+/// What a held click is called, for the model and the log.
+fn name_of(click: &Action) -> String {
+    let label = click.label.trim();
+    if label.is_empty() { "the click that sends the page or goes on".to_string() } else { format!("{label:?}") }
+}
+
+/// Takes the click that sends the page or goes on out of a plan that lost part of itself, so the
+/// page is not sent with something unfilled. The model is told, and presses the click on the
+/// look after, when the page is complete.
+fn hold_commits_lost(s: &mut Session, planned: &mut Vec<Action>, dropped: &mut Vec<String>, lost: usize) {
+    if lost == 0 {
+        return;
+    }
+    let (kept, held) = without_commits(planned);
+    if held.is_empty() {
+        return;
+    }
+    *planned = kept;
+    dropped.push(format!("{} was held back: the plan lost {}", name_of(&held[0]), prompt::count(lost, "action")));
+    s.notes.push(format!(
+        "The harness did not press {} because {} of your plan could not be carried out, and the page is not complete. Plan what is left, and press it when nothing on the page is empty or wrong.",
+        name_of(&held[0]),
+        prompt::count(lost, "action")
+    ));
+    s.survey_again = true;
+}
+
+/// Takes the clicks that send the page or go on out of a plan while the to-do list still has a
+/// required field empty on the page, even one the same plan fills: the click goes out on a later
+/// look, once a survey shows the list clear. A field the model cannot fill does not hold the
+/// page for ever: [`MAX_LIST_HOLDS`] times on one page.
+fn hold_for_list(s: &mut Session, obs: &Observation, planned: &mut Vec<Action>, dropped: &mut Vec<String>) {
+    let left: Vec<String> = s.empty_fields_on(&obs.url).iter().map(|n| n.to_string()).collect();
+    if left.is_empty() {
+        return;
+    }
+    let (kept, held) = without_commits(planned);
+    if held.is_empty() {
+        return;
+    }
+    let url = without_fragment(&obs.url).to_string();
+    if s.list_hold.url != url {
+        s.list_hold = ListHold { url, count: 0 };
+    }
+    if s.list_hold.count >= MAX_LIST_HOLDS {
+        return;
+    }
+    s.list_hold.count += 1;
+    *planned = kept;
+    dropped.push(format!(
+        "{} was held back ({} with it): the to-do list still has {} empty",
+        name_of(&held[0]),
+        prompt::count(held.len() - 1, "later action"),
+        prompt::count(left.len(), "field")
+    ));
+    s.notes.push(format!(
+        "The harness did not press the button that sends this page or goes on: your to-do list still has these required fields empty: {}. The rest of your plan ran. Look at each of them on the survey; when the list shows every required field filled, press the button, alone or after what is left.",
+        quoted(&left)
+    ));
+    s.survey_again = true;
+}
+
+/// Takes the click that commits something beyond the page out of the first plan after the page
+/// refused one, so the fields the page named are set and seen set before the page is sent again.
+fn hold_refused_send(s: &mut Session, planned: &mut Vec<Action>, dropped: &mut Vec<String>) {
+    if !s.send_refused {
+        return;
+    }
+    s.send_refused = false;
+    let Some(at) = planned.iter().position(|a| a.commit.irreversible().is_some()) else { return };
+    let held = planned.split_off(at);
+    dropped.push(format!(
+        "{} was held back ({} with it): the page refused the last send, and the fields it named are set first",
+        name_of(&held[0]),
+        prompt::count(held.len() - 1, "later action")
+    ));
+    s.survey_again = true;
+}
+
+impl Session {
+    /// Remembers the click that sends the page or goes on when the plan keeps one.
+    pub(crate) fn note_commit_planned(&mut self, planned: &[Action], obs: &Observation) {
+        if let Some(click) = planned.iter().find(|a| a.commit != crate::action::Commit::None) {
+            self.commit = CommitState { id: click.id.clone(), url: without_fragment(&obs.url).to_string(), done: false, send: click.commit.irreversible().is_some() };
+        }
+    }
+
+    /// Records that the click that sends the page went through, when its result came.
+    pub(crate) fn note_commit_results(&mut self, results: &[crate::observe::ActionResult]) {
+        if self.commit.id.is_empty() || self.commit.done {
+            return;
+        }
+        if results.iter().any(|r| r.id == self.commit.id && r.ok) {
+            self.commit.done = true;
+        }
+    }
+}
+
 /// Names in quotes, in a list.
 fn quoted(names: &[String]) -> String {
     names.iter().map(|name| format!("{name:?}")).collect::<Vec<_>>().join(", ")
@@ -426,5 +616,36 @@ mod tests {
         assert_eq!(step.status, Status::NeedPerson);
         assert_eq!(step.stop.unwrap().reason, StopReason::Reserved);
         assert!(step.actions.is_empty());
+    }
+
+    #[test]
+    fn the_send_is_held_while_the_list_has_a_field_empty_or_the_plan_lost_actions() {
+        use crate::observe::SurveyScreen;
+        // The model reads a required field as empty, then plans the send: the send waits.
+        let reply = r#"{"status":"working","message":"","fields":[{"label":"Email","screen":1,"y":20,"state":"empty"}],
+            "actions":[{"kind":"click","screen":1,"x":10,"y":10,"label":"Name"},{"kind":"type","text":"A"},{"kind":"click","screen":1,"x":10,"y":40,"label":"Send","commit":"send"}]}"#;
+        let (model, seen) = Replying::new(reply);
+        let agent = Agent::new(Config { max_stale: 100, ..Config::default() }, model);
+        let id = agent.start(Task::new("send the form").allow(Irreversible::Send, Allowance::Auto), Profile::default());
+        let survey = || {
+            let mut obs = look(false, &[]);
+            obs.survey = vec![SurveyScreen { screenshot: obs.screenshot.clone(), scroll_y: 0.0 }];
+            obs
+        };
+        // Even a field the same plan fills holds the send: it goes out once a survey shows the
+        // list clear.
+        let first = agent.step(&id, survey()).unwrap();
+        assert_eq!(first.actions.len(), 2);
+        assert_eq!(first.dropped, vec!["\"Send\" was held back (0 later actions with it): the to-do list still has 1 field empty"]);
+        assert_eq!(agent.step(&id, survey()).unwrap().actions.len(), 2);
+        assert!(seen.lock().unwrap()[1].contains("your to-do list still has these required fields empty: \"Email\"."));
+        // A plan that lost an action (a point off the screen) does not press the send either.
+        let reply = r#"{"status":"working","message":"","actions":[{"kind":"click","x":900,"y":10,"label":"Name"},{"kind":"click","x":10,"y":40,"label":"Send","commit":"send"}]}"#;
+        let (model, _) = Replying::new(reply);
+        let agent = Agent::new(Config::default(), model);
+        let id = agent.start(Task::new("send the form").allow(Irreversible::Send, Allowance::Auto), Profile::default());
+        let step = agent.step(&id, look(false, &[])).unwrap();
+        assert!(step.dropped.iter().any(|d| d == "\"Send\" was held back: the plan lost 1 action"), "{:?}", step.dropped);
+        assert!(matches!(step.actions[0].kind, Kind::Wait { .. }));
     }
 }

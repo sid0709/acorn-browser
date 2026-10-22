@@ -68,4 +68,4 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 36. Verify "done"
 - [x] 37. Verify "stop"
 - [x] 38. Irreversible actions and the safe flag
-- [ ] 39. Fixed rules
+- [x] 39. Fixed rules

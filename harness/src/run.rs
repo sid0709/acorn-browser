@@ -426,8 +426,11 @@ impl Agent {
         s.notes.extend(unreached);
         s.note_unreached_fields(&obs.results);
         // What happened to every action sent since the model last looked, which may be several
-        // batches of one plan.
+        // batches of one plan. Whether the click that sends the page went through, and whether
+        // the page then refused it, is read before anything else is decided.
         let results: Vec<ActionResult> = s.carried.iter().cloned().chain(obs.results.iter().cloned()).collect();
+        s.note_commit_results(&obs.results);
+        self.note_refused_send(s, &obs);
         if s.at_step_limit() {
             return Ok(self.end_run(
                 s,
@@ -604,14 +607,20 @@ impl Agent {
         s.questions.extend(questions.iter().cloned());
 
         let screens: Vec<f64> = obs.survey.iter().map(|screen| screen.scroll_y).collect();
+        let written = reply.actions.len();
         let (planned, mut dropped) = model::check_actions(number, std::mem::take(&mut reply.actions), &obs.viewport, self.config.plan_limit(checks), &screens);
+        // How many actions of the plan could not be carried out: the click that sends the page
+        // waits for them.
+        let mut lost = written - planned.len();
         let (mut planned, survey_asked) = without_survey(planned);
+        lost -= usize::from(survey_asked);
         // A run that did not turn surveys on is not told they exist; one the model asks for anyway is ignored.
         let survey_asked = survey_asked && s.task.survey;
         action::inherit_zones(&mut planned);
         let (kept, blue) = s.without_blue_scrolls(planned, &obs);
         planned = kept;
         if blue > 0 {
+            lost += blue;
             dropped.push(format!("{} to a settled part of the page not made", prompt::count(blue, "scroll")));
             s.notes.push(map::BLUE_SCROLL_NOTE.to_string());
         }
@@ -621,8 +630,9 @@ impl Agent {
             self.check_plan_points(s, &planned, &obs);
         }
         // The gate: the one place the harness may stop, change, or question the plan.
-        self.gate(s, &obs, &mut reply, &mut planned, &mut dropped, number);
+        self.gate(s, &obs, &mut reply, &mut planned, &mut dropped, number, lost);
         s.message = reply.message.trim().to_string();
+        s.note_commit_planned(&planned, &obs);
         // What this plan fills in, by zone, for the reviews of its zones.
         s.plan_gen += 1;
         s.expect = review::expectations_of(&planned, &obs);
