@@ -26,11 +26,14 @@ pub struct Config {
     pub unchecked_actions: usize,
     /// How many steps in a row the screen may stay the same before the run ends as stuck.
     pub max_stale: u32,
+    /// How many model steps in a row may end with every action failing the same way before the
+    /// run ends as stuck. 0 turns the check off.
+    pub max_failed_steps: u32,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { max_actions: 30, unchecked_actions: 6, max_stale: 6 }
+        Config { max_actions: 30, unchecked_actions: 6, max_stale: 6, max_failed_steps: 3 }
     }
 }
 
@@ -202,6 +205,29 @@ impl Agent {
                 },
             ));
         }
+        // A plan refused whole, the same way, step after step, is a loop the model cannot see out
+        // of: the page changes a little each time (a list opens, a cursor moves), so the
+        // unchanged-screen count above never trips. The run ends before the model plans it again.
+        let failure = first_failure(&results);
+        let streak = if failure.is_empty() {
+            0
+        } else if failure == s.last_failure {
+            s.failed_streak + 1
+        } else {
+            1
+        };
+        if self.config.max_failed_steps > 0 && streak >= self.config.max_failed_steps {
+            return Ok(end(
+                s,
+                Status::Stuck,
+                format!("The same action failed {streak} steps in a row: {failure}"),
+                StopInfo {
+                    reason: StopReason::RepeatedFailure,
+                    problem: format!("The run tried the same step {streak} times and the page would not take it: {failure}"),
+                    action: "Do that part on the page yourself, then let the run go on.".to_string(),
+                },
+            ));
+        }
         let number = s.step + 1;
 
         let text = model::observation_text(number, s.step_limit, &obs, &results, &s.notes, &s.memo, stale);
@@ -225,6 +251,8 @@ impl Agent {
         s.step = number;
         s.stale = stale;
         s.last_signature = Some(sig);
+        s.failed_streak = streak;
+        s.last_failure = failure;
         s.carried.clear();
         s.notes.clear();
         if let Some(memo) = reply.memo.take() {
@@ -298,6 +326,22 @@ impl Agent {
         }
         (out, survey_asked)
     }
+}
+
+/// The error of the first action of the batch that failed, when nothing in it succeeded; empty
+/// when something did, or nothing was planned. An action that reached no control is not a
+/// failure of the batch, and what was skipped after a failure says nothing of its own.
+fn first_failure(results: &[ActionResult]) -> String {
+    let mut first = String::new();
+    for result in results {
+        if result.ok {
+            return String::new();
+        }
+        if first.is_empty() && !result.unreached && !result.error.is_empty() {
+            first = result.error.clone();
+        }
+    }
+    first
 }
 
 /// Ends the run with no actions: the person is told why and what they can do.
@@ -385,6 +429,24 @@ mod tests {
         assert!(third.actions.is_empty());
         agent.resume(&id).unwrap();
         assert_eq!(agent.step(&id, look()).unwrap().status, Status::Working);
+    }
+
+    #[test]
+    fn the_same_failure_step_after_step_ends_the_run() {
+        let reply = r#"{"status":"working","message":"","actions":[{"kind":"click","x":5,"y":5}]}"#;
+        let agent = Agent::new(Config { max_failed_steps: 2, max_stale: 100, ..Config::default() }, Box::new(Fixed(reply)));
+        let id = agent.start(Task::new("click"), Profile::default());
+        let refused = |id: &str| ActionResult { id: id.into(), ok: false, error: "the page refused the click".into(), ..Default::default() };
+        assert_eq!(agent.step(&id, look()).unwrap().status, Status::Working);
+        let mut second = look();
+        second.results = vec![refused("s1a1")];
+        assert_eq!(agent.step(&id, second).unwrap().status, Status::Working);
+        let mut third = look();
+        third.results = vec![refused("s2a1")];
+        let step = agent.step(&id, third).unwrap();
+        assert_eq!(step.status, Status::Stuck);
+        assert_eq!(step.stop.unwrap().reason, StopReason::RepeatedFailure);
+        assert_eq!(first_failure(&[refused("a"), ActionResult { id: "b".into(), ok: true, ..Default::default() }]), "");
     }
 
     #[test]

@@ -39,6 +39,10 @@ pub struct Session {
     pub last_signature: Option<Signature>,
     /// Steps in a row where the screen did not change.
     pub stale: u32,
+    /// Model steps in a row whose every action failed the same way, and that failure. A plan
+    /// refused whole, step after step, is a loop the model cannot see out of.
+    pub failed_streak: u32,
+    pub last_failure: String,
 }
 
 impl Session {
@@ -60,6 +64,8 @@ impl Session {
             carried: Vec::new(),
             last_signature: None,
             stale: 0,
+            failed_streak: 0,
+            last_failure: String::new(),
         }
     }
 
