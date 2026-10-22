@@ -16,6 +16,7 @@ pub mod model;
 pub mod observe;
 pub mod ports;
 pub mod profile;
+pub mod prompt;
 pub mod recover;
 pub mod report;
 pub mod run;

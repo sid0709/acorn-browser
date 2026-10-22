@@ -1,35 +1,33 @@
-//! Talking to the driving model: the system prompt, the observation text, the reply schema, and
-//! parsing the reply.
-//!
-//! This is the minimal form that lets a step run end to end. The prompt text, the schema, and
-//! the checks on the reply are filled out in their own steps.
+//! Talking to the driving model: the reply it must give, the JSON schema that shapes it, reading
+//! it, and turning the actions it wrote into ones the browser can run.
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Map, Value, json};
 
-use std::collections::BTreeMap;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use crate::action::Action;
-use crate::observe::{ActionResult, Focus, Observation, Opened, Viewport};
-use crate::profile::Profile;
-use crate::run::{Config, Status, StopInfo};
-use crate::task::{Allowance, Irreversible, StopReason, Task};
-
-/// The standing instruction, as a template: `{{key}}` is filled in, and `{{#if key}}...{{/if}}`
-/// stays only when the key has a value.
-const SYSTEM_TEMPLATE: &str = include_str!("prompts/system.md");
+use crate::action::{Action, Commit, Kind};
+use crate::observe::Viewport;
+use crate::run::{Status, StopInfo};
 
 /// The name the reply schema is sent under.
 pub const REPLY_SCHEMA_NAME: &str = "step";
 /// The most characters the model's memo may hold.
 pub const MAX_MEMO_CHARS: usize = 2000;
 
+// Limits on what one step may ask for.
+const MAX_TYPE_CHARS: usize = 2000;
+const MAX_KEY_TOKENS: usize = 12;
+const MIN_WAIT_MS: u64 = 100;
+const MAX_WAIT_MS: u64 = 10_000;
+const MAX_SCROLL_PAGES: f64 = 3.0;
+const MAX_CHECK_CHARS: usize = 300;
+const MAX_LABEL_CHARS: usize = 80;
+const DEFAULT_WAIT_MS: u64 = 1000;
+
 /// What the model answers at each step.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reply {
-    /// What the model sees on the screen, in a sentence or two: its reasoning's anchor.
+    /// What the model sees on the screen, in a sentence or two: it reads before it decides.
     #[serde(default)]
     pub observation: String,
     /// The model's notes to itself for the rest of the run. `None` leaves the notes as they were.
@@ -42,8 +40,44 @@ pub struct Reply {
     /// Why the run ends for the person, when it does.
     #[serde(default)]
     pub stop: Option<StopInfo>,
+    /// The actions as written; `check_actions` turns them into ones the browser can run.
     #[serde(default)]
-    pub actions: Vec<Action>,
+    pub actions: Vec<RawAction>,
+}
+
+/// One action as the model wrote it: every field optional, checked before it becomes an
+/// [`Action`].
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RawAction {
+    #[serde(default)]
+    pub kind: String,
+    /// The survey screen the point is measured on, from 1.
+    #[serde(default)]
+    pub screen: Option<u32>,
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub secret: Option<bool>,
+    #[serde(default)]
+    pub keys: Option<String>,
+    #[serde(default)]
+    pub dx: Option<f64>,
+    #[serde(default)]
+    pub dy: Option<f64>,
+    #[serde(default)]
+    pub ms: Option<u64>,
+    #[serde(default)]
+    pub resource: Option<String>,
+    #[serde(default)]
+    pub check: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub commit: Option<String>,
 }
 
 /// Reads the model's answer. The answer may carry text before the JSON; it is skipped.
@@ -59,301 +93,274 @@ pub fn parse_reply(content: &str) -> Result<Reply, String> {
     serde_json::from_str(content).map_err(|e| format!("the model's answer is not the requested JSON: {e}"))
 }
 
-/// The standing instruction, the same on every step of a run so the provider can cache it: the
-/// task, how to answer, when to stop, what the person allows, and who they are.
-pub fn system_prompt(task: &Task, profile: &Profile, config: &Config) -> String {
-    let mut values: BTreeMap<&str, String> = BTreeMap::new();
-    values.insert("goal", task.goal.trim().to_string());
-    values.insert("done_when", task.done_when.trim().to_string());
-    values.insert("max_actions", config.max_actions.to_string());
-    values.insert("chunk", config.chunk_actions.to_string());
-    values.insert("stop_reasons", stop_reason_lines(task));
-    values.insert("allowances", allowance_lines(task));
-    values.insert("survey", if task.survey { "yes".to_string() } else { String::new() });
-    values.insert("checks", if config.checks { "yes".to_string() } else { String::new() });
-    values.insert("profile", if profile.facts.trim().is_empty() { "The person gave no details about themselves.".to_string() } else { profile.facts.trim().to_string() });
-    values.insert(
-        "resources",
-        task.resources.iter().map(|r| format!("- {}: {} ({})", r.id, r.description.trim(), r.name)).collect::<Vec<_>>().join("\n"),
-    );
-    values.insert("today", today().unwrap_or_default());
-    render(SYSTEM_TEMPLATE, &values)
-}
-
-/// Fills a template: `{{#if key}}...{{/if}}` blocks stay when the key has a non-empty value and
-/// go when it does not; then every `{{key}}` is replaced. Blocks do not nest.
-pub fn render(template: &str, values: &BTreeMap<&str, String>) -> String {
-    let mut out = String::with_capacity(template.len());
-    let mut rest = template;
-    while let Some(start) = rest.find("{{#if ") {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + 6..];
-        let Some(name_end) = after.find("}}") else { break };
-        let name = after[..name_end].trim();
-        let body = &after[name_end + 2..];
-        let Some(close) = body.find("{{/if}}") else { break };
-        if values.get(name).is_some_and(|v| !v.is_empty()) {
-            out.push_str(&body[..close]);
+/// Turns the model's actions into ones the browser can run, and says why it refused the rest.
+/// An action that would land outside the screenshot, type nothing, or press no key is refused
+/// here, so the browser never receives a nonsense command. `screens` are the scroll positions
+/// of the survey the look was, empty for a plain look.
+pub fn check_actions(step: u32, raw: Vec<RawAction>, vp: &Viewport, max_actions: usize, screens: &[f64]) -> (Vec<Action>, Vec<String>) {
+    let mut valid = Vec::new();
+    let mut dropped = Vec::new();
+    for (i, input) in raw.into_iter().enumerate() {
+        let n = i + 1;
+        if valid.len() >= max_actions {
+            dropped.push(format!("action {n} ({}): only {max_actions} actions run per step", input.kind));
+            continue;
         }
-        rest = &body[close + 7..];
-    }
-    out.push_str(rest);
-    for (key, value) in values {
-        out = out.replace(&format!("{{{{{key}}}}}"), value);
-    }
-    out
-}
-
-/// One line per reason the model may stop for under this task's policy.
-fn stop_reason_lines(task: &Task) -> String {
-    let mut lines: Vec<String> = task
-        .persistence
-        .stop_for
-        .iter()
-        .filter_map(|reason| stop_reason_text(*reason).map(|text| format!("- reason \"{}\": {text}", reason_name(*reason))))
-        .collect();
-    lines.push("For any other reason, keep going: the harness sends such a stop back with a note.".to_string());
-    lines.join("\n")
-}
-
-fn stop_reason_text(reason: StopReason) -> Option<&'static str> {
-    Some(match reason {
-        StopReason::Captcha => "a CAPTCHA or another check that they are human, one that stands in the way (a box to tick, a puzzle to solve, a challenge over the page). A badge or notice saying the page is protected by such a service is not a check, and a check that only comes once the button is pressed is met then: press the button first.",
-        StopReason::VerificationCode => "a code sent to their e-mail or phone that you were not given.",
-        StopReason::VerificationLink => "a link in an e-mail they must open.",
-        StopReason::Identity => "an identity number or document you do not have (a national ID, a passport, a driver's license), or a legal signature.",
-        StopReason::Payment => "money: a payment, a card, a subscription, unless the person allowed it below.",
-        StopReason::Credentials => "a sign-in you have no password for, and the browser does not fill in.",
-        StopReason::AccountRejected => "an account the site will not accept: the sign-in, the sign-up, and the password reset all failed.",
-        StopReason::Unavailable => "the page makes clear the task cannot be done here (closed, offline only, the wrong page). Report this one as \"stuck\".",
-        StopReason::Decision => "a choice only the person can make, with real consequences either way, that nothing you know settles.",
-        StopReason::Other => "something else that truly needs the person; say exactly what.",
-        _ => return None,
-    })
-}
-
-fn reason_name(reason: StopReason) -> String {
-    serde_json::to_value(reason).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
-}
-
-/// One line per kind of irreversible action, saying what the person allows.
-fn allowance_lines(task: &Task) -> String {
-    [
-        (Irreversible::Send, "send", "submit, send, apply, place an order"),
-        (Irreversible::Pay, "pay", "pay, enter a card, start a subscription"),
-        (Irreversible::Post, "post", "publish where others see it"),
-        (Irreversible::Delete, "delete", "delete or cancel something that exists"),
-        (Irreversible::CreateAccount, "create an account", "sign up"),
-    ]
-    .iter()
-    .map(|(kind, name, examples)| {
-        let rule = match task.allowance(*kind) {
-            Allowance::Auto => "allowed: go ahead when the task needs it",
-            Allowance::Ask => "ask first: the harness holds the click and asks the person; go on with the rest meanwhile",
-            Allowance::Never => "never: the harness holds the click, and the run ends as ready for the person to do it",
+        let kind = match fill(&input, vp) {
+            Ok(kind) => kind,
+            Err(why) => {
+                dropped.push(format!("action {n} ({}): {why}", input.kind));
+                continue;
+            }
         };
-        format!("- {name} ({examples}): {rule}.")
-    })
-    .collect::<Vec<_>>()
-    .join("\n")
-}
-
-/// Today's date as `YYYY-MM-DD` in UTC, when the clock gives one.
-fn today() -> Option<String> {
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
-    let days = (secs / 86_400) as i64;
-    // Civil-from-days (H. Hinnant): days since 1970-01-01 to a proleptic Gregorian date.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    Some(format!("{y:04}-{m:02}-{d:02}"))
-}
-
-/// What the model is told about a step beside the screenshot itself: where the run stands, the
-/// page, the window onto it, what has focus, what became of the last actions, the notes, and the
-/// model's own memo. Only the newest step carries the memo in full, so it is paid for once.
-pub fn observation_text(step: u32, max_steps: u32, obs: &Observation, results: &[ActionResult], notes: &[String], memo: &str, stale: u32) -> String {
-    let mut out = format!("Step {step} of at most {max_steps}.\n");
-    out.push_str(&format!("Page: {} ({})\n", or_none(&obs.title), or_none(&obs.url)));
-    out.push_str(&format!("Screenshot: {}x{} pixels. {}\n", obs.viewport.width, obs.viewport.height, scroll_line(&obs.viewport)));
-    out.push_str(&focus_line(obs.focus.as_ref()));
-    if !obs.survey.is_empty() {
-        out.push_str(&survey_line(obs));
-    }
-    if !results.is_empty() {
-        out.push_str("Results of your last actions:\n");
-        for result in results {
-            out.push_str(&format!("- {}\n", result_line(result)));
+        let mut action = Action::new(format!("s{step}a{n}"), kind);
+        if let Err(why) = place_on_screen(&mut action, input.screen, vp, screens) {
+            dropped.push(format!("action {n} ({}): {why}", input.kind));
+            continue;
         }
+        action.check = clip_text(input.check.as_deref().unwrap_or("").trim(), MAX_CHECK_CHARS);
+        action.label = clip_text(input.label.as_deref().unwrap_or("").trim(), MAX_LABEL_CHARS);
+        action.commit = commit_of(&input, &action.kind);
+        valid.push(action);
     }
-    for note in obs.notes.iter().chain(notes) {
-        out.push_str(&format!("Note: {}\n", note.trim()));
-    }
-    if stale >= 1 {
-        out.push_str(&format!(
-            "Check: the screen looks the same as after your previous actions ({stale} step{} in a row). If error text still shows but the fields already look filled, do not refill them; press the button again, the text may be left from an earlier try. Otherwise find out why before you repeat the same edit.\n",
-            plural(stale)
-        ));
-    }
-    let memo = memo.trim();
-    if memo.is_empty() {
-        out.push_str("Your notes so far: (none yet)\n");
-    } else {
-        out.push_str(&format!("Your notes so far:\n{memo}\n"));
-    }
-    out.push_str("Answer with the JSON object.");
-    out
+    (valid, dropped)
 }
 
-/// How much of the page lies off screen, so the model knows whether to scroll.
-fn scroll_line(v: &Viewport) -> String {
-    if v.page_height <= 0.0 {
-        return String::new();
-    }
-    let below = v.page_height - v.scroll_y - v.height as f64;
-    let above = v.scroll_y;
-    match (above > 8.0, below > 8.0) {
-        (true, true) => format!("The page is scrolled: about {above:.0} px lies above and {below:.0} px below."),
-        (false, true) => format!("The page is at its top; about {below:.0} px lies below."),
-        (true, false) => format!("The page is at its bottom; about {above:.0} px lies above."),
-        (false, false) => "The whole page fits on the screen.".to_string(),
-    }
-}
-
-/// Which control has the keyboard, by the name the page gives it, so the model knows where
-/// typing goes. What the page says of the control's kind, value or state is not told: the
-/// screenshot shows that, and the page's own word lies for a control it draws itself. The
-/// options of a list the browser draws are the one thing told, since no screenshot shows that
-/// popup.
-fn focus_line(focus: Option<&Focus>) -> String {
-    let Some(focus) = focus else {
-        return "Keyboard focus: no control.\n".to_string();
-    };
-    let name = if focus.label.trim().is_empty() {
-        "a control the page does not name".to_string()
-    } else {
-        format!("the control labelled {:?}", focus.label.trim())
-    };
-    let mut line = format!("Keyboard focus: {name}.\n");
-    if focus.tag.eq_ignore_ascii_case("select") && !focus.options.is_empty() {
-        let several = if focus.multiple { " (several may be chosen)" } else { "" };
-        line.push_str(&format!(
-            "It is a list the browser draws itself, which no screenshot shows. Its options{several}: {}.\n",
-            focus.options.join(" | ")
-        ));
-    }
-    line
-}
-
-/// The screens of a survey: how many, and where each is scrolled to.
-fn survey_line(obs: &Observation) -> String {
-    let positions: Vec<String> = obs.survey.iter().enumerate().map(|(i, screen)| format!("{} at {:.0} px", i + 1, screen.scroll_y)).collect();
-    format!(
-        "This look is a survey of the whole page: {} screens, numbered on each picture, from the top down. Screen {}.\n",
-        obs.survey.len(),
-        positions.join(", screen ")
-    )
-}
-
-/// One line for what became of one action.
-fn result_line(result: &ActionResult) -> String {
-    let mut line = format!("{} {}", result.id, if result.ok { "done" } else { "failed" });
-    if !result.error.is_empty() {
-        line.push_str(&format!(": {}", result.error));
-    }
-    if result.opened == Some(Opened::FilePicker) {
-        line.push_str(" (this click opened a file picker that you cannot see, and no file was chosen: to attach a file, use upload at this point)");
-    }
-    if result.unreached {
-        line.push_str(" (nothing had focus, so it reached no control)");
-    }
-    if !result.detail.is_empty() {
-        line.push_str(&format!(" ({})", result.detail));
-    }
-    line
-}
-
-fn or_none(text: &str) -> &str {
-    let text = text.trim();
-    if text.is_empty() { "none" } else { text }
-}
-
-fn plural(n: u32) -> &'static str {
-    if n == 1 { "" } else { "s" }
-}
-
-/// The JSON schema the reply must fit.
-pub fn reply_schema() -> serde_json::Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["observation", "memo", "status", "message", "stop", "actions"],
-        "properties": {
-            "observation": {"type": "string"},
-            "memo": {"type": ["string", "null"]},
-            "status": {"type": "string", "enum": ["working", "done", "need_person", "stuck"]},
-            "message": {"type": "string"},
-            "stop": {"type": ["object", "null"], "additionalProperties": false,
-                "required": ["reason", "problem", "action"],
-                "properties": {
-                    "reason": {"type": "string"},
-                    "problem": {"type": "string"},
-                    "action": {"type": "string"}
-                }},
-            "actions": {"type": "array", "items": {"type": "object"}}
+/// The kind an action is, with what it carries, once its fields are checked.
+fn fill(input: &RawAction, vp: &Viewport) -> Result<Kind, String> {
+    Ok(match input.kind.as_str() {
+        "click" => {
+            let (x, y) = point(input, vp)?;
+            Kind::Click { x, y }
         }
+        "double_click" => {
+            let (x, y) = point(input, vp)?;
+            Kind::DoubleClick { x, y }
+        }
+        "triple_click" => {
+            let (x, y) = point(input, vp)?;
+            Kind::TripleClick { x, y }
+        }
+        "right_click" => {
+            let (x, y) = point(input, vp)?;
+            Kind::RightClick { x, y }
+        }
+        "hover" => {
+            let (x, y) = point(input, vp)?;
+            Kind::Hover { x, y }
+        }
+        "upload" => {
+            let (x, y) = point(input, vp)?;
+            Kind::Upload { x, y, resource: input.resource.as_deref().unwrap_or("").trim().to_string(), file_name: String::new() }
+        }
+        "type" => {
+            let text = input.text.clone().unwrap_or_default();
+            if text.is_empty() {
+                return Err("there is no text to type".to_string());
+            }
+            if text.chars().count() > MAX_TYPE_CHARS {
+                return Err(format!("the text is longer than {MAX_TYPE_CHARS} characters"));
+            }
+            Kind::Type { text, secret: input.secret.unwrap_or(false) }
+        }
+        "key" => {
+            let keys = input.keys.as_deref().unwrap_or("").trim().to_string();
+            if keys.is_empty() {
+                return Err("there is no key to press".to_string());
+            }
+            if keys.split_whitespace().count() > MAX_KEY_TOKENS {
+                return Err(format!("more than {MAX_KEY_TOKENS} keys"));
+            }
+            Kind::Key { keys }
+        }
+        "scroll" => {
+            let (dx, dy) = (input.dx.unwrap_or(0.0), input.dy.unwrap_or(0.0));
+            if dx == 0.0 && dy == 0.0 {
+                return Err("there is no distance to scroll".to_string());
+            }
+            // A scroll with no point scrolls where the page's middle is.
+            let (x, y) = match (input.x, input.y) {
+                (Some(x), Some(y)) if inside(x, y, vp) => (x, y),
+                _ => (vp.width as f64 / 2.0, vp.height as f64 / 2.0),
+            };
+            Kind::Scroll {
+                x: Some(x),
+                y: Some(y),
+                dx: dx.clamp(-MAX_SCROLL_PAGES * vp.width as f64, MAX_SCROLL_PAGES * vp.width as f64),
+                dy: dy.clamp(-MAX_SCROLL_PAGES * vp.height as f64, MAX_SCROLL_PAGES * vp.height as f64),
+            }
+        }
+        "wait" => Kind::Wait { ms: input.ms.unwrap_or(DEFAULT_WAIT_MS).clamp(MIN_WAIT_MS, MAX_WAIT_MS) },
+        "survey" => Kind::Survey,
+        _ => return Err("that is not an action the harness can send".to_string()),
     })
+}
+
+/// The action's point, when it has one inside the screenshot.
+fn point(input: &RawAction, vp: &Viewport) -> Result<(f64, f64), String> {
+    match (input.x, input.y) {
+        (Some(x), Some(y)) if inside(x, y, vp) => Ok((x, y)),
+        (Some(x), Some(y)) => Err(format!("the point ({x:.0}, {y:.0}) lies outside the {}x{} screenshot", vp.width, vp.height)),
+        _ => Err("the action has no point".to_string()),
+    }
+}
+
+fn inside(x: f64, y: f64, vp: &Viewport) -> bool {
+    x.is_finite() && y.is_finite() && x >= 0.0 && x <= vp.width as f64 && y >= 0.0 && y <= vp.height as f64
+}
+
+/// Binds a point action to the survey screen its point was measured on: the browser scrolls
+/// there before the action. Typing and keys follow the action before them.
+fn place_on_screen(action: &mut Action, screen: Option<u32>, vp: &Viewport, screens: &[f64]) -> Result<(), String> {
+    let Some(screen) = screen else { return Ok(()) };
+    if action.point().is_none() || screens.is_empty() {
+        return Ok(());
+    }
+    let index = screen.max(1) as usize;
+    if index > screens.len() {
+        return Err(format!("there is no screen {screen} (the survey has {})", screens.len()));
+    }
+    action.scroll_to = Some(screens[index - 1]);
+    action.page_height = vp.page_height;
+    action.zone = index as u32;
+    Ok(())
+}
+
+/// What a click does beyond the click, when the model said and the action is a click.
+fn commit_of(input: &RawAction, kind: &Kind) -> Commit {
+    if !matches!(kind, Kind::Click { .. }) {
+        return Commit::None;
+    }
+    match input.commit.as_deref().map(str::trim) {
+        Some("next") => Commit::Next,
+        Some("send") => Commit::Send,
+        _ => Commit::None,
+    }
+}
+
+/// The first `max_chars` characters of the text.
+pub fn clip_text(text: &str, max_chars: usize) -> String {
+    match text.char_indices().nth(max_chars) {
+        Some((end, _)) => text[..end].to_string(),
+        None => text.to_string(),
+    }
+}
+
+/// The JSON schema the reply must fit. A provider's strict mode needs every property of an
+/// object present, so an action is one of several shapes, each with only the fields its kind
+/// uses: a click is not twelve fields with nine of them null. The order of the properties is the
+/// order the model writes them in: the observation first, so it reads the screen before it
+/// decides, and the actions last.
+pub fn reply_schema(survey: bool, checks: bool) -> Value {
+    let string = json!({"type": "string"});
+    let null_string = json!({"type": ["string", "null"]});
+    let number = json!({"type": "number"});
+    let null_number = json!({"type": ["number", "null"]});
+    let point = |kinds: &[&str], extra: Vec<(&str, Value)>| -> Value {
+        let mut fields = vec![("kind", kind_enum(kinds))];
+        if survey {
+            fields.push(("screen", json!({"type": ["integer", "null"]})));
+        }
+        fields.push(("x", number.clone()));
+        fields.push(("y", number.clone()));
+        fields.push(("label", null_string.clone()));
+        fields.extend(extra);
+        if checks {
+            fields.push(("check", null_string.clone()));
+        }
+        object(fields)
+    };
+    let plain = |kind: &str, extra: Vec<(&str, Value)>| -> Value {
+        let mut fields = vec![("kind", kind_enum(&[kind]))];
+        fields.extend(extra);
+        if checks {
+            fields.push(("check", null_string.clone()));
+        }
+        object(fields)
+    };
+    let mut shapes = vec![
+        point(&["click", "double_click", "triple_click", "right_click", "hover"], vec![("commit", json!({"anyOf": [{"type": "null"}, {"type": "string", "enum": ["next", "send"]}]}))]),
+        point(&["upload"], vec![("resource", null_string.clone())]),
+        plain("type", vec![("text", string.clone()), ("secret", json!({"type": ["boolean", "null"]}))]),
+        plain("key", vec![("keys", string.clone())]),
+        plain("scroll", vec![("x", null_number.clone()), ("y", null_number.clone()), ("dx", number.clone()), ("dy", number.clone())]),
+        object(vec![("kind", kind_enum(&["wait"])), ("ms", json!({"type": "integer"}))]),
+    ];
+    if survey {
+        shapes.push(object(vec![("kind", kind_enum(&["survey"]))]));
+    }
+    let stop = json!({"anyOf": [{"type": "null"}, object(vec![
+        ("reason", json!({"type": "string", "enum": ["captcha", "verification_code", "verification_link", "identity", "payment", "credentials", "account_rejected", "unavailable", "decision", "page_problem", "other"]})),
+        ("problem", string.clone()),
+        ("action", string.clone()),
+    ])]});
+    object(vec![
+        ("observation", string.clone()),
+        ("memo", null_string.clone()),
+        ("status", json!({"type": "string", "enum": ["working", "done", "need_person", "stuck"]})),
+        ("message", string.clone()),
+        ("stop", stop),
+        ("actions", json!({"type": "array", "items": {"anyOf": shapes}})),
+    ])
+}
+
+/// A strict object schema over fields, in order.
+fn object(fields: Vec<(&str, Value)>) -> Value {
+    let mut properties = Map::new();
+    let mut required = Vec::new();
+    for (name, schema) in fields {
+        required.push(Value::String(name.to_string()));
+        properties.insert(name.to_string(), schema);
+    }
+    json!({"type": "object", "additionalProperties": false, "required": required, "properties": properties})
+}
+
+fn kind_enum(kinds: &[&str]) -> Value {
+    json!({"type": "string", "enum": kinds})
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_prompt_follows_the_task_and_the_template_blocks_follow_their_keys() {
-        let mut values = BTreeMap::new();
-        values.insert("a", "A".to_string());
-        values.insert("b", String::new());
-        assert_eq!(render("x{{#if a}}[{{a}}]{{/if}}{{#if b}}[{{b}}]{{/if}}y", &values), "x[A]y");
-
-        let mut task = Task::new("Buy a kettle.").allow(Irreversible::Pay, Allowance::Auto);
-        task.survey = false;
-        let prompt = system_prompt(&task, &Profile::new("Name: B."), &Config::default());
-        assert!(prompt.contains("Buy a kettle."));
-        assert!(prompt.contains("- pay (pay, enter a card, start a subscription): allowed"));
-        assert!(prompt.contains("- send (submit, send, apply, place an order): ask first"));
-        assert!(prompt.contains("reason \"captcha\""));
-        assert!(!prompt.contains("# Seeing the whole page"));
-        assert!(!prompt.contains("{{"));
-        task.survey = true;
-        assert!(system_prompt(&task, &Profile::default(), &Config::default()).contains("# Seeing the whole page"));
+    fn raw(json: &str) -> RawAction {
+        serde_json::from_str(json).unwrap()
     }
 
     #[test]
-    fn the_observation_text_says_where_the_run_stands() {
-        let obs = Observation {
-            title: "Checkout".into(),
-            url: "https://shop.test/pay".into(),
-            viewport: Viewport { width: 800, height: 600, scroll_y: 300.0, page_height: 2000.0, ..Default::default() },
-            focus: Some(Focus { tag: "select".into(), label: "Country".into(), options: vec!["France".into(), "Spain".into()], ..Default::default() }),
-            ..Default::default()
-        };
-        let results = vec![ActionResult { id: "s1a1".into(), ok: false, error: "nothing at that point".into(), ..Default::default() }];
-        let text = observation_text(2, 150, &obs, &results, &["the file was attached".to_string()], "pay by card", 1);
-        assert!(text.starts_with("Step 2 of at most 150.\nPage: Checkout (https://shop.test/pay)\n"));
-        assert!(text.contains("about 300 px lies above and 1100 px below"));
-        assert!(text.contains("labelled \"Country\""));
-        assert!(text.contains("France | Spain"));
-        assert!(text.contains("- s1a1 failed: nothing at that point"));
-        assert!(text.contains("Note: the file was attached"));
-        assert!(text.contains("(1 step in a row)"));
-        assert!(text.ends_with("Your notes so far:\npay by card\nAnswer with the JSON object."));
+    fn actions_are_checked_placed_and_named() {
+        let vp = Viewport { width: 800, height: 600, page_height: 3000.0, ..Default::default() };
+        let raw = vec![
+            raw(r#"{"kind":"click","screen":2,"x":100,"y":50,"label":"Send","commit":"send","check":"a thank-you"}"#),
+            raw(r#"{"kind":"type","text":""}"#),
+            raw(r#"{"kind":"wait","ms":5}"#),
+            raw(r#"{"kind":"scroll","dy":99999}"#),
+            raw(r#"{"kind":"click","x":900,"y":50}"#),
+            raw(r#"{"kind":"survey"}"#),
+            raw(r#"{"kind":"dance"}"#),
+        ];
+        let (valid, dropped) = check_actions(3, raw, &vp, 30, &[0.0, 500.0]);
+        let ids: Vec<&str> = valid.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, vec!["s3a1", "s3a3", "s3a4", "s3a6"]);
+        assert_eq!(valid[0].scroll_to, Some(500.0));
+        assert_eq!(valid[0].zone, 2);
+        assert_eq!(valid[0].commit, Commit::Send);
+        assert_eq!(valid[0].label, "Send");
+        assert_eq!(valid[1].kind, Kind::Wait { ms: 100 });
+        assert_eq!(valid[2].kind, Kind::Scroll { x: Some(400.0), y: Some(300.0), dx: 0.0, dy: 1800.0 });
+        assert_eq!(valid[3].kind, Kind::Survey);
+        assert_eq!(dropped.len(), 3);
+    }
+
+    #[test]
+    fn the_reply_is_read_past_leading_text_and_the_schema_keeps_its_order() {
+        let reply = parse_reply("Sure. {\"status\":\"working\",\"message\":\"\",\"actions\":[{\"kind\":\"wait\",\"ms\":100}]}").unwrap();
+        assert_eq!(reply.status, Status::Working);
+        assert_eq!(reply.actions[0].kind, "wait");
+        assert!(parse_reply("").is_err());
+        let schema = reply_schema(true, true).to_string();
+        assert!(schema.find("\"observation\"").unwrap() < schema.find("\"actions\"").unwrap());
+        assert!(schema.contains("\"survey\""));
+        assert!(!reply_schema(false, false).to_string().contains("\"check\""));
     }
 }

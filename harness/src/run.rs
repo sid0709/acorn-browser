@@ -11,6 +11,7 @@ use crate::action::{Action, Kind};
 use crate::change;
 use crate::gate::Gate;
 use crate::model::{self, REPLY_SCHEMA_NAME};
+use crate::prompt;
 use crate::observe::{ActionResult, Observation};
 use crate::ports::{Browser, Error, Message, Model, ModelRequest, Role, Usage};
 use crate::profile::Profile;
@@ -237,19 +238,19 @@ impl Agent {
         }
         let number = s.step + 1;
 
-        let text = model::observation_text(number, s.step_limit, &obs, &results, &s.notes, &s.memo, stale);
+        let text = prompt::observation_text(number, s.step_limit, &obs, &results, &s.notes, &s.memo, stale);
         let images = if obs.survey.is_empty() {
             vec![obs.screenshot.clone()]
         } else {
             obs.survey.iter().map(|screen| screen.screenshot.clone()).collect()
         };
         let messages = vec![
-            Message { role: Role::System, text: model::system_prompt(&s.task, &s.profile, &self.config), images: Vec::new(), cache: true },
+            Message { role: Role::System, text: prompt::system_prompt(&s.task, &s.profile, &self.config), images: Vec::new(), cache: true },
             Message { role: Role::User, text, images, cache: false },
         ];
         let response = self
             .model
-            .complete(ModelRequest { messages, schema_name: REPLY_SCHEMA_NAME.to_string(), schema: model::reply_schema() })
+            .complete(ModelRequest { messages, schema_name: REPLY_SCHEMA_NAME.to_string(), schema: model::reply_schema(s.task.survey, self.config.checks) })
             .map_err(StepError::Model)?;
         s.usage.add(response.usage);
         let mut reply = model::parse_reply(&response.content).map_err(StepError::Reply)?;
@@ -263,16 +264,19 @@ impl Agent {
         s.carried.clear();
         s.notes.clear();
         if let Some(memo) = reply.memo.take() {
-            s.memo = clip(memo.trim(), model::MAX_MEMO_CHARS);
+            s.memo = model::clip_text(memo.trim(), model::MAX_MEMO_CHARS);
         }
 
-        let mut dropped = Vec::new();
-        let (mut planned, survey_asked) = self.check_actions(number, std::mem::take(&mut reply.actions), &obs, &mut dropped);
+        let screens: Vec<f64> = obs.survey.iter().map(|screen| screen.scroll_y).collect();
+        let (planned, mut dropped) = model::check_actions(number, std::mem::take(&mut reply.actions), &obs.viewport, self.config.max_actions, &screens);
+        let (mut planned, survey_asked) = without_survey(planned);
+        // A run that did not turn surveys on is not told they exist; one the model asks for anyway is ignored.
         let survey_asked = survey_asked && s.task.survey;
         self.gate.apply(s, &obs, &mut reply, &mut planned, &mut dropped);
 
         let actions = if reply.status != Status::Working {
-            Vec::new()
+            // A run that ends may still scroll what the person must act on into view.
+            scroll_only(planned, MAX_STOP_SCROLLS)
         } else {
             if planned.len() > self.config.unchecked_actions {
                 dropped.push(format!(
@@ -305,34 +309,29 @@ impl Agent {
         }
         Ok(step)
     }
+}
 
-    /// Keeps the actions the browser can carry out: at most `max_actions`, each at a point
-    /// inside the screenshot, named by the harness. A survey request is taken out and reported.
-    fn check_actions(&self, number: u32, actions: Vec<Action>, obs: &Observation, dropped: &mut Vec<String>) -> (Vec<Action>, bool) {
-        let mut out = Vec::new();
-        let mut survey_asked = false;
-        let width = obs.viewport.width as f64;
-        let height = obs.viewport.height as f64;
-        for (i, mut action) in actions.into_iter().enumerate() {
-            if out.len() >= self.config.max_actions {
-                dropped.push(format!("action {} and after: at most {} actions a step", i + 1, self.config.max_actions));
-                break;
-            }
-            if matches!(action.kind, Kind::Survey) {
-                survey_asked = true;
-                continue;
-            }
-            if let Some(p) = action.point()
-                && !(p.x >= 0.0 && p.x <= width && p.y >= 0.0 && p.y <= height)
-            {
-                dropped.push(format!("action {}: the point ({:.0}, {:.0}) lies outside the {}x{} screenshot", i + 1, p.x, p.y, obs.viewport.width, obs.viewport.height));
-                continue;
-            }
-            action.id = format!("s{number}a{}", out.len() + 1);
-            out.push(action);
-        }
-        (out, survey_asked)
-    }
+/// The most scroll actions a step that ends the run may still carry, to bring what the person
+/// must act on into view.
+const MAX_STOP_SCROLLS: usize = 2;
+
+/// Takes the survey requests out of a plan and says whether there was one.
+fn without_survey(actions: Vec<Action>) -> (Vec<Action>, bool) {
+    let mut asked = false;
+    let kept = actions
+        .into_iter()
+        .filter(|action| {
+            let is_survey = matches!(action.kind, Kind::Survey);
+            asked |= is_survey;
+            !is_survey
+        })
+        .collect();
+    (kept, asked)
+}
+
+/// The first `max` scrolls of a plan, and nothing else.
+fn scroll_only(actions: Vec<Action>, max: usize) -> Vec<Action> {
+    actions.into_iter().filter(|action| matches!(action.kind, Kind::Scroll { .. })).take(max).collect()
 }
 
 /// Runs a session to its end against a browser: look, step, act, and look again with the results,
@@ -372,13 +371,6 @@ fn first_failure(results: &[ActionResult]) -> String {
 fn end(s: &mut Session, status: Status, message: String, stop: StopInfo) -> Step {
     s.finished = true;
     Step { status, message, stop: Some(stop), actions: Vec::new(), number: s.step, usage: s.usage, dropped: Vec::new(), survey: false }
-}
-
-fn clip(text: &str, max_chars: usize) -> String {
-    match text.char_indices().nth(max_chars) {
-        Some((end, _)) => text[..end].to_string(),
-        None => text.to_string(),
-    }
 }
 
 #[cfg(test)]
