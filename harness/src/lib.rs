@@ -14,6 +14,7 @@ pub mod map;
 pub mod memory;
 pub mod model;
 pub mod observe;
+pub mod openrouter;
 pub mod ports;
 pub mod profile;
 pub mod prompt;
