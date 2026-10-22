@@ -35,7 +35,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 13. Observation text
 - [x] 14. Reply schema and parsing
 - [x] 15. One repair call on a bad reply
-- [ ] 16. HTTP retry with backoff
+- [x] 16. HTTP retry with backoff
 - [ ] 17. OpenRouter client
 
 **D. Memory**

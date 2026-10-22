@@ -2,10 +2,60 @@
 //! (here), retry a transport failure with backoff (`retry_delay`), and, later, compact when the
 //! context window is exceeded.
 
+use std::time::Duration;
+
 use serde_json::Value;
 
 use crate::model::{self, Reply};
-use crate::ports::{Error, Message, Model, ModelRequest, Role, Usage};
+use crate::ports::{Error, ErrorKind, Message, Model, ModelRequest, Role, Usage};
+
+/// The first backoff, doubled each retry.
+pub const RETRY_BASE: Duration = Duration::from_millis(500);
+/// The longest any backoff waits.
+pub const MAX_RETRY_WAIT: Duration = Duration::from_secs(8);
+/// How many times a transport call is tried before it gives up.
+pub const MAX_HTTP_ATTEMPTS: u32 = 3;
+
+/// How long to wait before retry `attempt` (from 0): the server's `Retry-After` seconds when it
+/// gave one, else an exponential backoff from [`RETRY_BASE`], both capped at [`MAX_RETRY_WAIT`].
+pub fn retry_delay(attempt: u32, retry_after: Option<&str>) -> Duration {
+    if let Some(secs) = retry_after.and_then(|v| v.trim().parse::<u64>().ok()).filter(|s| *s > 0) {
+        return Duration::from_secs(secs).min(MAX_RETRY_WAIT);
+    }
+    (RETRY_BASE * 2u32.saturating_pow(attempt)).min(MAX_RETRY_WAIT)
+}
+
+/// Whether a failed transport call is worth another attempt: a rate limit, a provider failure,
+/// or a dropped connection, but not a bad request or a context overflow.
+pub fn retryable(err: &Error) -> bool {
+    err.is_retryable()
+}
+
+/// Runs a transport call up to [`MAX_HTTP_ATTEMPTS`] times, waiting [`retry_delay`] between
+/// tries while the error is retryable. `sleep` is how the caller waits (so a test need not);
+/// `retry_after` reads the server's hint off the last error. Returns the last error when every
+/// attempt failed.
+pub fn with_retries<T>(
+    mut call: impl FnMut() -> Result<T, Error>,
+    retry_after: impl Fn(&Error) -> Option<String>,
+    mut sleep: impl FnMut(Duration),
+) -> Result<T, Error> {
+    let mut last = None;
+    for attempt in 0..MAX_HTTP_ATTEMPTS {
+        match call() {
+            Ok(value) => return Ok(value),
+            Err(err) => {
+                if !retryable(&err) || attempt + 1 == MAX_HTTP_ATTEMPTS {
+                    return Err(err);
+                }
+                let after = retry_after(&err);
+                last = Some(err);
+                sleep(retry_delay(attempt, after.as_deref()));
+            }
+        }
+    }
+    Err(last.unwrap_or_else(|| Error::new(ErrorKind::Other, "no attempt was made")))
+}
 
 /// How many times a step asks the model: the first try, then one repair of a reply that did not
 /// parse.
@@ -103,6 +153,38 @@ mod tests {
         let seen = model.seen.lock().unwrap();
         assert_eq!(seen.len(), 2);
         assert!(seen[1].contains("Answer again with only the JSON object"));
+    }
+
+    #[test]
+    fn backoff_doubles_and_honours_retry_after() {
+        assert_eq!(retry_delay(0, None), RETRY_BASE);
+        assert_eq!(retry_delay(1, None), RETRY_BASE * 2);
+        assert_eq!(retry_delay(10, None), MAX_RETRY_WAIT);
+        assert_eq!(retry_delay(0, Some("2")), Duration::from_secs(2));
+        assert_eq!(retry_delay(0, Some("999")), MAX_RETRY_WAIT);
+    }
+
+    #[test]
+    fn a_retryable_error_is_retried_a_bad_request_is_not() {
+        use std::cell::Cell;
+        let waited: Cell<u32> = Cell::new(0);
+        let tries: Cell<u32> = Cell::new(0);
+        let server_then_ok = || {
+            let n = tries.get();
+            tries.set(n + 1);
+            if n < 1 { Err(Error::new(ErrorKind::Server, "502")) } else { Ok(n) }
+        };
+        let got = with_retries(server_then_ok, |_| None, |_| waited.set(waited.get() + 1));
+        assert_eq!(got.unwrap(), 1);
+        assert_eq!(waited.get(), 1);
+
+        tries.set(0);
+        let always_bad = || -> Result<u32, Error> {
+            tries.set(tries.get() + 1);
+            Err(Error::new(ErrorKind::BadRequest, "400"))
+        };
+        assert!(with_retries(always_bad, |_| None, |_| {}).is_err());
+        assert_eq!(tries.get(), 1);
     }
 
     #[test]
