@@ -248,6 +248,11 @@ impl Agent {
     /// Starts the review of a zone's photo on its own thread, unless the zone has one: the fields
     /// the plan typed into in that zone. The session is locked.
     pub(crate) fn start_review(&self, s: &mut Session, shot: ZoneShot) {
+        // The photo is of the page as the plan left it: a settled stretch that no longer looks as
+        // it did is settled no more.
+        if let Ok((signature, _, _)) = change::signature(&shot.screenshot) {
+            s.check_settled(shot.scroll_y, s.viewport.height, &signature);
+        }
         if !self.reviews_on(s) {
             return;
         }

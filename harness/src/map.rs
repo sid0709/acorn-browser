@@ -6,7 +6,9 @@
 //! will not need to come back to it, the screen is settled. Settled parts are painted blue on a
 //! map of the page the person sees, are not shown to the model again, and are not scrolled to
 //! and photographed again in the next survey. They stay settled while the page is the same page
-//! and as tall as it was.
+//! and as tall as it was, and while they look as they did: each settled screen keeps the
+//! signature of its picture, and a look at the same place that no longer matches it unsettles
+//! that stretch alone.
 //!
 //! The model sees one screen at a time, so it cannot know what a long page holds above or below
 //! the screen. The run keeps, in screenshot pixels from the top of the page, which parts of it
@@ -19,6 +21,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::action::{Action, Kind};
+use crate::change::{self, Signature};
 use crate::observe::{Observation, Viewport, without_fragment};
 use crate::session::Session;
 
@@ -77,6 +80,15 @@ pub struct Settled {
     pub fence: f64,
     /// Set when the spans changed since they were last sent to the browser.
     changed: bool,
+    /// What each settled screen looked like, to tell when it no longer does.
+    shots: Vec<SettledShot>,
+}
+
+/// A settled screen's place on the page and the signature of its picture.
+#[derive(Clone, Debug)]
+struct SettledShot {
+    span: Span,
+    signature: Signature,
 }
 
 /// What a run has looked at on the page it is on.
@@ -164,9 +176,33 @@ impl Session {
         }
         if height + HEIGHT_TOLERANCE < self.settled.page_height {
             self.settled.spans = crop_settled(&self.settled.spans, height);
+            self.settled.shots.retain(|shot| shot.span.to <= height);
         }
         self.settled.page_height = height;
         self.settled.changed = true;
+    }
+
+    /// Compares a picture of the page at a scroll position with the settled screen taken there,
+    /// if one was: a screen that no longer looks as it did when it was settled is not settled any
+    /// more, and the model is told. Only that stretch goes; the rest stays settled.
+    pub(crate) fn check_settled(&mut self, scroll_y: f64, height: u32, signature: &Signature) {
+        let Some(shot) = self
+            .settled
+            .shots
+            .iter()
+            .find(|shot| (shot.span.from - scroll_y).abs() <= 1.0 && ((shot.span.to - shot.span.from) - height as f64).abs() <= 1.0)
+            .cloned()
+        else {
+            return;
+        };
+        if change::unchanged(&shot.signature, signature) {
+            return;
+        }
+        self.unsettle(shot.span.from, shot.span.to);
+        self.notes.push(format!(
+            "A part of the page you settled ({:.0} to {:.0} px) looks different now, so it is not settled any more and is in the survey again.",
+            shot.span.from, shot.span.to
+        ));
     }
 
     /// Records that the model has looked at every screen of a survey, and at every settled part:
@@ -203,7 +239,12 @@ impl Session {
             if touched.contains(&n) || self.empty_field_near(&obs.url, from, to) {
                 continue;
             }
-            added.push(Span { from, to });
+            let span = Span { from, to };
+            added.push(span);
+            if let Ok((signature, _, _)) = change::signature(&screen.screenshot) {
+                self.settled.shots.retain(|shot| (shot.span.from - from).abs() > 1.0);
+                self.settled.shots.push(SettledShot { span, signature });
+            }
         }
         if added.is_empty() {
             return 0;
@@ -297,6 +338,7 @@ impl Session {
             self.settled.spans = kept;
             self.settled.changed = true;
         }
+        self.settled.shots.retain(|shot| shot.span.to <= from || shot.span.from >= to);
     }
 
     /// Records where the plan about to be carried out first acts on the page, and tells the
@@ -382,5 +424,25 @@ mod tests {
         assert!(seen[1].contains("The page is 160 px tall (pixels from its top). You have looked at all of it."), "{}", seen[1]);
         assert!(seen[1].contains("You settled these parts of the page and they are not shown again (blue on the page's map): 0 to 60 px."), "{}", seen[1]);
         assert_eq!(merge_spans(&[Span { from: 10.0, to: 20.0 }, Span { from: 0.0, to: 11.0 }, Span { from: 30.0, to: 40.0 }]), vec![Span { from: 0.0, to: 20.0 }, Span { from: 30.0, to: 40.0 }]);
+    }
+
+    #[test]
+    fn a_settled_screen_that_looks_different_is_unsettled_alone() {
+        let reply = r#"{"status":"working","message":"","settled":[1,3],"fields":[],"actions":[{"kind":"wait","ms":100}]}"#;
+        let (model, seen) = Replying::new(reply);
+        let agent = Agent::new(Config { max_stale: 100, ..Config::default() }, model);
+        let id = agent.start(Task::new("read the page"), Profile::default());
+        let mut survey = look(false, &[]);
+        survey.viewport.page_height = 160.0;
+        survey.survey = [0.0, 50.0, 100.0].iter().map(|y| SurveyScreen { screenshot: survey.screenshot.clone(), scroll_y: *y }).collect();
+        let first = agent.step(&id, survey).unwrap();
+        assert_eq!(first.settled.unwrap().spans, vec![Span { from: 0.0, to: 60.0 }, Span { from: 100.0, to: 160.0 }]);
+        // A plain look at the top of the page, which no longer looks as it did: the top stretch
+        // goes, the bottom one stays.
+        let mut changed = look(true, &[]);
+        changed.viewport.page_height = 160.0;
+        let second = agent.step(&id, changed).unwrap();
+        assert_eq!(second.settled.unwrap().spans, vec![Span { from: 100.0, to: 160.0 }]);
+        assert!(seen.lock().unwrap()[1].contains("A part of the page you settled (0 to 60 px) looks different now"));
     }
 }

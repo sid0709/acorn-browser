@@ -265,6 +265,7 @@ impl Agent {
         s.see_page(&obs.url);
         s.cover.see(&obs.url, &obs.viewport);
         s.forget_settled_if_stale(&obs);
+        s.check_settled(obs.viewport.scroll_y, obs.viewport.height, &sig);
         s.see_survey(&obs);
         // The photos of the zones the plan just filled are reviewed on the side, and the reviews
         // that ended are taken in: what they found wrong is told to the model.

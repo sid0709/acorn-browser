@@ -56,7 +56,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 28. To-do list from the survey
 - [x] 29. Update from reviews
 - [x] 30. Settled stretches, skip re-shooting
-- [ ] 31. Partial invalidation by signature
+- [x] 31. Partial invalidation by signature
 
 **G. Intervention and report**
 - [ ] 32. User message queue
