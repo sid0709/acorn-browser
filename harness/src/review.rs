@@ -5,11 +5,14 @@
 //! a photo of the page. The decision model is asked, for each field the plan filled in that zone,
 //! whether the field shows what was typed into it, while the next zone is being carried out; a
 //! photo that comes with the next look instead is reviewed then. What the reviews found wrong is
-//! told to the model once, with the survey that follows, to put right in one answer.
+//! told to the model once, with the survey that follows, to put right in one answer; the rest of
+//! the plan is not carried out past it, since it would go on to send what is wrong.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
 
 use crate::action::{self, Action, Kind};
 use crate::change;
@@ -50,6 +53,18 @@ pub struct ReviewResult {
     pub failed: Vec<Expectation>,
     pub usage: Usage,
     pub error: Option<String>,
+}
+
+/// What the browser does with the rest of its batch once a zone's photo is taken in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AfterShot {
+    /// Carry on with the batch.
+    #[default]
+    GoOn,
+    /// Stop the batch and send the next look: a field filled earlier in it was found wrong, and
+    /// the model must see the page before the plan goes on.
+    Abort,
 }
 
 /// What a session keeps for the reviews running beside its plan. Shared with the threads that
@@ -106,6 +121,11 @@ impl Reviews {
     /// The reviews that ended since the last take.
     fn take(&self) -> Vec<ReviewResult> {
         std::mem::take(&mut self.state.lock().unwrap().done)
+    }
+
+    /// Whether a review of this plan that ended, and was not taken in yet, found a field wrong.
+    fn found_wrong(&self, plan_gen: u32) -> bool {
+        self.state.lock().unwrap().done.iter().any(|result| result.plan_gen == plan_gen && !result.failed.is_empty())
     }
 }
 
@@ -175,17 +195,23 @@ impl Agent {
     }
 
     /// Takes a photo of a zone the browser sent while a batch is still being carried out, so its
-    /// review runs while the next zone is. A photo that is not an image the size of the page's
-    /// window is dropped: the run goes on, and the page is looked at again after the plan.
-    pub fn receive_shot(&self, id: &str, shot: ZoneShot) -> Result<(), StepError> {
+    /// review runs while the next zone is, and says whether the batch goes on. A photo that is
+    /// not an image the size of the page's window is dropped: the run goes on, and the page is
+    /// looked at again after the plan.
+    pub fn receive_shot(&self, id: &str, shot: ZoneShot) -> Result<AfterShot, StepError> {
         let session = self.session(id).ok_or(StepError::NoSession)?;
         let mut s = session.lock().unwrap();
         s.touch();
         if s.viewport.has_size() && !fits_viewport(&shot, &s.viewport) {
-            return Ok(());
+            return Ok(AfterShot::GoOn);
         }
         self.start_review(&mut s, shot);
-        Ok(())
+        // A field filled earlier in the batch was found wrong: the rest of the batch would go on
+        // to send what is wrong, so it stops, and the model looks at the page first.
+        if s.reviews.found_wrong(s.plan_gen) {
+            return Ok(AfterShot::Abort);
+        }
+        Ok(AfterShot::GoOn)
     }
 
     /// Starts the review of a zone's photo on its own thread, unless the zone has one: the fields
@@ -224,12 +250,20 @@ impl Agent {
         if wrong.is_empty() {
             return;
         }
-        s.notes.push(format!(
+        let mut note = format!(
             "The harness looked at each part of the page right after it was filled in and found {} that {} not show what was planned: {}. Put them right in one answer; the screenshots you are given show the page as it is.",
             count(wrong.len(), "field"),
             if wrong.len() == 1 { "does" } else { "do" },
             wrong.join("; ")
-        ));
+        );
+        // The plan does not go on past a wrong fill: its next batches would send what is wrong.
+        // The model looks first; the results say what of the last batch ran.
+        if !s.verify.is_empty() {
+            s.plan.clear();
+            s.verify.clear();
+            note.push_str(" The rest of your plan was not carried out.");
+        }
+        s.notes.push(note);
         s.survey_again = true;
     }
 }
@@ -323,5 +357,33 @@ mod tests {
         assert!(step.survey);
         let seen = seen.lock().unwrap();
         assert!(seen[1].contains("found 1 field that does not show what was planned: \"Name\" does not show \"A. Person\" (screen 1)"), "{}", seen[1]);
+    }
+
+    #[test]
+    fn a_wrong_fill_found_mid_batch_stops_the_batch_and_the_rest_of_the_plan() {
+        let reply = r#"{"status":"working","message":"Filling.","actions":[
+            {"kind":"click","screen":1,"x":10,"y":10,"label":"Name"},{"kind":"type","text":"A. Person","check":"Name shows A. Person"},
+            {"kind":"click","screen":2,"x":10,"y":10,"label":"Email"},{"kind":"type","text":"a@b.c","check":"Email shows a@b.c"},
+            {"kind":"click","screen":2,"x":10,"y":40,"label":"Send","commit":"send","check":"a thank-you"}]}"#;
+        let (model, seen) = Replying::new(reply);
+        let agent = Agent::new(Config::default(), model).with_decider(Sure::of(&[(ASK_MATCHES, 1.0)]));
+        let id = agent.start(Task::new("fill the form"), Profile::default());
+        let mut survey = look(false, &[]);
+        let screen = SurveyScreen { screenshot: survey.screenshot.clone(), scroll_y: 0.0 };
+        survey.survey = vec![screen.clone(), screen];
+        let first = agent.step(&id, survey).unwrap();
+        // The whole page is one batch checked once, the send in it: a wrong fill found while the
+        // batch runs must stop it before the send.
+        assert_eq!(first.actions.len(), 5);
+        let shot = |zone| ZoneShot { zone, screenshot: look(true, &[]).screenshot, scroll_y: 0.0 };
+        assert_eq!(agent.receive_shot(&id, shot(1)).unwrap(), AfterShot::GoOn);
+        agent.session(&id).unwrap().lock().unwrap().reviews.wait_all(Duration::from_secs(5));
+        assert_eq!(agent.receive_shot(&id, shot(2)).unwrap(), AfterShot::Abort);
+        let step = agent.step(&id, look(true, &["s1a1", "s1a2"])).unwrap();
+        assert_eq!(step.number, 2);
+        assert!(step.survey);
+        let seen = seen.lock().unwrap();
+        assert!(seen[1].contains("found 2 fields that do not show what was planned: \"Name\" does not show \"A. Person\" (screen 1); \"Email\""), "{}", seen[1]);
+        assert!(seen[1].contains("show the page as it is. The rest of your plan was not carried out."), "{}", seen[1]);
     }
 }
