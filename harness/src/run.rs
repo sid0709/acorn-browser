@@ -134,6 +134,14 @@ impl Agent {
         self.sessions.lock().unwrap().remove(id);
     }
 
+    /// Lets a run that ended go on, with a whole step budget more. The next look is answered as
+    /// usual; the person may have done part of the page by hand in between.
+    pub fn resume(&self, id: &str) -> Result<(), StepError> {
+        let session = self.sessions.lock().unwrap().get(id).cloned().ok_or(StepError::NoSession)?;
+        session.lock().unwrap().extend();
+        Ok(())
+    }
+
     /// Answers one look with the next actions.
     pub fn step(&self, id: &str, obs: Observation) -> Result<Step, StepError> {
         let session = self.sessions.lock().unwrap().get(id).cloned().ok_or(StepError::NoSession)?;
@@ -151,6 +159,18 @@ impl Agent {
             return Err(StepError::BadObservation("the viewport has no size".to_string()));
         }
         let results: Vec<ActionResult> = s.carried.iter().cloned().chain(obs.results.iter().cloned()).collect();
+        if s.at_step_limit() {
+            return Ok(end(
+                s,
+                Status::Stuck,
+                format!("The run reached its limit of {} steps.", s.step_limit),
+                StopInfo {
+                    reason: StopReason::StepLimit,
+                    problem: format!("This task took more than {} steps, so the run stopped.", s.step_limit),
+                    action: "Finish the rest yourself, or let the run go on with more steps.".to_string(),
+                },
+            ));
+        }
         let number = s.step + 1;
 
         let text = model::observation_text(number, s.step_limit, &obs, &results, &s.notes, &s.memo);
@@ -247,6 +267,12 @@ impl Agent {
     }
 }
 
+/// Ends the run with no actions: the person is told why and what they can do.
+fn end(s: &mut Session, status: Status, message: String, stop: StopInfo) -> Step {
+    s.finished = true;
+    Step { status, message, stop: Some(stop), actions: Vec::new(), number: s.step, usage: s.usage, dropped: Vec::new(), survey: false }
+}
+
 fn clip(text: &str, max_chars: usize) -> String {
     match text.char_indices().nth(max_chars) {
         Some((end, _)) => text[..end].to_string(),
@@ -292,6 +318,23 @@ mod tests {
         assert_eq!(ids, vec!["s1a1", "s1a2"]);
         assert_eq!(step.dropped.len(), 1);
         assert!(agent.has(&id));
+    }
+
+    #[test]
+    fn the_step_limit_ends_the_run_and_resume_adds_a_budget() {
+        let reply = r#"{"status":"working","message":"","actions":[{"kind":"wait","ms":100}]}"#;
+        let agent = Agent::new(Config::default(), Box::new(Fixed(reply)));
+        let mut task = Task::new("go on for ever");
+        task.persistence.max_steps = 2;
+        let id = agent.start(task, Profile::default());
+        assert_eq!(agent.step(&id, look()).unwrap().status, Status::Working);
+        assert_eq!(agent.step(&id, look()).unwrap().status, Status::Working);
+        let third = agent.step(&id, look()).unwrap();
+        assert_eq!(third.status, Status::Stuck);
+        assert_eq!(third.stop.unwrap().reason, StopReason::StepLimit);
+        assert!(third.actions.is_empty());
+        agent.resume(&id).unwrap();
+        assert_eq!(agent.step(&id, look()).unwrap().status, Status::Working);
     }
 
     #[test]
