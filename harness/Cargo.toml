@@ -6,3 +6,4 @@ description = "A general-purpose agent harness: observe, plan, act, verify."
 license = "MIT"
 
 [dependencies]
+serde = { version = "1.0.229", features = ["derive"] }

@@ -17,7 +17,7 @@ One step, one commit. Build must pass; tests stay minimal.
 
 **A. Skeleton**
 - [x] 1. Crate, empty modules, build passes
-- [ ] 2. Observation struct
+- [x] 2. Observation struct
 - [ ] 3. Action struct and batches
 - [ ] 4. Traits: driving model, decision model, browser
 - [ ] 5. Task struct
