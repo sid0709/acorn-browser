@@ -20,7 +20,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 2. Observation struct
 - [x] 3. Action struct and batches
 - [x] 4. Traits: driving model, decision model, browser
-- [ ] 5. Task struct
+- [x] 5. Task struct
 - [ ] 6. Session struct
 
 **B. Minimal loop**
