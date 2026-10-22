@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Action {
+    /// Given by the harness as the plan is taken, as `s<step>a<n>`; the model does not name it.
+    #[serde(default)]
     pub id: String,
     #[serde(flatten)]
     pub kind: Kind,

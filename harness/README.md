@@ -24,7 +24,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 6. Session struct
 
 **B. Minimal loop**
-- [ ] 7. Step: observe, model, actions (gate slot, pass-through)
+- [x] 7. Step: observe, model, actions (gate slot, pass-through)
 - [ ] 8. End: step limit
 - [ ] 9. Unchanged-screen detection
 - [ ] 10. Repeated-failure detection
