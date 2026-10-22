@@ -39,11 +39,15 @@ pub struct Config {
     pub chunk_actions: usize,
     /// How many of the newest turns keep their screenshots in the history.
     pub keep_images: usize,
+    /// How many of the newest turns stay in full when the history is compacted.
+    pub keep_turns: usize,
+    /// The token budget the history is compacted to stay under.
+    pub history_tokens: usize,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { max_actions: 30, unchecked_actions: 6, max_stale: 6, max_failed_steps: 3, checks: false, chunk_actions: 6, keep_images: 0 }
+        Config { max_actions: 30, unchecked_actions: 6, max_stale: 6, max_failed_steps: 3, checks: false, chunk_actions: 6, keep_images: 0, keep_turns: 8, history_tokens: 30_000 }
     }
 }
 
@@ -248,7 +252,10 @@ impl Agent {
         } else {
             obs.survey.iter().map(|screen| screen.screenshot.clone()).collect()
         };
-        let mut messages = vec![Message { role: Role::System, text: prompt::system_prompt(&s.task, &s.profile, &self.config), cache: true, ..Default::default() }];
+        let system = prompt::system_prompt(&s.task, &s.profile, &self.config);
+        // Fold the oldest turns before building the prompt when the history passes budget.
+        s.memory.compact_if_over(self.config.keep_turns, self.config.history_tokens, system.len() / 4);
+        let mut messages = vec![Message { role: Role::System, text: system, cache: true, ..Default::default() }];
         messages.extend(s.memory.history(self.config.keep_images));
         // The prompt grows only at its end, so the provider caches up to the end of the history.
         if let Some(last) = messages.last_mut() {

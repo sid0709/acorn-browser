@@ -82,6 +82,50 @@ impl Memory {
         }
     }
 
+    /// Moves the oldest kept turn into the folded summary lines, bounded to the newest
+    /// MAX_FOLDED_LINES.
+    pub fn fold(&mut self) {
+        if self.turns.is_empty() {
+            return;
+        }
+        let turn = self.turns.remove(0);
+        self.folded.push(clip(&turn.summary, MAX_SUMMARY_CHARS));
+        if self.folded.len() > MAX_FOLDED_LINES {
+            let drop = self.folded.len() - MAX_FOLDED_LINES;
+            self.folded.drain(..drop);
+        }
+    }
+
+    /// Makes the history small when it passes `budget` tokens: the newest `keep_turns` turns
+    /// stay in full, and if that is still over budget the oldest are folded until it is not or
+    /// one turn is left. `system_tokens` is the fixed cost of the system prompt. Done in one go,
+    /// so the prompt grows by appending for many steps before it is compacted again.
+    pub fn compact_if_over(&mut self, keep_turns: usize, budget: usize, system_tokens: usize) {
+        if self.budget_used(system_tokens) <= budget {
+            return;
+        }
+        while self.turns.len() > keep_turns {
+            self.fold();
+        }
+        while self.turns.len() > 1 && self.budget_used(system_tokens) > budget {
+            self.fold();
+        }
+    }
+
+    /// An estimate of the tokens the history takes: text at four characters a token, each kept
+    /// screenshot at APPROX_IMAGE_TOKENS, plus the system prompt.
+    pub fn budget_used(&self, system_tokens: usize) -> usize {
+        let mut total = system_tokens;
+        for turn in &self.turns {
+            total += (turn.text.len() + turn.answer.len()) / 4;
+            total += turn.images.len() * APPROX_IMAGE_TOKENS;
+        }
+        for line in &self.folded {
+            total += line.len() / 4;
+        }
+        total
+    }
+
     /// How many turns are kept in full.
     pub fn len(&self) -> usize {
         self.turns.len()
@@ -170,6 +214,40 @@ mod tests {
         // The older turns' images are gone from memory, so even asking for more finds none.
         let kept: usize = memory.history(5).iter().filter(|m| !m.images.is_empty()).count();
         assert_eq!(kept, 1);
+    }
+
+    #[test]
+    fn folding_moves_the_oldest_turn_to_a_line() {
+        let mut memory = Memory::default();
+        memory.record(turn(1, false));
+        memory.record(turn(2, false));
+        memory.fold();
+        assert_eq!(memory.len(), 1);
+        let messages = memory.history(0);
+        assert!(messages[0].text.starts_with("Earlier in this run"));
+        assert!(messages[0].text.contains("step 1: did a thing"));
+    }
+
+    #[test]
+    fn compaction_folds_the_oldest_turns_when_over_budget() {
+        let mut memory = Memory::default();
+        for n in 1..=10 {
+            // Each turn's text is a few hundred characters, so ~100 tokens.
+            let mut t = turn(n, false);
+            t.text = "x".repeat(400);
+            memory.record(t);
+        }
+        let before = memory.budget_used(0);
+        assert!(before > 200);
+        // Keep at most 3 turns and stay under a small budget.
+        memory.compact_if_over(3, 150, 0);
+        assert!(memory.len() <= 3);
+        assert!(memory.budget_used(0) <= 150 || memory.len() == 1);
+        // A run under budget is left alone.
+        let mut small = Memory::default();
+        small.record(turn(1, false));
+        small.compact_if_over(3, 10_000, 0);
+        assert_eq!(small.len(), 1);
     }
 
     #[test]
