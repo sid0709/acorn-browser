@@ -8,6 +8,7 @@ use std::time::{Instant, SystemTime};
 use crate::action::{Action, Batch};
 use crate::change::Signature;
 use crate::focus::FocusTarget;
+use crate::map::{Coverage, Settled};
 use crate::memory::Memory;
 use crate::observe::{ActionResult, Viewport};
 use crate::ports::Usage;
@@ -93,6 +94,10 @@ pub struct Session {
     pub fields_changed: bool,
     /// Counts the changes to the list, so a wait for a newer list (`Agent::wait_fields`) knows one.
     pub fields_version: u32,
+    /// The parts of the page the model will not come back to, and what the run has looked at on
+    /// the page it is on.
+    pub settled: Settled,
+    pub cover: Coverage,
     /// The previous screenshot's signature, for telling whether the page changed.
     pub last_signature: Option<Signature>,
     /// Steps in a row where the screen did not change.
@@ -146,6 +151,8 @@ impl Session {
             fields_url: String::new(),
             fields_changed: false,
             fields_version: 0,
+            settled: Settled::default(),
+            cover: Coverage::default(),
             last_signature: None,
             stale: 0,
             failed_streak: 0,

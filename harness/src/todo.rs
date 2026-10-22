@@ -115,6 +115,11 @@ impl Session {
         self.fields_on(url).iter().filter(|f| f.state == FieldStatus::Empty).map(|f| f.label.as_str()).collect()
     }
 
+    /// Whether a field the model read as empty lies in a stretch of the page.
+    pub(crate) fn empty_field_near(&self, url: &str, from: f64, to: f64) -> bool {
+        self.fields_on(url).iter().any(|f| f.state == FieldStatus::Empty && f.y >= from && f.y <= to)
+    }
+
     /// The list to send with the answer when it changed, and forgets that it changed.
     pub(crate) fn take_fields(&mut self) -> Vec<FieldState> {
         if !self.fields_changed {

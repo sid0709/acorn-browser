@@ -40,6 +40,10 @@ pub struct Reply {
     /// Why the run ends for the person, when it does.
     #[serde(default)]
     pub stop: Option<StopInfo>,
+    /// The screens of a survey the model will not need to come back to; `None` when the look is
+    /// not a survey.
+    #[serde(default)]
+    pub settled: Option<Vec<u32>>,
     /// Every question of the form as the model reads it on a survey, with where it is and whether
     /// it is answered; `None` when the look is not a survey.
     #[serde(default)]
@@ -320,6 +324,8 @@ pub fn reply_schema(survey: bool, checks: bool) -> Value {
         ("stop", stop),
     ];
     if survey {
+        // The screens the model will not come back to: asked last of the notes, before the plan.
+        fields.push(("settled", json!({"type": ["array", "null"], "items": {"type": "integer"}})));
         // Every question of the form as the model reads it, with its state: the run's to-do list.
         let field = object(vec![
             ("label", string.clone()),

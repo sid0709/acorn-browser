@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::action::{self, Action, Kind};
 use crate::change;
 use crate::focus;
+use crate::map::{self, SettledMap};
 use crate::mark;
 use crate::memory::{self, Turn};
 use crate::gate::Gate;
@@ -138,6 +139,11 @@ pub struct Step {
     /// last survey and the reviews corrected it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<FieldState>,
+    /// The parts of the page the model settled, when they changed: the browser paints them on
+    /// the map the person sees and does not photograph them again in the next survey. An empty
+    /// map says nothing is settled any more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled: Option<SettledMap>,
 }
 
 /// Why a step could not be answered.
@@ -232,6 +238,8 @@ impl Agent {
             step.survey_focus = s.survey_focus(&url);
         }
         step.fields = s.take_fields();
+        // Every answer carries the settled parts when they changed, however it was made.
+        step.settled = s.take_settled_map();
         Ok(step)
     }
 
@@ -255,6 +263,9 @@ impl Agent {
         }
         s.viewport = obs.viewport;
         s.see_page(&obs.url);
+        s.cover.see(&obs.url, &obs.viewport);
+        s.forget_settled_if_stale(&obs);
+        s.see_survey(&obs);
         // The photos of the zones the plan just filled are reviewed on the side, and the reviews
         // that ended are taken in: what they found wrong is told to the model.
         for shot in review::accept_zone_shots(&obs) {
@@ -337,10 +348,15 @@ impl Agent {
         if s.parts > 1 && s.sent == s.planned && s.notes.is_empty() {
             notes.push(format!("Your plan ran in {} parts. After each part but the last, a checker confirmed the screen showed what you expected.", s.parts));
         }
+        let reach = s.cover.line(&obs.viewport);
+        if !reach.is_empty() {
+            notes.push(reach);
+        }
         if !obs.survey.is_empty() {
-            let fields = s.fields_note(&obs);
-            if !fields.is_empty() {
-                notes.push(fields);
+            for note in [s.settled_note(), s.fields_note(&obs)] {
+                if !note.is_empty() {
+                    notes.push(note);
+                }
             }
         }
         let text = prompt::observation_text(number, s.step_limit, &obs, &results, &notes, &s.memo, stale);
@@ -398,6 +414,12 @@ impl Agent {
         // A run that did not turn surveys on is not told they exist; one the model asks for anyway is ignored.
         let survey_asked = survey_asked && s.task.survey;
         action::inherit_zones(&mut planned);
+        let (kept, blue) = s.without_blue_scrolls(planned, &obs);
+        planned = kept;
+        if blue > 0 {
+            dropped.push(format!("{} to a settled part of the page not made", prompt::count(blue, "scroll")));
+            s.notes.push(map::BLUE_SCROLL_NOTE.to_string());
+        }
         // Each labelled point of a plan made from a survey is checked against its label before
         // the plan runs; a doubt is told to the model, never acted on.
         if reply.status == Status::Working {
@@ -409,6 +431,10 @@ impl Agent {
         s.expect = review::expectations_of(&planned, &obs);
         s.expect_url = observe::without_fragment(&obs.url).to_string();
         s.plan_scroll_y = obs.viewport.scroll_y;
+        if let Some(settled) = &reply.settled {
+            s.mark_settled(&obs, settled, &planned);
+        }
+        s.set_fence(&planned, &obs);
         // The line that stands for the step once it is folded names the whole plan, not only
         // the batch that goes out first.
         let summary = memory::summary_line(number, &s.message, &planned);
@@ -441,6 +467,7 @@ impl Agent {
             survey,
             survey_focus: Vec::new(),
             fields: Vec::new(),
+            settled: None,
         };
         if step.status != Status::Working {
             s.finished = true;

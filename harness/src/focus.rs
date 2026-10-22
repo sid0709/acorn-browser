@@ -73,6 +73,9 @@ impl Session {
             return;
         }
         self.retry.push(FocusTarget { label: label.to_string(), y });
+        // What was settled round it is not settled any more.
+        let half = self.viewport.height as f64 / 2.0;
+        self.unsettle(y - half, y + half);
         self.survey_again = true;
     }
 
