@@ -32,6 +32,16 @@ pub fn signature(data_url: &str) -> Result<(Signature, u32, u32), String> {
     Ok((grid(&img), width, height))
 }
 
+/// The size in pixels of an image data URL, read from its header without decoding the picture.
+pub fn image_size(data_url: &str) -> Result<(u32, u32), String> {
+    let raw = decode_data_url(data_url)?;
+    image::ImageReader::new(std::io::Cursor::new(raw))
+        .with_guessed_format()
+        .map_err(|e| format!("the picture is not a readable image: {e}"))?
+        .into_dimensions()
+        .map_err(|e| format!("the picture is not a readable image: {e}"))
+}
+
 /// The bytes of an image data URL.
 pub fn decode_data_url(data_url: &str) -> Result<Vec<u8>, String> {
     let comma = data_url.find(',');
@@ -97,6 +107,7 @@ mod tests {
         let (again, _, _) = signature(&test_screenshot(64, 48, false)).unwrap();
         let (marked, _, _) = signature(&test_screenshot(64, 48, true)).unwrap();
         assert_eq!((w, h), (64, 48));
+        assert_eq!(image_size(&test_screenshot(64, 48, false)).unwrap(), (64, 48));
         assert!(unchanged(&plain, &again));
         assert!(!unchanged(&plain, &marked));
         assert!(!unchanged(&[], &[]));

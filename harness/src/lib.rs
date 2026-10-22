@@ -20,9 +20,12 @@ pub mod profile;
 pub mod prompt;
 pub mod recover;
 pub mod report;
+pub mod review;
 pub mod run;
 pub mod session;
 pub mod task;
+#[cfg(test)]
+pub(crate) mod testing;
 pub mod todo;
 pub mod trace;
 pub mod verify;

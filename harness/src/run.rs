@@ -8,13 +8,14 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::action::{Action, Kind};
+use crate::action::{self, Action, Kind};
 use crate::change;
 use crate::memory::{self, Turn};
 use crate::gate::Gate;
 use crate::model::{self, REPLY_SCHEMA_NAME};
 use crate::prompt;
 use crate::recover;
+use crate::review;
 use crate::observe::{ActionResult, Observation};
 use crate::ports::{Browser, Decider, Error, ErrorKind, Message, Model, Role, Usage};
 use crate::profile::Profile;
@@ -42,6 +43,9 @@ pub struct Config {
     pub checkpoint: Thresholds,
     /// How long one wait for a loading page is.
     pub load_wait: Duration,
+    /// The longest a look waits for the reviews of the last plan's zones that are still running;
+    /// what has not come back by then is picked up at the look after.
+    pub review_wait: Duration,
     /// How many of the newest turns keep their screenshots in the history.
     pub keep_images: usize,
     /// How many of the newest turns stay in full when the history is compacted.
@@ -60,6 +64,7 @@ impl Default for Config {
             chunk_actions: 6,
             checkpoint: Thresholds::default(),
             load_wait: Duration::from_secs(1),
+            review_wait: Duration::from_secs(6),
             keep_images: 0,
             keep_turns: 8,
             history_tokens: 30_000,
@@ -154,9 +159,9 @@ impl std::error::Error for StepError {}
 pub struct Agent {
     pub(crate) config: Config,
     model: Box<dyn Model + Send + Sync>,
-    /// The decision model that checks the screen between batches of a plan; `None` turns the
-    /// checks off.
-    pub(crate) decider: Option<Box<dyn Decider + Send + Sync>>,
+    /// The decision model that checks the screen between batches of a plan and reviews what the
+    /// plan filled in; `None` turns both off. Shared with the threads the reviews run on.
+    pub(crate) decider: Option<Arc<dyn Decider + Send + Sync>>,
     gate: Gate,
     sessions: Mutex<HashMap<String, Arc<Mutex<Session>>>>,
 }
@@ -169,8 +174,13 @@ impl Agent {
     /// Wires in the decision model that checks the screen after each batch of a plan, so the
     /// next batch can go out without the driving model looking again.
     pub fn with_decider(mut self, decider: Box<dyn Decider + Send + Sync>) -> Self {
-        self.decider = Some(decider);
+        self.decider = Some(Arc::from(decider));
         self
+    }
+
+    /// The live session with this id.
+    pub(crate) fn session(&self, id: &str) -> Option<Arc<Mutex<Session>>> {
+        self.sessions.lock().unwrap().get(id).cloned()
     }
 
     /// Begins a run and returns its id.
@@ -193,14 +203,14 @@ impl Agent {
     /// Lets a run that ended go on, with a whole step budget more. The next look is answered as
     /// usual; the person may have done part of the page by hand in between.
     pub fn resume(&self, id: &str) -> Result<(), StepError> {
-        let session = self.sessions.lock().unwrap().get(id).cloned().ok_or(StepError::NoSession)?;
+        let session = self.session(id).ok_or(StepError::NoSession)?;
         session.lock().unwrap().extend();
         Ok(())
     }
 
     /// Answers one look with the next actions.
     pub fn step(&self, id: &str, obs: Observation) -> Result<Step, StepError> {
-        let session = self.sessions.lock().unwrap().get(id).cloned().ok_or(StepError::NoSession)?;
+        let session = self.session(id).ok_or(StepError::NoSession)?;
         let mut s = session.lock().unwrap();
         self.step_locked(&mut s, obs)
     }
@@ -223,6 +233,13 @@ impl Agent {
                 obs.viewport.width, obs.viewport.height
             )));
         }
+        s.viewport = obs.viewport;
+        // The photos of the zones the plan just filled are reviewed on the side, and the reviews
+        // that ended are taken in: what they found wrong is told to the model.
+        for shot in review::accept_zone_shots(&obs) {
+            self.start_review(s, shot);
+        }
+        self.collect_reviews(s);
         // What happened to every action sent since the model last looked, which may be several
         // batches of one plan.
         let results: Vec<ActionResult> = s.carried.iter().cloned().chain(obs.results.iter().cloned()).collect();
@@ -346,7 +363,11 @@ impl Agent {
         let (mut planned, survey_asked) = without_survey(planned);
         // A run that did not turn surveys on is not told they exist; one the model asks for anyway is ignored.
         let survey_asked = survey_asked && s.task.survey;
+        action::inherit_zones(&mut planned);
         self.gate.apply(s, &obs, &mut reply, &mut planned, &mut dropped);
+        // What this plan fills in, by zone, for the reviews of its zones.
+        s.plan_gen += 1;
+        s.expect = review::expectations_of(&planned, &obs);
         // The line that stands for the step once it is folded names the whole plan, not only
         // the batch that goes out first.
         let summary = memory::summary_line(number, &s.message, &planned);
@@ -367,6 +388,7 @@ impl Agent {
         s.memory.record(Turn { number, text, images, answer: answer.content, summary });
         s.memory.release_images(self.config.keep_images);
 
+        let survey = reply.status == Status::Working && self.survey_next(s, survey_asked);
         let step = Step {
             status: reply.status,
             message: s.message.clone(),
@@ -375,12 +397,25 @@ impl Agent {
             number,
             usage: s.usage,
             dropped,
-            survey: reply.status == Status::Working && survey_asked,
+            survey,
         };
         if step.status != Status::Working {
             s.finished = true;
         }
         Ok(step)
+    }
+}
+
+impl Agent {
+    /// Whether the browser's next look is a survey of the whole page: when the model asked for
+    /// one, or something found on the way needs the whole page looked at again. Never for a run
+    /// without surveys.
+    pub(crate) fn survey_next(&self, s: &mut Session, asked: bool) -> bool {
+        if (asked || s.survey_again) && s.task.survey {
+            s.survey_again = false;
+            return true;
+        }
+        false
     }
 }
 

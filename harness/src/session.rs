@@ -1,15 +1,17 @@
 //! One run of one task: the task, the profile it acts as, the model's memory, and the run's state.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::{BuildHasher, Hasher, RandomState};
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use crate::action::{Action, Batch};
 use crate::change::Signature;
 use crate::memory::Memory;
-use crate::observe::ActionResult;
+use crate::observe::{ActionResult, Viewport};
 use crate::ports::Usage;
 use crate::profile::Profile;
+use crate::review::{Expectation, Reviews};
 use crate::task::Task;
 
 /// One application of the harness to one task, from the first look to the end.
@@ -57,6 +59,17 @@ pub struct Session {
     pub load_waits: u32,
     /// Set once a check failed: the rest of the run goes without them.
     pub checks_off: bool,
+    /// The window as the last look saw it, to check the pictures sent mid-batch against.
+    pub viewport: Viewport,
+    /// Counts the plans the model has made, and what the current one fills in, by zone, for the
+    /// reviews of its zones.
+    pub plan_gen: u32,
+    pub expect: BTreeMap<u32, Vec<Expectation>>,
+    /// The reviews running beside the plan, shared with the threads that run them.
+    pub reviews: Arc<Reviews>,
+    /// Asks for the next look to be a survey: something was found that the model must see the
+    /// whole page again to put right.
+    pub survey_again: bool,
     /// The previous screenshot's signature, for telling whether the page changed.
     pub last_signature: Option<Signature>,
     /// Steps in a row where the screen did not change.
@@ -94,6 +107,11 @@ impl Session {
             parts: 0,
             load_waits: 0,
             checks_off: false,
+            viewport: Viewport::default(),
+            plan_gen: 0,
+            expect: BTreeMap::new(),
+            reviews: Arc::new(Reviews::default()),
+            survey_again: false,
             last_signature: None,
             stale: 0,
             failed_streak: 0,

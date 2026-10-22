@@ -151,6 +151,21 @@ pub enum Commit {
     Send,
 }
 
+/// Gives the actions without a point (typing, keys, scrolls, waits) the zone of the action before
+/// them, and the ones before the first point the first zone, so a zone's photo is taken once its
+/// typing is done too. Changes nothing when no action has a zone.
+pub fn inherit_zones(actions: &mut [Action]) {
+    let Some(first) = actions.iter().map(|a| a.zone).find(|zone| *zone > 0) else { return };
+    let mut current = first;
+    for action in actions {
+        if action.zone > 0 {
+            current = action.zone;
+        } else {
+            action.zone = current;
+        }
+    }
+}
+
 /// A run of actions the browser carries out without the model looking in between, and what the
 /// screen should show when it is done.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -243,6 +258,49 @@ fn combined_check(actions: &[Action]) -> String {
     }
 }
 
+/// The least a label may have, once its words are read, to agree with another: a label of a
+/// letter or two would begin too many others.
+pub const MIN_LABEL_AGREE_CHARS: usize = 3;
+/// A beginning long enough to agree in the middle of a word: both the model's label and the
+/// page's are cut short at a fixed length, which falls where it falls.
+pub const LONG_LABEL_AGREE_CHARS: usize = 24;
+
+/// A label as words only: lower case, with every run of anything but a letter or a digit made
+/// one space, so case, spacing and punctuation (a required mark, a colon) do not count.
+pub fn label_words(label: &str) -> String {
+    let mut out = String::with_capacity(label.len());
+    let mut space = false;
+    for c in label.to_lowercase().chars() {
+        if c.is_alphanumeric() {
+            if space && !out.is_empty() {
+                out.push(' ');
+            }
+            space = false;
+            out.push(c);
+        } else {
+            space = true;
+        }
+    }
+    out
+}
+
+/// Whether two labels name the same control: the same words, or one begins with the other's
+/// words, since the model writes a long question in a few words and a page's own label is cut
+/// short. Neither may be empty or too short.
+pub fn labels_agree(a: &str, b: &str) -> bool {
+    let (a, b) = (label_words(a), label_words(b));
+    if a.len() < MIN_LABEL_AGREE_CHARS || b.len() < MIN_LABEL_AGREE_CHARS {
+        return false;
+    }
+    a == b || begins_with_words(&a, &b) || begins_with_words(&b, &a)
+}
+
+/// Whether the text starts with the whole words of the prefix, or with a long enough prefix
+/// wherever it was cut.
+fn begins_with_words(text: &str, prefix: &str) -> bool {
+    text.starts_with(prefix) && (text.len() == prefix.len() || text.as_bytes()[prefix.len()] == b' ' || prefix.len() >= LONG_LABEL_AGREE_CHARS)
+}
+
 fn is_zero(v: &f64) -> bool {
     *v == 0.0
 }
@@ -287,6 +345,14 @@ mod tests {
         assert_eq!(batches[0].expect, format!("{COMBINED_CHECK_PREFIX}Name shows x; Email shows x"));
         // One field only: cut as usual, at the limit.
         assert_eq!(split_plan_for_checks(vec![click("c1", ""), typed("t1", ""), click("c2", "")], 2, true).len(), 2);
+    }
+
+    #[test]
+    fn labels_agree_on_their_words() {
+        assert!(labels_agree("First name *", "first name"));
+        assert!(labels_agree("Email", "Email address"));
+        assert!(!labels_agree("Email", "Emailing"));
+        assert!(!labels_agree("A", "A"));
     }
 
     #[test]

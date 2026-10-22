@@ -214,7 +214,8 @@ impl Agent {
                 }
                 let plan = std::mem::take(&mut s.plan);
                 let (actions, dropped) = self.send_batch(s, plan, Vec::new());
-                Some(Step { status: Status::Working, message: s.message.clone(), actions, number: s.step, usage: s.usage, dropped, ..Default::default() })
+                let survey = self.survey_next(s, false);
+                Some(Step { status: Status::Working, message: s.message.clone(), actions, number: s.step, usage: s.usage, dropped, survey, ..Default::default() })
             }
             Outcome::Wait => {
                 s.load_waits += 1;
@@ -259,64 +260,21 @@ fn failed_results(results: &[ActionResult]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::change;
-    use crate::observe::Viewport;
-    use crate::ports::{Answer, ModelRequest, ModelResponse, Model};
     use crate::profile::Profile;
     use crate::run::Config;
     use crate::task::Task;
-    use std::collections::BTreeMap;
+    use crate::testing::{Replying, Sure, look as look_at};
     use std::sync::{Arc, Mutex};
 
-    /// Always plans the same two batches, and keeps what it was told.
-    struct Planner {
-        seen: Arc<Mutex<Vec<String>>>,
-    }
-
-    impl Model for Planner {
-        fn complete(&self, request: ModelRequest) -> Result<ModelResponse, Error> {
-            self.seen.lock().unwrap().push(request.messages.last().unwrap().text.clone());
-            let reply = r#"{"status":"working","message":"Filling.","actions":[
-                {"kind":"click","x":10,"y":10,"label":"Name","check":"the Name field is focused"},
-                {"kind":"type","text":"A. Person"},
-                {"kind":"click","x":10,"y":50,"label":"Send","commit":"send","check":"a thank-you"}]}"#;
-            Ok(ModelResponse { content: reply.to_string(), ..Default::default() })
-        }
-        fn name(&self) -> &str {
-            "planner"
-        }
-    }
-
-    /// Answers every check with the same probability of a match, and no doubt otherwise.
-    struct Sure(f64);
-
-    impl Decider for Sure {
-        fn decide(&self, decision: Decision) -> Result<Verdicts, Error> {
-            let mut answers = BTreeMap::new();
-            for key in decision.questions.keys() {
-                let probability = if key == ASK_MATCHES { self.0 } else { 0.0 };
-                answers.insert(key.clone(), Answer { probability: Some(probability), ..Default::default() });
-            }
-            Ok(Verdicts { answers, ..Default::default() })
-        }
-        fn name(&self) -> &str {
-            "sure"
-        }
-    }
-
-    fn look_at(mark: bool, done: &[&str]) -> Observation {
-        Observation {
-            screenshot: change::test_screenshot(80, 60, mark),
-            viewport: Viewport { width: 80, height: 60, ..Default::default() },
-            results: done.iter().map(|id| ActionResult { id: id.to_string(), ok: true, ..Default::default() }).collect(),
-            ..Default::default()
-        }
-    }
-
+    /// An agent whose model always plans the same two batches and whose checker is this sure of
+    /// a match, with the texts the model is sent.
     fn agent(matches: f64) -> (Agent, Arc<Mutex<Vec<String>>>) {
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let agent = Agent::new(Config::default(), Box::new(Planner { seen: seen.clone() })).with_decider(Box::new(Sure(matches)));
-        (agent, seen)
+        let reply = r#"{"status":"working","message":"Filling.","actions":[
+            {"kind":"click","x":10,"y":10,"label":"Name","check":"the Name field is focused"},
+            {"kind":"type","text":"A. Person"},
+            {"kind":"click","x":10,"y":50,"label":"Send","commit":"send","check":"a thank-you"}]}"#;
+        let (model, seen) = Replying::new(reply);
+        (Agent::new(Config::default(), model).with_decider(Sure::of(&[(ASK_MATCHES, matches)])), seen)
     }
 
     fn ids(step: &Step) -> Vec<&str> {

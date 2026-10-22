@@ -30,6 +30,12 @@ pub struct Observation {
     /// it. Empty on an ordinary look.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub survey: Vec<SurveyScreen>,
+    /// The photos of the zones of the plan just carried out, each taken when the last action of
+    /// its zone was done; the zone is the survey screen the actions were measured on. A browser
+    /// that can send a photo while the batch still runs hands it to `Agent::receive_shot`
+    /// instead, so its review runs meanwhile.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub zone_shots: Vec<ZoneShot>,
     /// What became of the actions sent at the step before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub results: Vec<ActionResult>,
@@ -87,6 +93,16 @@ pub struct Focus {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SurveyScreen {
+    pub screenshot: String,
+    pub scroll_y: f64,
+}
+
+/// The photo of a zone of a plan, taken when its last action was done: the zone's number and
+/// where the page was scrolled to (screenshot pixels).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZoneShot {
+    pub zone: u32,
     pub screenshot: String,
     pub scroll_y: f64,
 }

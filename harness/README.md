@@ -47,7 +47,7 @@ One step, one commit. Build must pass; tests stay minimal.
 **E. Verification**
 - [x] 22. Checkpoint: expected screen after a batch
 - [x] 23. Skip the model when the checkpoint holds
-- [ ] 24. Async review, no waiting
+- [x] 24. Async review, no waiting
 - [ ] 25. Abort the batch on a wrong fill
 - [ ] 26. Point check before a plan
 - [ ] 27. Missed-click guidance
