@@ -112,6 +112,14 @@ impl Memory {
         }
     }
 
+    /// Folds the oldest turns until at most `keep` remain. Used when the prompt is too long for
+    /// the model even after an ordinary compaction.
+    pub fn fold_to(&mut self, keep: usize) {
+        while self.turns.len() > keep {
+            self.fold();
+        }
+    }
+
     /// An estimate of the tokens the history takes: text at four characters a token, each kept
     /// screenshot at APPROX_IMAGE_TOKENS, plus the system prompt.
     pub fn budget_used(&self, system_tokens: usize) -> usize {

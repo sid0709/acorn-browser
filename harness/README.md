@@ -42,7 +42,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 18. Turn history, image lifetime
 - [x] 19. Fold old turns to one line
 - [x] 20. Compact on token budget
-- [ ] 21. Context overflow: compact and retry
+- [x] 21. Context overflow: compact and retry
 
 **E. Verification**
 - [ ] 22. Checkpoint: expected screen after a batch

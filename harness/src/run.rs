@@ -15,7 +15,7 @@ use crate::model::{self, REPLY_SCHEMA_NAME};
 use crate::prompt;
 use crate::recover;
 use crate::observe::{ActionResult, Observation};
-use crate::ports::{Browser, Error, Message, Model, Role, Usage};
+use crate::ports::{Browser, Error, ErrorKind, Message, Model, Role, Usage};
 use crate::profile::Profile;
 use crate::session::Session;
 use crate::task::{StopReason, Task};
@@ -255,20 +255,32 @@ impl Agent {
         let system = prompt::system_prompt(&s.task, &s.profile, &self.config);
         // Fold the oldest turns before building the prompt when the history passes budget.
         s.memory.compact_if_over(self.config.keep_turns, self.config.history_tokens, system.len() / 4);
-        let mut messages = vec![Message { role: Role::System, text: system, cache: true, ..Default::default() }];
-        messages.extend(s.memory.history(self.config.keep_images));
-        // The prompt grows only at its end, so the provider caches up to the end of the history.
-        if let Some(last) = messages.last_mut() {
-            last.cache = true;
-        }
-        messages.push(Message { role: Role::User, text: text.clone(), images: images.clone(), cache: false });
-        let answer = recover::ask(self.model.as_ref(), messages, REPLY_SCHEMA_NAME, model::reply_schema(s.task.survey, self.config.checks)).map_err(|e| match e {
-            recover::AskError::Model(err) => StepError::Model(err),
-            recover::AskError::Reply { why, usage } => {
-                s.usage.add(usage);
-                StepError::Reply(why)
+        let schema = model::reply_schema(s.task.survey, self.config.checks);
+        // The prompt may still be too long for the model; one overflow folds the history to its
+        // most recent turn and the step is tried once more.
+        let mut compacted_for_overflow = false;
+        let answer = loop {
+            let mut messages = vec![Message { role: Role::System, text: system.clone(), cache: true, ..Default::default() }];
+            messages.extend(s.memory.history(self.config.keep_images));
+            // The prompt grows only at its end, so the provider caches up to the end of the history.
+            if let Some(last) = messages.last_mut() {
+                last.cache = true;
             }
-        })?;
+            messages.push(Message { role: Role::User, text: text.clone(), images: images.clone(), cache: false });
+            match recover::ask(self.model.as_ref(), messages, REPLY_SCHEMA_NAME, schema.clone()) {
+                Ok(answer) => break answer,
+                Err(recover::AskError::Model(err)) if err.kind == ErrorKind::ContextWindow && !compacted_for_overflow && !s.memory.is_empty() => {
+                    compacted_for_overflow = true;
+                    s.memory.fold_to(1);
+                    continue;
+                }
+                Err(recover::AskError::Model(err)) => return Err(StepError::Model(err)),
+                Err(recover::AskError::Reply { why, usage }) => {
+                    s.usage.add(usage);
+                    return Err(StepError::Reply(why));
+                }
+            }
+        };
         s.usage.add(answer.usage);
         let mut reply = answer.reply;
 
@@ -470,6 +482,33 @@ mod tests {
         assert_eq!(third.stop.unwrap().reason, StopReason::StepLimit);
         assert!(third.actions.is_empty());
         agent.resume(&id).unwrap();
+        assert_eq!(agent.step(&id, look()).unwrap().status, Status::Working);
+    }
+
+    struct OverflowOnce {
+        calls: std::sync::Mutex<u32>,
+    }
+
+    impl Model for OverflowOnce {
+        fn complete(&self, _request: ModelRequest) -> Result<ModelResponse, Error> {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            if *calls == 2 {
+                return Err(Error::new(ErrorKind::ContextWindow, "prompt too long"));
+            }
+            Ok(ModelResponse { content: r#"{"status":"working","message":"","actions":[{"kind":"wait","ms":100}]}"#.to_string(), ..Default::default() })
+        }
+        fn name(&self) -> &str {
+            "overflow-once"
+        }
+    }
+
+    #[test]
+    fn a_context_overflow_folds_the_history_and_retries() {
+        let agent = Agent::new(Config { max_stale: 100, ..Config::default() }, Box::new(OverflowOnce { calls: std::sync::Mutex::new(0) }));
+        let id = agent.start(Task::new("go on"), Profile::default());
+        // First step records a turn; second step overflows, folds, and succeeds on retry.
+        assert_eq!(agent.step(&id, look()).unwrap().status, Status::Working);
         assert_eq!(agent.step(&id, look()).unwrap().status, Status::Working);
     }
 
