@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::task::Irreversible;
+
 /// One thing for the browser to do, at one point of the page.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,7 +139,8 @@ impl Kind {
     }
 }
 
-/// What a click does beyond the click, in the model's judgment of the screen.
+/// What a click does beyond the click, in the model's judgment of the screen. The kinds that
+/// commit something beyond the page are the gate's to let out, as the person allows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Commit {
@@ -146,9 +149,27 @@ pub enum Commit {
     None,
     /// Goes on to another page or step of the same task.
     Next,
-    /// Commits the task to the outside: sends, submits, pays, posts. The gate decides whether
-    /// such a click may go out.
+    /// Sends or submits to someone: an application, a message, an order.
     Send,
+    Pay,
+    /// Publishes where others see it.
+    Post,
+    Delete,
+    CreateAccount,
+}
+
+impl Commit {
+    /// The kind of action that cannot be taken back the click is, when it is one.
+    pub fn irreversible(self) -> Option<Irreversible> {
+        match self {
+            Commit::Send => Some(Irreversible::Send),
+            Commit::Pay => Some(Irreversible::Pay),
+            Commit::Post => Some(Irreversible::Post),
+            Commit::Delete => Some(Irreversible::Delete),
+            Commit::CreateAccount => Some(Irreversible::CreateAccount),
+            Commit::None | Commit::Next => None,
+        }
+    }
 }
 
 /// Gives the actions without a point (typing, keys, scrolls, waits) the zone of the action before

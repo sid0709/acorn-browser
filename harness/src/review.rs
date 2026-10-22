@@ -371,6 +371,7 @@ impl Session {
         if self.confirmed_url != url {
             self.confirmed.clear();
             self.confirmed_url = url.to_string();
+            self.held_reserved = None;
         }
     }
 }
@@ -436,7 +437,8 @@ mod tests {
             {"kind":"click","screen":2,"x":10,"y":40,"label":"Send","commit":"send","check":"a thank-you"}]}"#;
         let (model, seen) = Replying::new(reply);
         let agent = Agent::new(Config::default(), model).with_decider(Sure::of(&[(ASK_MATCHES, 1.0)]));
-        let id = agent.start(Task::new("fill the form"), Profile::default());
+        let task = Task::new("fill the form").allow(crate::task::Irreversible::Send, crate::task::Allowance::Auto);
+        let id = agent.start(task, Profile::default());
         let mut survey = look(false, &[]);
         let screen = SurveyScreen { screenshot: survey.screenshot.clone(), scroll_y: 0.0 };
         survey.survey = vec![screen.clone(), screen];

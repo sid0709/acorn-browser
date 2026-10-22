@@ -295,9 +295,14 @@ mod tests {
     use super::*;
     use crate::profile::Profile;
     use crate::run::Config;
-    use crate::task::Task;
+    use crate::task::{Allowance, Irreversible, Task};
     use crate::testing::{Replying, Sure, look as look_at};
     use std::sync::{Arc, Mutex};
+
+    /// A task whose send the run may press on its own.
+    fn task() -> Task {
+        Task::new("fill the form").allow(Irreversible::Send, Allowance::Auto)
+    }
 
     /// An agent whose model always plans the same two batches and whose checker is this sure of
     /// a match, with the texts the model is sent.
@@ -317,7 +322,7 @@ mod tests {
     #[test]
     fn a_confirmed_checkpoint_sends_the_next_batch_without_the_model() {
         let (agent, seen) = agent(1.0);
-        let id = agent.start(Task::new("fill the form"), Profile::default());
+        let id = agent.start(task(), Profile::default());
         let first = agent.step(&id, look_at(false, &[])).unwrap();
         assert_eq!(ids(&first), ["s1a1"]);
         let second = agent.step(&id, look_at(true, &["s1a1"])).unwrap();
@@ -335,7 +340,7 @@ mod tests {
     #[test]
     fn a_message_from_the_person_stops_a_running_plan_and_reaches_the_model() {
         let (agent, seen) = agent(1.0);
-        let id = agent.start(Task::new("fill the form"), Profile::default());
+        let id = agent.start(task(), Profile::default());
         agent.step(&id, look_at(false, &[])).unwrap();
         agent.say(&id, "  use my work email instead ").unwrap();
         let second = agent.step(&id, look_at(true, &["s1a1"])).unwrap();
@@ -349,7 +354,7 @@ mod tests {
     #[test]
     fn a_checkpoint_that_fails_gives_the_plan_up_and_the_model_looks() {
         let (agent, seen) = agent(0.1);
-        let id = agent.start(Task::new("fill the form"), Profile::default());
+        let id = agent.start(task(), Profile::default());
         agent.step(&id, look_at(false, &[])).unwrap();
         let second = agent.step(&id, look_at(true, &["s1a1"])).unwrap();
         assert_eq!(second.number, 2);

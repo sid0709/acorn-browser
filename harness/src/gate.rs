@@ -17,6 +17,12 @@
 //!   as a pass fills some of them; a stop for a human check the screen does not show is sent back
 //!   once, to press the button that sends the page first; otherwise the first stop of a run is
 //!   sent back once, to go through the whole page, and later ones while parts of it are unseen.
+//! - An action that cannot be taken back goes out only as the person allows. The model names
+//!   what each click commits (`Action::commit`); the task's allowances say, per kind, whether
+//!   the run may do it on its own, must ask first, or never may. A click to ask about is held
+//!   with what follows it, a question goes to the person, and the rest of the plan goes on; the
+//!   answer sets the allowance and tells the model. A click the person reserved for themselves
+//!   is held, and when nothing else is left the run ends ready for them.
 
 use std::collections::BTreeMap;
 use std::time::SystemTime;
@@ -26,9 +32,9 @@ use crate::model::Reply;
 use crate::observe::{Observation, without_fragment};
 use crate::ports::{Decision, Part, Question};
 use crate::prompt;
-use crate::run::{Agent, Status, StopInfo};
+use crate::run::{Agent, Question as Asked, Status, StopInfo};
 use crate::session::Session;
-use crate::task::{StopReason, Task};
+use crate::task::{Allowance, StopReason, Task};
 use crate::trace::ModelCall;
 
 /// What the person sees while the harness makes the model look again.
@@ -55,7 +61,22 @@ pub struct FieldHold {
 impl Agent {
     /// Applies the rules to the model's reply before its plan goes out. `number` names the step,
     /// for an action the gate puts in.
-    pub(crate) fn gate(&self, s: &mut Session, obs: &Observation, reply: &mut Reply, planned: &mut Vec<Action>, _dropped: &mut Vec<String>, number: u32) {
+    pub(crate) fn gate(&self, s: &mut Session, obs: &Observation, reply: &mut Reply, planned: &mut Vec<Action>, dropped: &mut Vec<String>, number: u32) {
+        let held = if reply.status == Status::Working { self.hold_irreversible(s, planned, dropped) } else { None };
+        // The click the person reserved for themselves was all that was left: the run ends
+        // ready for them, and no confirmation of "done" is asked of the screen.
+        if let Some(kind) = s.held_reserved
+            && (reply.status == Status::Done || (held == Some(Allowance::Never) && planned.is_empty()))
+        {
+            reply.status = Status::NeedPerson;
+            reply.message = format!("Ready: everything else is done, and the click to {} was left for you.", kind.verb());
+            reply.stop = Some(StopInfo {
+                reason: StopReason::Reserved,
+                problem: format!("Under your settings the run does not {} on its own.", kind.verb()),
+                action: "Do that on the page yourself.".to_string(),
+            });
+            planned.clear();
+        }
         if let Some(note) = self.hold_done(s, obs, reply) {
             reply.status = Status::Working;
             reply.message = DONE_PASS_MESSAGE.to_string();
@@ -70,12 +91,57 @@ impl Agent {
         }
     }
 
+    /// Holds the first click that commits something beyond the page, and what follows it, when
+    /// the person's settings say to ask first or never: the rest of the plan goes out, and the
+    /// model is told. Says which allowance held it.
+    fn hold_irreversible(&self, s: &mut Session, planned: &mut Vec<Action>, dropped: &mut Vec<String>) -> Option<Allowance> {
+        let at = planned.iter().position(|a| a.commit.irreversible().is_some_and(|kind| s.task.allowance(kind) != Allowance::Auto))?;
+        let kind = planned[at].commit.irreversible()?;
+        let allowance = s.task.allowance(kind);
+        let held = planned.split_off(at);
+        let label = held[0].label.trim();
+        let what = if label.is_empty() { format!("the click that would {}", kind.verb()) } else { format!("{label:?}") };
+        let with = prompt::count(held.len() - 1, "later action");
+        match allowance {
+            Allowance::Ask => {
+                dropped.push(format!("{what} was held back ({with} with it): the person is asked first whether the run may {}", kind.verb()));
+                if s.asked_for.insert(kind) {
+                    let question = Asked {
+                        id: format!("q{}", s.questions.len() + 1),
+                        text: format!("May the run {} on your behalf ({what})? Answer yes or no.", kind.verb()),
+                        answer: None,
+                        allows: Some(kind),
+                    };
+                    s.questions.push(question.clone());
+                    s.asked_now.push(question);
+                }
+                s.notes.push(format!(
+                    "The harness did not press {what}: the person is asked first whether you may {}. Go on with everything else meanwhile; when the page is complete and the person has allowed it (you will be told), plan that click again on its own.",
+                    kind.verb()
+                ));
+            }
+            _ => {
+                dropped.push(format!("{what} was held back ({with} with it): the person does this themselves"));
+                s.notes.push(format!(
+                    "The harness did not press {what}: the person will {} themselves, so never press it. Do everything else; when nothing is left, report done, and the run ends as ready for them.",
+                    kind.verb()
+                ));
+                s.held_reserved = Some(kind);
+            }
+        }
+        Some(allowance)
+    }
+
     /// Says whether a stop is sent back, with the note that tells the model why.
     fn hold_stop(&self, s: &mut Session, obs: &Observation, reply: &Reply) -> Option<String> {
         if !matches!(reply.status, Status::NeedPerson | Status::Stuck) {
             return None;
         }
         let reason = reply.stop.as_ref().map(|stop| stop.reason);
+        // The harness's own stops stand.
+        if reason.is_some_and(StopReason::is_harness_own) {
+            return None;
+        }
         let named = reason.map(prompt::reason_name).unwrap_or_else(|| "no reason given".to_string());
         let passes = self.config.stop_passes;
         // The task's own policy: a reason the person did not allow a stop for is sent back, as
@@ -285,6 +351,7 @@ mod tests {
     use super::*;
     use crate::profile::Profile;
     use crate::run::Config;
+    use crate::task::Irreversible;
     use crate::testing::{Replying, Sure, look};
 
     #[test]
@@ -328,5 +395,36 @@ mod tests {
         agent.step(&id, look(false, &[])).unwrap();
         assert_eq!(agent.step(&id, look(true, &[])).unwrap().status, Status::Working);
         assert!(seen.lock().unwrap()[1].contains("You asked to stop (other), but under this task's rules that is not a reason to stop"));
+    }
+
+    #[test]
+    fn a_click_the_person_must_allow_is_held_and_asked_about_and_one_they_reserved_ends_the_run_ready() {
+        let plan = r#"{"status":"working","message":"Sending.","actions":[{"kind":"click","x":10,"y":10,"label":"Name"},{"kind":"type","text":"A"},{"kind":"click","x":10,"y":40,"label":"Send","commit":"send"},{"kind":"wait","ms":500}]}"#;
+        let (model, seen) = Replying::new(plan);
+        let agent = Agent::new(Config { max_stale: 100, ..Config::default() }, model);
+        let id = agent.start(Task::new("send the form"), Profile::default());
+        let first = agent.step(&id, look(false, &[])).unwrap();
+        assert_eq!(first.actions.len(), 2);
+        assert_eq!(first.dropped, vec!["\"Send\" was held back (1 later action with it): the person is asked first whether the run may send or submit"]);
+        assert_eq!(first.questions[0].allows, Some(Irreversible::Send));
+        agent.answer(&id, &first.questions[0].id, "Yes.").unwrap();
+        let second = agent.step(&id, look(true, &[])).unwrap();
+        assert_eq!(second.actions.len(), 4);
+        assert!(second.questions.is_empty());
+        assert!(seen.lock().unwrap()[1].contains("The person allows you to send or submit on their behalf"));
+
+        let (model, _) = Replying::new(plan);
+        let agent = Agent::new(Config { max_stale: 100, ..Config::default() }, model);
+        let id = agent.start(Task::new("send the form").allow(Irreversible::Send, Allowance::Never), Profile::default());
+        assert_eq!(agent.step(&id, look(false, &[])).unwrap().actions.len(), 2);
+        agent.forbid(&id, Irreversible::Send).unwrap();
+        // Nothing else left but the reserved click: the run ends ready for the person.
+        let (model, _) = Replying::new(r#"{"status":"working","message":"","actions":[{"kind":"click","x":10,"y":40,"label":"Send","commit":"send"}]}"#);
+        let agent = Agent::new(Config { max_stale: 100, ..Config::default() }, model);
+        let id = agent.start(Task::new("send the form").allow(Irreversible::Send, Allowance::Never), Profile::default());
+        let step = agent.step(&id, look(false, &[])).unwrap();
+        assert_eq!(step.status, Status::NeedPerson);
+        assert_eq!(step.stop.unwrap().reason, StopReason::Reserved);
+        assert!(step.actions.is_empty());
     }
 }

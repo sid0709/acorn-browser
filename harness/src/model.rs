@@ -264,6 +264,10 @@ fn commit_of(input: &RawAction, kind: &Kind) -> Commit {
     match input.commit.as_deref().map(str::trim) {
         Some("next") => Commit::Next,
         Some("send") => Commit::Send,
+        Some("pay") => Commit::Pay,
+        Some("post") => Commit::Post,
+        Some("delete") => Commit::Delete,
+        Some("create_account") => Commit::CreateAccount,
         _ => Commit::None,
     }
 }
@@ -309,7 +313,7 @@ pub fn reply_schema(survey: bool, checks: bool) -> Value {
         object(fields)
     };
     let mut shapes = vec![
-        point(&["click", "double_click", "triple_click", "right_click", "hover"], vec![("commit", json!({"anyOf": [{"type": "null"}, {"type": "string", "enum": ["next", "send"]}]}))]),
+        point(&["click", "double_click", "triple_click", "right_click", "hover"], vec![("commit", json!({"anyOf": [{"type": "null"}, {"type": "string", "enum": ["next", "send", "pay", "post", "delete", "create_account"]}]}))]),
         point(&["upload"], vec![("resource", null_string.clone())]),
         plain("type", vec![("text", string.clone()), ("secret", json!({"type": ["boolean", "null"]}))]),
         plain("key", vec![("keys", string.clone())]),

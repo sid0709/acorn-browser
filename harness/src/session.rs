@@ -1,6 +1,6 @@
 //! One run of one task: the task, the profile it acts as, the model's memory, and the run's state.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
@@ -16,7 +16,7 @@ use crate::ports::Usage;
 use crate::profile::Profile;
 use crate::review::{Expectation, Reviews};
 use crate::run::{Question, Status, StopInfo};
-use crate::task::Task;
+use crate::task::{Allowance, Irreversible, Task};
 use crate::todo::FieldState;
 use crate::trace::{CheckTrace, ModelCall};
 
@@ -60,8 +60,14 @@ pub struct Session {
     pub field_hold: FieldHold,
     /// What the person wrote since the model last looked, oldest first.
     pub inbox: Vec<String>,
-    /// Every question the run asked the person, with the answer when one came.
+    /// Every question the run asked the person, with the answer when one came; the ones the gate
+    /// asked this step, for the step to carry; and the kinds of action it already asked leave for.
     pub questions: Vec<Question>,
+    pub asked_now: Vec<Question>,
+    pub asked_for: BTreeSet<Irreversible>,
+    /// The kind of action the person reserved for themselves that the gate held on this page:
+    /// when nothing else is left, the run ends ready for them.
+    pub held_reserved: Option<Irreversible>,
     /// The model's own notes to itself, carried from step to step and shown with each look.
     pub memo: String,
     /// The model's latest line for the person, shown again while its plan runs on without it.
@@ -161,6 +167,9 @@ impl Session {
             field_hold: FieldHold::default(),
             inbox: Vec::new(),
             questions: Vec::new(),
+            asked_now: Vec::new(),
+            asked_for: BTreeSet::new(),
+            held_reserved: None,
             memo: String::new(),
             message: String::new(),
             usage: Usage::default(),
@@ -213,6 +222,19 @@ impl Session {
 
     pub fn touch(&mut self) {
         self.touched = Instant::now();
+    }
+
+    /// Sets what the run may do for one kind of action that cannot be taken back, answers the
+    /// question that asked, and tells the model.
+    pub(crate) fn allow(&mut self, kind: Irreversible, allowance: Allowance) {
+        self.task.allowances.insert(kind, allowance);
+        for question in self.questions.iter_mut().filter(|q| q.allows == Some(kind) && q.answer.is_none()) {
+            question.answer = Some(if allowance == Allowance::Auto { "yes" } else { "no" }.to_string());
+        }
+        self.inbox.push(match allowance {
+            Allowance::Auto => format!("The person allows you to {} on their behalf: plan that click again, on its own, when the page is complete.", kind.verb()),
+            _ => format!("The person does not allow the run to {}: never press that click. Do everything else, then report done, and the run ends ready for them.", kind.verb()),
+        });
     }
 
     /// Drops the model's plan and the count of it: nothing of it is sent or checked again.

@@ -164,6 +164,9 @@ pub enum StopReason {
     RepeatedFailure,
     /// The model said done, but the screen never confirmed it.
     NotConfirmed,
+    /// An action the person reserved for themselves was all that was left: the run ends ready
+    /// for them to do it.
+    Reserved,
 }
 
 impl StopReason {
@@ -188,7 +191,7 @@ impl StopReason {
     pub fn is_harness_own(self) -> bool {
         matches!(
             self,
-            StopReason::NoChange | StopReason::StepLimit | StopReason::RepeatedFailure | StopReason::NotConfirmed
+            StopReason::NoChange | StopReason::StepLimit | StopReason::RepeatedFailure | StopReason::NotConfirmed | StopReason::Reserved
         )
     }
 }
@@ -204,6 +207,19 @@ pub enum Irreversible {
     Post,
     Delete,
     CreateAccount,
+}
+
+impl Irreversible {
+    /// The action as a verb phrase: "send or submit", "pay", ...
+    pub fn verb(self) -> &'static str {
+        match self {
+            Irreversible::Send => "send or submit",
+            Irreversible::Pay => "pay",
+            Irreversible::Post => "post",
+            Irreversible::Delete => "delete",
+            Irreversible::CreateAccount => "create an account",
+        }
+    }
 }
 
 /// What the run may do on its own for one kind of irreversible action.

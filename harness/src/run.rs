@@ -23,7 +23,7 @@ use crate::ports::{Browser, Decider, Error, ErrorKind, Message, Model, Role, Usa
 use crate::profile::Profile;
 use crate::report::Report;
 use crate::session::Session;
-use crate::task::{StopReason, Task};
+use crate::task::{Allowance, Irreversible, StopReason, Task};
 use crate::todo::FieldState;
 use crate::trace::{self, ModelCall, SessionTrace, StartTrace, StepTrace, Tracer};
 use crate::verify::Thresholds;
@@ -138,11 +138,15 @@ pub struct StopInfo {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Question {
-    /// Given by the harness, as `q<step>`.
+    /// Given by the harness, as `q<n>`.
     pub id: String,
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+    /// Set when the question asks leave for an action that cannot be taken back: a yes or no
+    /// answer sets what the run may do (`Agent::allow`, `Agent::forbid`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allows: Option<Irreversible>,
 }
 
 /// The harness's answer to one look: what to do next, and how the run stands.
@@ -326,11 +330,39 @@ impl Agent {
         let message = match s.questions.iter_mut().find(|q| q.id == question_id) {
             Some(question) => {
                 question.answer = Some(text.clone());
+                // A plain yes or no to a question that asked leave settles what the run may do.
+                if let Some(kind) = question.allows {
+                    match text.trim_end_matches(['.', '!']).to_lowercase().as_str() {
+                        "yes" | "y" => return Ok(s.allow(kind, Allowance::Auto)),
+                        "no" | "n" => return Ok(s.allow(kind, Allowance::Never)),
+                        _ => {}
+                    }
+                }
                 format!("Answer to your question {:?}: {text}", question.text)
             }
             None => text,
         };
         s.inbox.push(message);
+        Ok(())
+    }
+
+    /// Lets the run do one kind of action that cannot be taken back on its own, from now on, and
+    /// tells the model so.
+    pub fn allow(&self, id: &str, kind: Irreversible) -> Result<(), StepError> {
+        let session = self.session(id).ok_or(StepError::NoSession)?;
+        let mut s = session.lock().unwrap();
+        s.touch();
+        s.allow(kind, Allowance::Auto);
+        Ok(())
+    }
+
+    /// Keeps the run from one kind of action that cannot be taken back: the person does it
+    /// themselves, and the run ends ready for them when nothing else is left.
+    pub fn forbid(&self, id: &str, kind: Irreversible) -> Result<(), StepError> {
+        let session = self.session(id).ok_or(StepError::NoSession)?;
+        let mut s = session.lock().unwrap();
+        s.touch();
+        s.allow(kind, Allowance::Never);
         Ok(())
     }
 
@@ -566,7 +598,7 @@ impl Agent {
             .as_deref()
             .map(str::trim)
             .filter(|text| !text.is_empty() && !s.questions.iter().any(|asked| asked.text == *text))
-            .map(|text| Question { id: format!("q{number}"), text: model::clip_text(text, MAX_MESSAGE_CHARS), answer: None })
+            .map(|text| Question { id: format!("q{}", s.questions.len() + 1), text: model::clip_text(text, MAX_MESSAGE_CHARS), answer: None, allows: None })
             .into_iter()
             .collect();
         s.questions.extend(questions.iter().cloned());
@@ -620,6 +652,9 @@ impl Agent {
         s.memory.record(Turn { number, text, images, answer: answer.content, summary });
         s.memory.release_images(self.config.keep_images);
 
+        // The gate may have asked the person for leave: that question goes with the step too.
+        let mut questions = questions;
+        questions.extend(s.asked_now.drain(..));
         let survey = reply.status == Status::Working && self.survey_next(s, survey_asked);
         let step = Step {
             status: reply.status,
@@ -902,7 +937,7 @@ mod tests {
         let agent = Agent::new(Config { max_stale: 100, ..Config::default() }, model);
         let id = agent.start(Task::new("buy a kettle"), Profile::default());
         let step = agent.step(&id, look()).unwrap();
-        assert_eq!(step.questions, vec![Question { id: "q1".into(), text: "Which card should I use, the blue one or the red one?".into(), answer: None }]);
+        assert_eq!(step.questions, vec![Question { id: "q1".into(), text: "Which card should I use, the blue one or the red one?".into(), answer: None, allows: None }]);
         agent.answer(&id, "q1", "the blue one").unwrap();
         agent.answer(&id, "q9", "and no gift wrap").unwrap();
         assert!(agent.step(&id, look()).unwrap().questions.is_empty());
