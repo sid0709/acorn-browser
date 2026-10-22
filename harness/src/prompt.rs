@@ -13,17 +13,18 @@ use crate::task::{Allowance, Irreversible, StopReason, Task};
 const SYSTEM_TEMPLATE: &str = include_str!("prompts/system.md");
 
 /// The standing instruction, the same on every step of a run so the provider can cache it: the
-/// task, how to answer, when to stop, what the person allows, and who they are.
-pub fn system_prompt(task: &Task, profile: &Profile, config: &Config) -> String {
+/// task, how to answer, when to stop, what the person allows, and who they are. `checks` is
+/// whether a decision model checks the screen between batches of a plan, for the whole run.
+pub fn system_prompt(task: &Task, profile: &Profile, config: &Config, checks: bool) -> String {
     let mut values: BTreeMap<&str, String> = BTreeMap::new();
     values.insert("goal", task.goal.trim().to_string());
     values.insert("done_when", task.done_when.trim().to_string());
-    values.insert("max_actions", config.max_actions.to_string());
+    values.insert("max_actions", config.plan_limit(checks).to_string());
     values.insert("chunk", config.chunk_actions.to_string());
     values.insert("stop_reasons", stop_reason_lines(task));
     values.insert("allowances", allowance_lines(task));
     values.insert("survey", if task.survey { "yes".to_string() } else { String::new() });
-    values.insert("checks", if config.checks { "yes".to_string() } else { String::new() });
+    values.insert("checks", if checks { "yes".to_string() } else { String::new() });
     values.insert(
         "profile",
         if profile.facts.trim().is_empty() { "The person gave no details about themselves.".to_string() } else { profile.facts.trim().to_string() },
@@ -258,15 +259,20 @@ mod tests {
 
         let mut task = Task::new("Buy a kettle.").allow(Irreversible::Pay, Allowance::Auto);
         task.survey = false;
-        let prompt = system_prompt(&task, &Profile::new("Name: B."), &Config::default());
+        let prompt = system_prompt(&task, &Profile::new("Name: B."), &Config::default(), false);
         assert!(prompt.contains("Buy a kettle."));
+        assert!(prompt.contains("up to 6,"));
+        assert!(!prompt.contains("\"check\""));
         assert!(prompt.contains("- pay (pay, enter a card, start a subscription): allowed"));
         assert!(prompt.contains("- send (submit, send, apply, place an order): ask first"));
         assert!(prompt.contains("reason \"captcha\""));
         assert!(!prompt.contains("# Seeing the whole page"));
         assert!(!prompt.contains("{{"));
         task.survey = true;
-        assert!(system_prompt(&task, &Profile::default(), &Config::default()).contains("# Seeing the whole page"));
+        let prompt = system_prompt(&task, &Profile::default(), &Config::default(), true);
+        assert!(prompt.contains("# Seeing the whole page"));
+        assert!(prompt.contains("up to 30,"));
+        assert!(prompt.contains("\"check\""));
     }
 
     #[test]

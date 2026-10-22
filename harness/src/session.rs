@@ -1,8 +1,10 @@
 //! One run of one task: the task, the profile it acts as, the model's memory, and the run's state.
 
+use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::time::{Instant, SystemTime};
 
+use crate::action::{Action, Batch};
 use crate::change::Signature;
 use crate::memory::Memory;
 use crate::observe::ActionResult;
@@ -30,6 +32,8 @@ pub struct Session {
     pub finished: bool,
     /// The model's own notes to itself, carried from step to step and shown with each look.
     pub memo: String,
+    /// The model's latest line for the person, shown again while its plan runs on without it.
+    pub message: String,
     /// What the models have cost the run so far.
     pub usage: Usage,
     /// Things the model is told on its next look, about what its plan did.
@@ -38,6 +42,21 @@ pub struct Session {
     pub memory: Memory,
     /// Results of actions sent since the model last looked, which may be several batches.
     pub carried: Vec<ActionResult>,
+    /// What the model planned and has not yet been sent, one batch per check.
+    pub plan: Vec<Batch>,
+    /// What the screen should show after the batch just sent, until that batch is checked.
+    pub verify: String,
+    /// The actions of the model's latest plan by id, to match a result to its action.
+    pub by_id: HashMap<String, Action>,
+    /// How many actions the model's latest plan held, how many of them went out, and in how
+    /// many batches.
+    pub planned: usize,
+    pub sent: usize,
+    pub parts: usize,
+    /// Waits in a row for a loading page, with no model call.
+    pub load_waits: u32,
+    /// Set once a check failed: the rest of the run goes without them.
+    pub checks_off: bool,
     /// The previous screenshot's signature, for telling whether the page changed.
     pub last_signature: Option<Signature>,
     /// Steps in a row where the screen did not change.
@@ -62,10 +81,19 @@ impl Session {
             step_limit,
             finished: false,
             memo: String::new(),
+            message: String::new(),
             usage: Usage::default(),
             notes: Vec::new(),
             memory: Memory::default(),
             carried: Vec::new(),
+            plan: Vec::new(),
+            verify: String::new(),
+            by_id: HashMap::new(),
+            planned: 0,
+            sent: 0,
+            parts: 0,
+            load_waits: 0,
+            checks_off: false,
             last_signature: None,
             stale: 0,
             failed_streak: 0,
@@ -86,6 +114,15 @@ impl Session {
 
     pub fn touch(&mut self) {
         self.touched = Instant::now();
+    }
+
+    /// Drops the model's plan and the count of it: nothing of it is sent or checked again.
+    pub fn forget_plan(&mut self) {
+        self.plan.clear();
+        self.verify.clear();
+        self.planned = 0;
+        self.sent = 0;
+        self.parts = 0;
     }
 }
 

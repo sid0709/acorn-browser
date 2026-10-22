@@ -1,16 +1,18 @@
-//! One full run of the loop against a scripted model and a browser that only draws pictures.
-//! Run with `cargo run --example fake_run`.
+//! One full run of the loop against a scripted model, a checker that always agrees, and a
+//! browser that only draws pictures. Run with `cargo run --example fake_run`.
 
+use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::sync::Mutex;
 
 use base64::Engine;
 use harness::action::Action;
 use harness::observe::{ActionResult, Observation, Viewport};
-use harness::ports::{Browser, Error, Model, ModelRequest, ModelResponse, Usage};
+use harness::ports::{Answer, Browser, Decider, Decision, Error, Model, ModelRequest, ModelResponse, Part, Usage, Verdicts};
 use harness::profile::Profile;
 use harness::run::{self, Agent, Config};
 use harness::task::Task;
+use harness::verify;
 
 /// Answers each call with the next reply of its script, then repeats the last one.
 struct Scripted {
@@ -36,6 +38,27 @@ impl Model for Scripted {
 
     fn name(&self) -> &str {
         "scripted"
+    }
+}
+
+/// A checker that finds every screen as expected, with nothing in the way and nothing loading.
+struct Nodding;
+
+impl Decider for Nodding {
+    fn decide(&self, decision: Decision) -> Result<Verdicts, Error> {
+        let expected = decision.questions.get(verify::ASK_MATCHES).map(|q| q.instructions.clone()).unwrap_or_default();
+        let images = decision.state.iter().filter(|part| matches!(part, Part::Image(_))).count();
+        println!("  checker saw {images} screenshot and was asked: {expected}");
+        let mut answers = BTreeMap::new();
+        for key in decision.questions.keys() {
+            let probability = if key == verify::ASK_MATCHES { 1.0 } else { 0.0 };
+            answers.insert(key.clone(), Answer { probability: Some(probability), ..Default::default() });
+        }
+        Ok(Verdicts { model: "nodding".to_string(), answers, usage: Usage { input_tokens: 300, cost: 0.0001, ..Default::default() }, ..Default::default() })
+    }
+
+    fn name(&self) -> &str {
+        "nodding"
     }
 }
 
@@ -77,14 +100,15 @@ impl Browser for Sheet {
 }
 
 fn main() {
+    // The first reply plans the whole form: the batch after the first check runs when the checker
+    // confirms the screen, without the model looking again.
     let script = vec![
-        r#"{"observation":"An empty form.","memo":"Fill name, then send.","status":"working","message":"Filling the name.",
-            "actions":[{"kind":"click","x":100,"y":50,"label":"Name"},{"kind":"type","text":"A. Person"}]}"#,
-        r#"{"observation":"The name is in.","memo":null,"status":"working","message":"Sending.",
-            "actions":[{"kind":"click","x":100,"y":200,"label":"Send","commit":"send","check":"a thank-you message"}]}"#,
+        r#"{"observation":"An empty form.","memo":"Fill name, then send.","status":"working","message":"Filling the form.",
+            "actions":[{"kind":"click","x":100,"y":50,"label":"Name","check":"the Name field is highlighted"},{"kind":"type","text":"A. Person"},
+            {"kind":"click","x":100,"y":200,"label":"Send","commit":"send","check":"a thank-you message"}]}"#,
         r#"{"observation":"Thank you, your form was received.","memo":null,"status":"done","message":"The form was sent.","actions":[]}"#,
     ];
-    let agent = Agent::new(Config::default(), Box::new(Scripted { replies: script, calls: Mutex::new(0) }));
+    let agent = Agent::new(Config::default(), Box::new(Scripted { replies: script, calls: Mutex::new(0) })).with_decider(Box::new(Nodding));
     let task = Task::new("Fill the form at https://example.test/form and send it.");
     let id = agent.start(task, Profile::new("Name: A. Person"));
     println!("run {id}");

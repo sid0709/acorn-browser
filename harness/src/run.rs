@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -15,10 +16,11 @@ use crate::model::{self, REPLY_SCHEMA_NAME};
 use crate::prompt;
 use crate::recover;
 use crate::observe::{ActionResult, Observation};
-use crate::ports::{Browser, Error, ErrorKind, Message, Model, Role, Usage};
+use crate::ports::{Browser, Decider, Error, ErrorKind, Message, Model, Role, Usage};
 use crate::profile::Profile;
 use crate::session::Session;
 use crate::task::{StopReason, Task};
+use crate::verify::Thresholds;
 
 /// The knobs of the loop.
 #[derive(Clone, Debug)]
@@ -32,11 +34,14 @@ pub struct Config {
     /// How many model steps in a row may end with every action failing the same way before the
     /// run ends as stuck. 0 turns the check off.
     pub max_failed_steps: u32,
-    /// Whether a decision model checks the screen between batches of a plan. Off until one is
-    /// wired in; the prompt follows it.
-    pub checks: bool,
-    /// The most actions that run before the screen is checked, when checks are on.
+    /// The most actions that run before the screen is checked, when a decision model is wired
+    /// in (`Agent::with_decider`). 0 turns the checks off.
     pub chunk_actions: usize,
+    /// What a checked screen must show for the plan to go on, and when to wait for the page
+    /// instead.
+    pub checkpoint: Thresholds,
+    /// How long one wait for a loading page is.
+    pub load_wait: Duration,
     /// How many of the newest turns keep their screenshots in the history.
     pub keep_images: usize,
     /// How many of the newest turns stay in full when the history is compacted.
@@ -47,7 +52,26 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config { max_actions: 30, unchecked_actions: 6, max_stale: 6, max_failed_steps: 3, checks: false, chunk_actions: 6, keep_images: 0, keep_turns: 8, history_tokens: 30_000 }
+        Config {
+            max_actions: 30,
+            unchecked_actions: 6,
+            max_stale: 6,
+            max_failed_steps: 3,
+            chunk_actions: 6,
+            checkpoint: Thresholds::default(),
+            load_wait: Duration::from_secs(1),
+            keep_images: 0,
+            keep_turns: 8,
+            history_tokens: 30_000,
+        }
+    }
+}
+
+impl Config {
+    /// The most actions one reply may plan: `max_actions` when the screen is checked between
+    /// batches, else no more than go out without a check.
+    pub fn plan_limit(&self, checks: bool) -> usize {
+        if checks { self.max_actions } else { self.max_actions.min(self.unchecked_actions) }
     }
 }
 
@@ -128,15 +152,25 @@ impl std::error::Error for StepError {}
 /// Runs tasks. It holds no state beyond its live sessions, so any number of runs go at once,
 /// each on its own session.
 pub struct Agent {
-    config: Config,
+    pub(crate) config: Config,
     model: Box<dyn Model + Send + Sync>,
+    /// The decision model that checks the screen between batches of a plan; `None` turns the
+    /// checks off.
+    pub(crate) decider: Option<Box<dyn Decider + Send + Sync>>,
     gate: Gate,
     sessions: Mutex<HashMap<String, Arc<Mutex<Session>>>>,
 }
 
 impl Agent {
     pub fn new(config: Config, model: Box<dyn Model + Send + Sync>) -> Self {
-        Agent { config, model, gate: Gate, sessions: Mutex::new(HashMap::new()) }
+        Agent { config, model, decider: None, gate: Gate, sessions: Mutex::new(HashMap::new()) }
+    }
+
+    /// Wires in the decision model that checks the screen after each batch of a plan, so the
+    /// next batch can go out without the driving model looking again.
+    pub fn with_decider(mut self, decider: Box<dyn Decider + Send + Sync>) -> Self {
+        self.decider = Some(decider);
+        self
     }
 
     /// Begins a run and returns its id.
@@ -189,6 +223,8 @@ impl Agent {
                 obs.viewport.width, obs.viewport.height
             )));
         }
+        // What happened to every action sent since the model last looked, which may be several
+        // batches of one plan.
         let results: Vec<ActionResult> = s.carried.iter().cloned().chain(obs.results.iter().cloned()).collect();
         if s.at_step_limit() {
             return Ok(end(
@@ -221,6 +257,11 @@ impl Agent {
                 },
             ));
         }
+        // The model's plan may go on without it: when the checker confirms the screen after a
+        // batch, the next batch goes out here and the model is not asked.
+        if let Some(step) = self.continue_plan(s, &obs, &results, &sig, stale) {
+            return Ok(step);
+        }
         // A plan refused whole, the same way, step after step, is a loop the model cannot see out
         // of: the page changes a little each time (a list opens, a cursor moves), so the
         // unchanged-screen count above never trips. The run ends before the model plans it again.
@@ -245,6 +286,9 @@ impl Agent {
             ));
         }
         let number = s.step + 1;
+        // Whether the checker is wired in at all. The prompt and the schema follow this for the
+        // whole run, so a check that fails along the way does not change the cached prompt.
+        let checks = self.checks_available();
 
         let text = prompt::observation_text(number, s.step_limit, &obs, &results, &s.notes, &s.memo, stale);
         let images = if obs.survey.is_empty() {
@@ -252,10 +296,10 @@ impl Agent {
         } else {
             obs.survey.iter().map(|screen| screen.screenshot.clone()).collect()
         };
-        let system = prompt::system_prompt(&s.task, &s.profile, &self.config);
+        let system = prompt::system_prompt(&s.task, &s.profile, &self.config, checks);
         // Fold the oldest turns before building the prompt when the history passes budget.
         s.memory.compact_if_over(self.config.keep_turns, self.config.history_tokens, system.len() / 4);
-        let schema = model::reply_schema(s.task.survey, self.config.checks);
+        let schema = model::reply_schema(s.task.survey, checks);
         // The prompt may still be too long for the model; one overflow folds the history to its
         // most recent turn and the step is tried once more.
         let mut compacted_for_overflow = false;
@@ -295,46 +339,37 @@ impl Agent {
         if let Some(memo) = reply.memo.take() {
             s.memo = model::clip_text(memo.trim(), model::MAX_MEMO_CHARS);
         }
+        s.message = reply.message.trim().to_string();
 
         let screens: Vec<f64> = obs.survey.iter().map(|screen| screen.scroll_y).collect();
-        let (planned, mut dropped) = model::check_actions(number, std::mem::take(&mut reply.actions), &obs.viewport, self.config.max_actions, &screens);
+        let (planned, mut dropped) = model::check_actions(number, std::mem::take(&mut reply.actions), &obs.viewport, self.config.plan_limit(checks), &screens);
         let (mut planned, survey_asked) = without_survey(planned);
         // A run that did not turn surveys on is not told they exist; one the model asks for anyway is ignored.
         let survey_asked = survey_asked && s.task.survey;
         self.gate.apply(s, &obs, &mut reply, &mut planned, &mut dropped);
+        // The line that stands for the step once it is folded names the whole plan, not only
+        // the batch that goes out first.
+        let summary = memory::summary_line(number, &s.message, &planned);
 
-        let actions = if reply.status != Status::Working {
+        let (actions, dropped) = if reply.status != Status::Working {
             // A run that ends may still scroll what the person must act on into view.
-            scroll_only(planned, MAX_STOP_SCROLLS)
+            s.forget_plan();
+            (scroll_only(planned, MAX_STOP_SCROLLS), dropped)
         } else {
-            if planned.len() > self.config.unchecked_actions {
-                dropped.push(format!(
-                    "{} actions were not sent: only {} run without a check",
-                    planned.len() - self.config.unchecked_actions,
-                    self.config.unchecked_actions
-                ));
-                planned.truncate(self.config.unchecked_actions);
-            }
             if planned.is_empty() && !survey_asked {
                 // A working run with nothing valid to do waits and looks again.
                 dropped.push("no usable action; waiting before the next look".to_string());
                 planned.push(Action::new(format!("s{number}a1"), Kind::Wait { ms: 1000 }));
             }
-            planned
+            self.take_plan(s, planned, dropped)
         };
 
-        s.memory.record(Turn {
-            number,
-            text,
-            images,
-            answer: answer.content,
-            summary: memory::summary_line(number, reply.message.trim(), &actions),
-        });
+        s.memory.record(Turn { number, text, images, answer: answer.content, summary });
         s.memory.release_images(self.config.keep_images);
 
         let step = Step {
             status: reply.status,
-            message: reply.message.trim().to_string(),
+            message: s.message.clone(),
             stop: if reply.status == Status::Working { None } else { reply.stop.clone() },
             actions,
             number,

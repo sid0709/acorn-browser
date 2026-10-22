@@ -201,6 +201,48 @@ pub fn split_plan(actions: Vec<Action>, limit: usize, at_uploads: bool) -> Vec<B
     out
 }
 
+/// How many fields a plan must fill on one screen before they run as one batch with one check,
+/// instead of a check after each.
+pub const MIN_FILLS_FOR_ONE_CHECK: usize = 2;
+
+/// How the checks of several fields filled in one batch begin once they are combined into one
+/// expected screen. A check that fails with this prefix cannot say which field was wrong.
+pub const COMBINED_CHECK_PREFIX: &str = "The screen shows all of the following after the last actions: ";
+
+/// Cuts a plan into batches for a run whose screen is checked. When the actions before the first
+/// scroll or upload fill at least [`MIN_FILLS_FOR_ONE_CHECK`] fields, they run as one batch with
+/// one check, every check the model put on them combined; the rest of the plan is cut as
+/// [`split_plan`] cuts it. Scrolling belongs on the next look after a check, not in a batch that
+/// fills several fields.
+pub fn split_plan_for_checks(actions: Vec<Action>, limit: usize, at_uploads: bool) -> Vec<Batch> {
+    let cut = actions.iter().position(|a| matches!(a.kind, Kind::Scroll { .. } | Kind::Upload { .. })).unwrap_or(actions.len());
+    let fills = actions[..cut].iter().filter(|a| matches!(a.kind, Kind::Type { .. })).count();
+    if fills >= MIN_FILLS_FOR_ONE_CHECK {
+        let expect = combined_check(&actions[..cut]);
+        if !expect.is_empty() {
+            let mut rest = actions;
+            let first: Vec<Action> = rest.drain(..cut).collect();
+            let mut out = vec![Batch { actions: first, expect }];
+            if !rest.is_empty() {
+                out.extend(split_plan(rest, limit, at_uploads));
+            }
+            return out;
+        }
+    }
+    split_plan(actions, limit, at_uploads)
+}
+
+/// What the checker reads after a batch that fills several fields: every check the model set on
+/// them, in one sentence.
+fn combined_check(actions: &[Action]) -> String {
+    let parts: Vec<&str> = actions.iter().map(|a| a.check.trim()).filter(|c| !c.is_empty()).collect();
+    match parts.len() {
+        0 => String::new(),
+        1 => parts[0].to_string(),
+        _ => format!("{COMBINED_CHECK_PREFIX}{}", parts.join("; ")),
+    }
+}
+
 fn is_zero(v: &f64) -> bool {
     *v == 0.0
 }
@@ -228,6 +270,23 @@ mod tests {
         assert_eq!(ids, vec![vec!["a", "b"], vec!["c"], vec!["s"], vec!["d", "e"], vec!["f"]]);
         assert_eq!(batches[0].expect, "the box is ticked");
         assert_eq!(batches[1].expect, "");
+    }
+
+    #[test]
+    fn several_fields_filled_on_one_screen_are_checked_once() {
+        let typed = |id: &str, check: &str| {
+            let mut a = Action::new(id, Kind::Type { text: "x".into(), secret: false });
+            a.check = check.to_string();
+            a
+        };
+        let scroll = Action::new("s", Kind::Scroll { x: None, y: None, dx: 0.0, dy: 500.0 });
+        let plan = vec![click("c1", ""), typed("t1", "Name shows x"), click("c2", ""), typed("t2", "Email shows x"), scroll, click("c3", "the box is ticked")];
+        let batches = split_plan_for_checks(plan, 2, true);
+        let ids: Vec<Vec<&str>> = batches.iter().map(|b| b.actions.iter().map(|a| a.id.as_str()).collect()).collect();
+        assert_eq!(ids, vec![vec!["c1", "t1", "c2", "t2"], vec!["s"], vec!["c3"]]);
+        assert_eq!(batches[0].expect, format!("{COMBINED_CHECK_PREFIX}Name shows x; Email shows x"));
+        // One field only: cut as usual, at the limit.
+        assert_eq!(split_plan_for_checks(vec![click("c1", ""), typed("t1", ""), click("c2", "")], 2, true).len(), 2);
     }
 
     #[test]
