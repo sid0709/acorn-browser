@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>A small form</title>
+  <style>
+    body { margin: 0; font: 16px sans-serif; background: #fff; color: #222; }
+    h1 { position: absolute; left: 40px; top: 16px; margin: 0; font-size: 22px; }
+    label { position: absolute; left: 40px; font-size: 14px; color: #444; }
+    input, select { position: absolute; left: 40px; width: 300px; height: 32px; box-sizing: border-box; padding: 4px 8px; font: 16px sans-serif; border: 1px solid #888; border-radius: 4px; }
+    input[type=checkbox] { width: 18px; height: 18px; }
+    button { position: absolute; left: 40px; top: 340px; width: 160px; height: 40px; font: 16px sans-serif; background: #2a62d9; color: #fff; border: 0; border-radius: 4px; }
+    #thanks { position: absolute; left: 40px; top: 80px; font-size: 22px; display: none; }
+  </style>
+</head>
+<body>
+  <h1>Order a kettle</h1>
+  <form id="order" onsubmit="return placeOrder(event)">
+    <label for="name" style="top: 78px">Full name *</label>
+    <input id="name" name="name" style="top: 100px" required>
+    <label for="email" style="top: 148px">Email *</label>
+    <input id="email" name="email" type="email" style="top: 170px" required>
+    <label for="colour" style="top: 218px">Colour</label>
+    <select id="colour" name="colour" style="top: 240px">
+      <option>Black</option>
+      <option>White</option>
+      <option>Red</option>
+    </select>
+    <input id="gift" name="gift" type="checkbox" style="top: 296px">
+    <label for="gift" style="top: 298px; left: 66px">Gift wrap</label>
+    <button type="submit" id="send">Place order</button>
+  </form>
+  <div id="thanks"></div>
+  <script>
+    function placeOrder(event) {
+      event.preventDefault();
+      const name = document.getElementById('name').value;
+      const colour = document.getElementById('colour').value;
+      const gift = document.getElementById('gift').checked ? ', gift wrapped' : '';
+      document.getElementById('order').style.display = 'none';
+      const thanks = document.getElementById('thanks');
+      thanks.textContent = `Thank you, ${name}! Your ${colour.toLowerCase()} kettle${gift} is on its way.`;
+      thanks.style.display = 'block';
+      document.title = 'Sent';
+      location.hash = 'sent';
+      return false;
+    }
+  </script>
+</body>
+</html>
