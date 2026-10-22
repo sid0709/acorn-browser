@@ -53,7 +53,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 27. Missed-click guidance
 
 **F. To-do and map**
-- [ ] 28. To-do list from the survey
+- [x] 28. To-do list from the survey
 - [ ] 29. Update from reviews
 - [ ] 30. Settled stretches, skip re-shooting
 - [ ] 31. Partial invalidation by signature

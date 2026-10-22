@@ -40,9 +40,27 @@ pub struct Reply {
     /// Why the run ends for the person, when it does.
     #[serde(default)]
     pub stop: Option<StopInfo>,
+    /// Every question of the form as the model reads it on a survey, with where it is and whether
+    /// it is answered; `None` when the look is not a survey.
+    #[serde(default)]
+    pub fields: Option<Vec<RawField>>,
     /// The actions as written; `check_actions` turns them into ones the browser can run.
     #[serde(default)]
     pub actions: Vec<RawAction>,
+}
+
+/// One question of the form as the model reads it: its label, where it is on the survey, and its
+/// state (`filled`, `empty`, `optional`, `needs_person`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RawField {
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub screen: Option<u32>,
+    #[serde(default)]
+    pub y: Option<f64>,
+    #[serde(default)]
+    pub state: String,
 }
 
 /// One action as the model wrote it: every field optional, checked before it becomes an
@@ -294,14 +312,25 @@ pub fn reply_schema(survey: bool, checks: bool) -> Value {
         ("problem", string.clone()),
         ("action", string.clone()),
     ])]});
-    object(vec![
+    let mut fields = vec![
         ("observation", string.clone()),
         ("memo", null_string.clone()),
         ("status", json!({"type": "string", "enum": ["working", "done", "need_person", "stuck"]})),
         ("message", string.clone()),
         ("stop", stop),
-        ("actions", json!({"type": "array", "items": {"anyOf": shapes}})),
-    ])
+    ];
+    if survey {
+        // Every question of the form as the model reads it, with its state: the run's to-do list.
+        let field = object(vec![
+            ("label", string.clone()),
+            ("screen", json!({"type": "integer"})),
+            ("y", number.clone()),
+            ("state", json!({"type": "string", "enum": ["filled", "empty", "optional", "needs_person"]})),
+        ]);
+        fields.push(("fields", json!({"type": ["array", "null"], "items": field})));
+    }
+    fields.push(("actions", json!({"type": "array", "items": {"anyOf": shapes}})));
+    object(fields)
 }
 
 /// A strict object schema over fields, in order.
@@ -361,6 +390,8 @@ mod tests {
         let schema = reply_schema(true, true).to_string();
         assert!(schema.find("\"observation\"").unwrap() < schema.find("\"actions\"").unwrap());
         assert!(schema.contains("\"survey\""));
-        assert!(!reply_schema(false, false).to_string().contains("\"check\""));
+        assert!(schema.contains("\"needs_person\""));
+        let plain = reply_schema(false, false).to_string();
+        assert!(!plain.contains("\"check\"") && !plain.contains("\"fields\""));
     }
 }

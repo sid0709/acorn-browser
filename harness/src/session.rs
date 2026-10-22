@@ -14,6 +14,7 @@ use crate::ports::Usage;
 use crate::profile::Profile;
 use crate::review::{Expectation, Reviews};
 use crate::task::Task;
+use crate::todo::FieldState;
 
 /// One application of the harness to one task, from the first look to the end.
 #[derive(Debug)]
@@ -76,6 +77,12 @@ pub struct Session {
     /// Asks for the next look to be a survey: something was found that the model must see the
     /// whole page again to put right.
     pub survey_again: bool,
+    /// The form's to-do list as the model read it on the page's last survey, kept up to date by
+    /// the reviews; the page it is of, and whether the browser has not been sent it since it
+    /// changed.
+    pub fields: Vec<FieldState>,
+    pub fields_url: String,
+    pub fields_changed: bool,
     /// The previous screenshot's signature, for telling whether the page changed.
     pub last_signature: Option<Signature>,
     /// Steps in a row where the screen did not change.
@@ -121,6 +128,9 @@ impl Session {
             retry: Vec::new(),
             reviews: Arc::new(Reviews::default()),
             survey_again: false,
+            fields: Vec::new(),
+            fields_url: String::new(),
+            fields_changed: false,
             last_signature: None,
             stale: 0,
             failed_streak: 0,

@@ -22,6 +22,7 @@ use crate::ports::{Browser, Decider, Error, ErrorKind, Message, Model, Role, Usa
 use crate::profile::Profile;
 use crate::session::Session;
 use crate::task::{StopReason, Task};
+use crate::todo::FieldState;
 use crate::verify::Thresholds;
 
 /// The knobs of the loop.
@@ -132,6 +133,10 @@ pub struct Step {
     /// window's edges.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub survey_focus: Vec<f64>,
+    /// The run's to-do list of the page, when it changed: each field as the model read it on its
+    /// last survey and the reviews corrected it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<FieldState>,
 }
 
 /// Why a step could not be answered.
@@ -225,6 +230,7 @@ impl Agent {
         if step.survey {
             step.survey_focus = s.survey_focus(&url);
         }
+        step.fields = s.take_fields();
         Ok(step)
     }
 
@@ -329,6 +335,12 @@ impl Agent {
         if s.parts > 1 && s.sent == s.planned && s.notes.is_empty() {
             notes.push(format!("Your plan ran in {} parts. After each part but the last, a checker confirmed the screen showed what you expected.", s.parts));
         }
+        if !obs.survey.is_empty() {
+            let fields = s.fields_note(&obs);
+            if !fields.is_empty() {
+                notes.push(fields);
+            }
+        }
         let text = prompt::observation_text(number, s.step_limit, &obs, &results, &notes, &s.memo, stale);
         let images = if obs.survey.is_empty() {
             vec![obs.screenshot.clone()]
@@ -379,6 +391,7 @@ impl Agent {
             s.memo = model::clip_text(memo.trim(), model::MAX_MEMO_CHARS);
         }
         s.message = reply.message.trim().to_string();
+        s.note_fields(&reply, &obs);
 
         let screens: Vec<f64> = obs.survey.iter().map(|screen| screen.scroll_y).collect();
         let (planned, mut dropped) = model::check_actions(number, std::mem::take(&mut reply.actions), &obs.viewport, self.config.plan_limit(checks), &screens);
@@ -428,6 +441,7 @@ impl Agent {
             dropped,
             survey,
             survey_focus: Vec::new(),
+            fields: Vec::new(),
         };
         if step.status != Status::Working {
             s.finished = true;
