@@ -301,6 +301,20 @@ mod tests {
     }
 
     #[test]
+    fn a_message_from_the_person_stops_a_running_plan_and_reaches_the_model() {
+        let (agent, seen) = agent(1.0);
+        let id = agent.start(Task::new("fill the form"), Profile::default());
+        agent.step(&id, look_at(false, &[])).unwrap();
+        agent.say(&id, "  use my work email instead ").unwrap();
+        let second = agent.step(&id, look_at(true, &["s1a1"])).unwrap();
+        assert_eq!(second.number, 2);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert!(seen[1].contains("You planned 3 actions: 1 ran, 2 did not. The person wrote to you meanwhile"), "{}", seen[1]);
+        assert!(seen[1].contains("- use my work email instead\n"), "{}", seen[1]);
+    }
+
+    #[test]
     fn a_checkpoint_that_fails_gives_the_plan_up_and_the_model_looks() {
         let (agent, seen) = agent(0.1);
         let id = agent.start(Task::new("fill the form"), Profile::default());

@@ -219,10 +219,36 @@ impl Agent {
     }
 
     /// Lets a run that ended go on, with a whole step budget more. The next look is answered as
-    /// usual; the person may have done part of the page by hand in between.
+    /// usual; the person may have done part of the page by hand in between, and the model is
+    /// told so.
     pub fn resume(&self, id: &str) -> Result<(), StepError> {
         let session = self.session(id).ok_or(StepError::NoSession)?;
-        session.lock().unwrap().extend();
+        let mut s = session.lock().unwrap();
+        s.touch();
+        let note = if s.finished {
+            format!(
+                "You stopped the run ({}). The person has let it go on, so they may have changed the page since. Look at the screen as it is now and carry on from your notes; do not redo what they say is done.",
+                model::clip_text(&s.stopped_for, memory::MAX_SUMMARY_CHARS)
+            )
+        } else {
+            "The run was paused and the person let it go on. The actions you last planned may not have run. Judge by the screenshot, not by your memory of the plan.".to_string()
+        };
+        s.notes.push(note);
+        s.forget_plan();
+        s.extend();
+        Ok(())
+    }
+
+    /// Takes a message the person wrote while the run goes on. The model reads it with its next
+    /// look, and a plan running without the model stops for it, so the model can change course.
+    pub fn say(&self, id: &str, text: &str) -> Result<(), StepError> {
+        let session = self.session(id).ok_or(StepError::NoSession)?;
+        let mut s = session.lock().unwrap();
+        s.touch();
+        let text = text.trim();
+        if !text.is_empty() {
+            s.inbox.push(model::clip_text(text, MAX_MESSAGE_CHARS));
+        }
         Ok(())
     }
 
@@ -312,6 +338,11 @@ impl Agent {
                 },
             ));
         }
+        // The person wrote: a plan running without the model stops here, so the model can change
+        // course with their words in front of it.
+        if !s.inbox.is_empty() && !s.verify.is_empty() {
+            self.abandon(s, "The person wrote to you meanwhile, so the rest of your plan did not run; read their message below.");
+        }
         // The model's plan may go on without it: when the checker confirms the screen after a
         // batch, the next batch goes out here and the model is not asked.
         if let Some(step) = self.continue_plan(s, &obs, &results, &sig, stale) {
@@ -360,7 +391,7 @@ impl Agent {
                 }
             }
         }
-        let text = prompt::observation_text(number, s.step_limit, &obs, &results, &notes, &s.memo, stale);
+        let text = prompt::observation_text(number, s.step_limit, &obs, &results, &notes, &s.inbox, &s.memo, stale);
         // A survey's screens go to the model with their numbers written on them.
         let images = if obs.survey.is_empty() { vec![obs.screenshot.clone()] } else { mark::badged_images(&obs) };
         let system = prompt::system_prompt(&s.task, &s.profile, &self.config, checks);
@@ -403,6 +434,7 @@ impl Agent {
         s.last_failure = failure;
         s.carried.clear();
         s.notes.clear();
+        s.inbox.clear();
         if let Some(memo) = reply.memo.take() {
             s.memo = model::clip_text(memo.trim(), model::MAX_MEMO_CHARS);
         }
@@ -472,10 +504,14 @@ impl Agent {
         };
         if step.status != Status::Working {
             s.finished = true;
+            s.stopped_for = step.message.clone();
         }
         Ok(step)
     }
 }
+
+/// The most characters one message from the person keeps.
+pub const MAX_MESSAGE_CHARS: usize = 4000;
 
 impl Agent {
     /// Whether the browser's next look is a survey of the whole page: when the model asked for
@@ -549,6 +585,7 @@ fn first_failure(results: &[ActionResult]) -> String {
 /// Ends the run with no actions: the person is told why and what they can do.
 fn end(s: &mut Session, status: Status, message: String, stop: StopInfo) -> Step {
     s.finished = true;
+    s.stopped_for = message.clone();
     Step { status, message, stop: Some(stop), number: s.step, usage: s.usage, ..Default::default() }
 }
 

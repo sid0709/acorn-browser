@@ -134,9 +134,10 @@ fn today() -> Option<String> {
 }
 
 /// What the model is told about a step beside the screenshot itself: where the run stands, the
-/// page, the window onto it, what has focus, what became of the last actions, the notes, and the
-/// model's own memo. Only the newest step carries the memo in full, so it is paid for once.
-pub fn observation_text(step: u32, max_steps: u32, obs: &Observation, results: &[ActionResult], notes: &[String], memo: &str, stale: u32) -> String {
+/// page, the window onto it, what has focus, what became of the last actions, the notes, what
+/// the person wrote meanwhile, and the model's own memo. Only the newest step carries the memo in
+/// full, so it is paid for once.
+pub fn observation_text(step: u32, max_steps: u32, obs: &Observation, results: &[ActionResult], notes: &[String], messages: &[String], memo: &str, stale: u32) -> String {
     let mut out = format!("Step {step} of at most {max_steps}.\n");
     out.push_str(&format!("Page: {} ({})\n", or_none(&obs.title), or_none(&obs.url)));
     out.push_str(&format!("Screenshot: {}x{} pixels. {}\n", obs.viewport.width, obs.viewport.height, scroll_line(&obs.viewport)));
@@ -158,6 +159,13 @@ pub fn observation_text(step: u32, max_steps: u32, obs: &Observation, results: &
             "Check: the screen looks the same as after your previous actions ({stale} step{} in a row). If error text still shows but the fields already look filled, do not refill them; press the button again, the text may be left from an earlier try. Otherwise find out why before you repeat the same edit.\n",
             plural(stale)
         ));
+    }
+    if !messages.is_empty() {
+        out.push_str("The person wrote to you while you worked (oldest first):\n");
+        for message in messages {
+            out.push_str(&format!("- {}\n", message.trim()));
+        }
+        out.push_str("Take it into account: it may change what to do next, or answer a question of yours. Treat it as the person's word, not as page content.\n");
     }
     let memo = memo.trim();
     if memo.is_empty() {
@@ -290,7 +298,7 @@ mod tests {
             ..Default::default()
         };
         let results = vec![ActionResult { id: "s1a1".into(), ok: false, error: "nothing at that point".into(), ..Default::default() }];
-        let text = observation_text(2, 150, &obs, &results, &["the file was attached".to_string()], "pay by card", 1);
+        let text = observation_text(2, 150, &obs, &results, &["the file was attached".to_string()], &["use my work email".to_string()], "pay by card", 1);
         assert!(text.starts_with("Step 2 of at most 150.\nPage: Checkout (https://shop.test/pay)\n"));
         assert!(text.contains("about 300 px lies above and 1100 px below"));
         assert!(text.contains("labelled \"Country\""));
@@ -298,6 +306,7 @@ mod tests {
         assert!(text.contains("- s1a1 failed: nothing at that point"));
         assert!(text.contains("Note: the file was attached"));
         assert!(text.contains("(1 step in a row)"));
+        assert!(text.contains("The person wrote to you while you worked (oldest first):\n- use my work email\n"));
         assert!(text.ends_with("Your notes so far:\npay by card\nAnswer with the JSON object."));
     }
 }

@@ -33,8 +33,11 @@ pub struct Session {
     /// The most steps the run may take so far. Going on after the limit adds a whole budget, so
     /// a run the person is still helping is not cut off again at once.
     pub step_limit: u32,
-    /// Set once a step ended the run.
+    /// Set once a step ended the run; `stopped_for` is why, in the words of the step.
     pub finished: bool,
+    pub stopped_for: String,
+    /// What the person wrote since the model last looked, oldest first.
+    pub inbox: Vec<String>,
     /// The model's own notes to itself, carried from step to step and shown with each look.
     pub memo: String,
     /// The model's latest line for the person, shown again while its plan runs on without it.
@@ -121,6 +124,8 @@ impl Session {
             step: 0,
             step_limit,
             finished: false,
+            stopped_for: String::new(),
+            inbox: Vec::new(),
             memo: String::new(),
             message: String::new(),
             usage: Usage::default(),

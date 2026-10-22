@@ -59,7 +59,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 31. Partial invalidation by signature
 
 **G. Intervention and report**
-- [ ] 32. User message queue
+- [x] 32. User message queue
 - [ ] 33. Question queue (keep going)
 - [ ] 34. End report
 - [ ] 35. Trace, tracesum-compatible
