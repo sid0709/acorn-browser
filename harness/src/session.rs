@@ -49,6 +49,8 @@ pub struct Session {
     pub last_stop: Option<StopInfo>,
     /// What the model said it assumed for the person, each line once, for the report.
     pub assumed: Vec<String>,
+    /// How many "done" answers were sent back because the screen did not confirm them.
+    pub done_passes: u32,
     /// What the person wrote since the model last looked, oldest first.
     pub inbox: Vec<String>,
     /// Every question the run asked the person, with the answer when one came.
@@ -146,6 +148,7 @@ impl Session {
             last_status: Status::Working,
             last_stop: None,
             assumed: Vec::new(),
+            done_passes: 0,
             inbox: Vec::new(),
             questions: Vec::new(),
             memo: String::new(),

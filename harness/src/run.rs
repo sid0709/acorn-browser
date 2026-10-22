@@ -14,7 +14,6 @@ use crate::focus;
 use crate::map::{self, SettledMap};
 use crate::mark;
 use crate::memory::{self, Turn};
-use crate::gate::Gate;
 use crate::model::{self, REPLY_SCHEMA_NAME};
 use crate::prompt;
 use crate::recover;
@@ -59,6 +58,11 @@ pub struct Config {
     pub keep_turns: usize,
     /// The token budget the history is compacted to stay under.
     pub history_tokens: usize,
+    /// How many times a "done" the screen does not confirm is sent back to the model before the
+    /// run is reported as one that could not confirm; negative accepts every "done".
+    pub done_passes: i32,
+    /// How sure the checker must be that the screen shows the task done (a probability).
+    pub done_confirm: f64,
 }
 
 impl Default for Config {
@@ -75,6 +79,8 @@ impl Default for Config {
             keep_images: 0,
             keep_turns: 8,
             history_tokens: 30_000,
+            done_passes: 2,
+            done_confirm: 0.7,
         }
     }
 }
@@ -203,7 +209,6 @@ pub struct Agent {
     /// The decision model that checks the screen between batches of a plan and reviews what the
     /// plan filled in; `None` turns both off. Shared with the threads the reviews run on.
     pub(crate) decider: Option<Arc<dyn Decider + Send + Sync>>,
-    gate: Gate,
     /// Writes every step to disk, when a trace folder is set (`with_trace_dir`).
     pub(crate) trace: Option<Tracer>,
     sessions: Mutex<HashMap<String, Arc<Mutex<Session>>>>,
@@ -211,7 +216,7 @@ pub struct Agent {
 
 impl Agent {
     pub fn new(config: Config, model: Box<dyn Model + Send + Sync>) -> Self {
-        Agent { config, model, decider: None, gate: Gate, trace: None, sessions: Mutex::new(HashMap::new()) }
+        Agent { config, model, decider: None, trace: None, sessions: Mutex::new(HashMap::new()) }
     }
 
     /// Wires in the decision model that checks the screen after each batch of a plan, so the
@@ -537,7 +542,6 @@ impl Agent {
         if let Some(memo) = reply.memo.take() {
             s.memo = model::clip_text(memo.trim(), model::MAX_MEMO_CHARS);
         }
-        s.message = reply.message.trim().to_string();
         s.note_fields(&reply, &obs);
         if let Some(assumed) = &reply.assumed {
             s.note_assumed(assumed);
@@ -571,7 +575,9 @@ impl Agent {
         if reply.status == Status::Working {
             self.check_plan_points(s, &planned, &obs);
         }
-        self.gate.apply(s, &obs, &mut reply, &mut planned, &mut dropped);
+        // The gate: the one place the harness may stop, change, or question the plan.
+        self.gate(s, &obs, &mut reply, &mut planned, &mut dropped, number);
+        s.message = reply.message.trim().to_string();
         // What this plan fills in, by zone, for the reviews of its zones.
         s.plan_gen += 1;
         s.expect = review::expectations_of(&planned, &obs);
