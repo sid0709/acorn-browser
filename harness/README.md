@@ -28,7 +28,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 8. End: step limit
 - [x] 9. Unchanged-screen detection
 - [x] 10. Repeated-failure detection
-- [ ] 11. Example binary: fake model + fake browser, one full run
+- [x] 11. Example binary: fake model + fake browser, one full run
 
 **C. Model calls**
 - [ ] 12. System prompt (cache marker)

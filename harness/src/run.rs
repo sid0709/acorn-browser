@@ -12,7 +12,7 @@ use crate::change;
 use crate::gate::Gate;
 use crate::model::{self, REPLY_SCHEMA_NAME};
 use crate::observe::{ActionResult, Observation};
-use crate::ports::{Error, Message, Model, ModelRequest, Role, Usage};
+use crate::ports::{Browser, Error, Message, Model, ModelRequest, Role, Usage};
 use crate::profile::Profile;
 use crate::session::Session;
 use crate::task::{StopReason, Task};
@@ -93,6 +93,7 @@ pub enum StepError {
     BadObservation(String),
     Model(Error),
     Reply(String),
+    Browser(Error),
 }
 
 impl fmt::Display for StepError {
@@ -103,6 +104,7 @@ impl fmt::Display for StepError {
             StepError::BadObservation(why) => write!(f, "bad observation: {why}"),
             StepError::Model(err) => write!(f, "model: {err}"),
             StepError::Reply(why) => write!(f, "reply: {why}"),
+            StepError::Browser(err) => write!(f, "browser: {err}"),
         }
     }
 }
@@ -325,6 +327,23 @@ impl Agent {
             out.push(action);
         }
         (out, survey_asked)
+    }
+}
+
+/// Runs a session to its end against a browser: look, step, act, and look again with the results,
+/// until the run is no longer working. Returns the step that ended it.
+pub fn drive(agent: &Agent, id: &str, browser: &mut dyn Browser) -> Result<Step, StepError> {
+    let mut results = Vec::new();
+    let mut survey = false;
+    loop {
+        let mut obs = browser.observe(survey).map_err(StepError::Browser)?;
+        obs.results = std::mem::take(&mut results);
+        let step = agent.step(id, obs)?;
+        if step.status != Status::Working {
+            return Ok(step);
+        }
+        results = browser.act(&step.actions).map_err(StepError::Browser)?;
+        survey = step.survey;
     }
 }
 
