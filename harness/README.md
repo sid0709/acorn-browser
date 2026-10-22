@@ -21,7 +21,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 3. Action struct and batches
 - [x] 4. Traits: driving model, decision model, browser
 - [x] 5. Task struct
-- [ ] 6. Session struct
+- [x] 6. Session struct
 
 **B. Minimal loop**
 - [ ] 7. Step: observe, model, actions (gate slot, pass-through)
