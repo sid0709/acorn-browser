@@ -31,7 +31,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 11. Example binary: fake model + fake browser, one full run
 
 **C. Model calls**
-- [ ] 12. System prompt (cache marker)
+- [x] 12. System prompt (cache marker)
 - [ ] 13. Observation text
 - [ ] 14. Reply schema and parsing
 - [ ] 15. One repair call on a bad reply

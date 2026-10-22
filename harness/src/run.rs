@@ -29,11 +29,16 @@ pub struct Config {
     /// How many model steps in a row may end with every action failing the same way before the
     /// run ends as stuck. 0 turns the check off.
     pub max_failed_steps: u32,
+    /// Whether a decision model checks the screen between batches of a plan. Off until one is
+    /// wired in; the prompt follows it.
+    pub checks: bool,
+    /// The most actions that run before the screen is checked, when checks are on.
+    pub chunk_actions: usize,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { max_actions: 30, unchecked_actions: 6, max_stale: 6, max_failed_steps: 3 }
+        Config { max_actions: 30, unchecked_actions: 6, max_stale: 6, max_failed_steps: 3, checks: false, chunk_actions: 6 }
     }
 }
 
@@ -239,7 +244,7 @@ impl Agent {
             obs.survey.iter().map(|screen| screen.screenshot.clone()).collect()
         };
         let messages = vec![
-            Message { role: Role::System, text: model::system_prompt(&s.task, &s.profile), images: Vec::new(), cache: true },
+            Message { role: Role::System, text: model::system_prompt(&s.task, &s.profile, &self.config), images: Vec::new(), cache: true },
             Message { role: Role::User, text, images, cache: false },
         ];
         let response = self
