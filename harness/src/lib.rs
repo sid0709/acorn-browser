@@ -8,6 +8,7 @@
 //! ```
 
 pub mod action;
+pub mod change;
 pub mod gate;
 pub mod map;
 pub mod memory;

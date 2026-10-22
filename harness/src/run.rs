@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use crate::action::{Action, Kind};
+use crate::change;
 use crate::gate::Gate;
 use crate::model::{self, REPLY_SCHEMA_NAME};
 use crate::observe::{ActionResult, Observation};
@@ -23,11 +24,13 @@ pub struct Config {
     pub max_actions: usize,
     /// The most actions that go out without a check of the screen between them.
     pub unchecked_actions: usize,
+    /// How many steps in a row the screen may stay the same before the run ends as stuck.
+    pub max_stale: u32,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { max_actions: 30, unchecked_actions: 6 }
+        Config { max_actions: 30, unchecked_actions: 6, max_stale: 6 }
     }
 }
 
@@ -158,6 +161,15 @@ impl Agent {
         if !obs.viewport.has_size() {
             return Err(StepError::BadObservation("the viewport has no size".to_string()));
         }
+        let (sig, width, height) = change::signature(&obs.screenshot).map_err(StepError::BadObservation)?;
+        // The model measures coordinates in the image it is shown. If the image is not the size
+        // the viewport says, every point it gives would land somewhere else on the page.
+        if width.abs_diff(obs.viewport.width) > change::SIZE_TOLERANCE || height.abs_diff(obs.viewport.height) > change::SIZE_TOLERANCE {
+            return Err(StepError::BadObservation(format!(
+                "the screenshot is {width}x{height} pixels but the viewport says {}x{}",
+                obs.viewport.width, obs.viewport.height
+            )));
+        }
         let results: Vec<ActionResult> = s.carried.iter().cloned().chain(obs.results.iter().cloned()).collect();
         if s.at_step_limit() {
             return Ok(end(
@@ -171,9 +183,28 @@ impl Agent {
                 },
             ));
         }
+        // A page that did not move after actions is evidence the model needs, and a run that
+        // never moves is not worth more model calls. A survey scrolls the page and comes back:
+        // the same screen again is expected, not a stall.
+        let mut stale = 0;
+        if s.step > 0 && obs.survey.is_empty() && change::unchanged(&sig, s.last_signature.as_deref().unwrap_or(&[])) {
+            stale = s.stale + 1;
+        }
+        if stale >= self.config.max_stale {
+            return Ok(end(
+                s,
+                Status::Stuck,
+                format!("The page did not change for {stale} steps in a row."),
+                StopInfo {
+                    reason: StopReason::NoChange,
+                    problem: "The page stopped responding to the run's clicks and typing.".to_string(),
+                    action: "Check the page for anything in the way, then let the run go on.".to_string(),
+                },
+            ));
+        }
         let number = s.step + 1;
 
-        let text = model::observation_text(number, s.step_limit, &obs, &results, &s.notes, &s.memo);
+        let text = model::observation_text(number, s.step_limit, &obs, &results, &s.notes, &s.memo, stale);
         let images = if obs.survey.is_empty() {
             vec![obs.screenshot.clone()]
         } else {
@@ -192,6 +223,8 @@ impl Agent {
 
         // Only a step the model answered counts: a retry of a failed call sends the same screen.
         s.step = number;
+        s.stale = stale;
+        s.last_signature = Some(sig);
         s.carried.clear();
         s.notes.clear();
         if let Some(memo) = reply.memo.take() {
@@ -299,10 +332,27 @@ mod tests {
 
     fn look() -> Observation {
         Observation {
-            screenshot: "data:image/png;base64,x".into(),
-            viewport: Viewport { width: 800, height: 600, ..Default::default() },
+            screenshot: change::test_screenshot(80, 60, false),
+            viewport: Viewport { width: 80, height: 60, ..Default::default() },
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_screen_that_never_changes_ends_the_run() {
+        let reply = r#"{"status":"working","message":"","actions":[{"kind":"wait","ms":100}]}"#;
+        let agent = Agent::new(Config { max_stale: 2, ..Config::default() }, Box::new(Fixed(reply)));
+        let id = agent.start(Task::new("wait"), Profile::default());
+        assert_eq!(agent.step(&id, look()).unwrap().status, Status::Working);
+        assert_eq!(agent.step(&id, look()).unwrap().status, Status::Working);
+        let third = agent.step(&id, look()).unwrap();
+        assert_eq!(third.status, Status::Stuck);
+        assert_eq!(third.stop.unwrap().reason, StopReason::NoChange);
+        let mut wrong = look();
+        wrong.viewport.width = 500;
+        let agent = Agent::new(Config::default(), Box::new(Fixed(reply)));
+        let id = agent.start(Task::new("wait"), Profile::default());
+        assert!(matches!(agent.step(&id, wrong), Err(StepError::BadObservation(_))));
     }
 
     #[test]

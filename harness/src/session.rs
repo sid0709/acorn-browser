@@ -3,6 +3,7 @@
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::time::{Instant, SystemTime};
 
+use crate::change::Signature;
 use crate::observe::ActionResult;
 use crate::ports::Usage;
 use crate::profile::Profile;
@@ -34,6 +35,10 @@ pub struct Session {
     pub notes: Vec<String>,
     /// Results of actions sent since the model last looked, which may be several batches.
     pub carried: Vec<ActionResult>,
+    /// The previous screenshot's signature, for telling whether the page changed.
+    pub last_signature: Option<Signature>,
+    /// Steps in a row where the screen did not change.
+    pub stale: u32,
 }
 
 impl Session {
@@ -53,6 +58,8 @@ impl Session {
             usage: Usage::default(),
             notes: Vec::new(),
             carried: Vec::new(),
+            last_signature: None,
+            stale: 0,
         }
     }
 

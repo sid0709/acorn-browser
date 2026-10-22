@@ -26,7 +26,7 @@ One step, one commit. Build must pass; tests stay minimal.
 **B. Minimal loop**
 - [x] 7. Step: observe, model, actions (gate slot, pass-through)
 - [x] 8. End: step limit
-- [ ] 9. Unchanged-screen detection
+- [x] 9. Unchanged-screen detection
 - [ ] 10. Repeated-failure detection
 - [ ] 11. Example binary: fake model + fake browser, one full run
 

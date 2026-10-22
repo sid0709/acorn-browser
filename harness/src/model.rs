@@ -74,7 +74,7 @@ pub fn system_prompt(task: &Task, profile: &Profile) -> String {
 }
 
 /// What the model is told about a step beside the screenshot itself.
-pub fn observation_text(step: u32, max_steps: u32, obs: &Observation, results: &[ActionResult], notes: &[String], memo: &str) -> String {
+pub fn observation_text(step: u32, max_steps: u32, obs: &Observation, results: &[ActionResult], notes: &[String], memo: &str, stale: u32) -> String {
     let mut out = format!("Step {step} of at most {max_steps}.\n");
     out.push_str(&format!("Page: {} ({})\n", or_none(&obs.title), or_none(&obs.url)));
     let v = &obs.viewport;
@@ -96,6 +96,11 @@ pub fn observation_text(step: u32, max_steps: u32, obs: &Observation, results: &
     }
     for note in obs.notes.iter().chain(notes) {
         out.push_str(&format!("Note: {note}\n"));
+    }
+    if stale >= 1 {
+        out.push_str(&format!(
+            "The screen has not changed for {stale} step(s): your last actions had no visible effect. Look again at where you clicked and do something different.\n"
+        ));
     }
     if !memo.is_empty() {
         out.push_str(&format!("\nYour notes so far:\n{memo}\n"));
