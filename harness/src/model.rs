@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::action::Action;
-use crate::observe::{ActionResult, Observation};
+use crate::observe::{ActionResult, Focus, Observation, Opened, Viewport};
 use crate::profile::Profile;
 use crate::run::{Config, Status, StopInfo};
 use crate::task::{Allowance, Irreversible, StopReason, Task};
@@ -176,57 +176,117 @@ fn today() -> Option<String> {
     Some(format!("{y:04}-{m:02}-{d:02}"))
 }
 
-/// What the model is told about a step beside the screenshot itself.
+/// What the model is told about a step beside the screenshot itself: where the run stands, the
+/// page, the window onto it, what has focus, what became of the last actions, the notes, and the
+/// model's own memo. Only the newest step carries the memo in full, so it is paid for once.
 pub fn observation_text(step: u32, max_steps: u32, obs: &Observation, results: &[ActionResult], notes: &[String], memo: &str, stale: u32) -> String {
     let mut out = format!("Step {step} of at most {max_steps}.\n");
     out.push_str(&format!("Page: {} ({})\n", or_none(&obs.title), or_none(&obs.url)));
-    let v = &obs.viewport;
-    out.push_str(&format!(
-        "Screenshot: {}x{} pixels, scrolled to {:.0} of a page {:.0} pixels tall.\n",
-        v.width, v.height, v.scroll_y, v.page_height
-    ));
-    if let Some(focus) = &obs.focus {
-        out.push_str(&format!("Focus: {} {} {:?}\n", focus.tag, focus.kind, focus.label));
-    }
+    out.push_str(&format!("Screenshot: {}x{} pixels. {}\n", obs.viewport.width, obs.viewport.height, scroll_line(&obs.viewport)));
+    out.push_str(&focus_line(obs.focus.as_ref()));
     if !obs.survey.is_empty() {
-        out.push_str(&format!("Survey: {} screens of the whole page follow, top to bottom.\n", obs.survey.len()));
+        out.push_str(&survey_line(obs));
     }
     if !results.is_empty() {
         out.push_str("Results of your last actions:\n");
-        for r in results {
-            out.push_str(&format!("- {}\n", result_line(r)));
+        for result in results {
+            out.push_str(&format!("- {}\n", result_line(result)));
         }
     }
     for note in obs.notes.iter().chain(notes) {
-        out.push_str(&format!("Note: {note}\n"));
+        out.push_str(&format!("Note: {}\n", note.trim()));
     }
     if stale >= 1 {
         out.push_str(&format!(
-            "The screen has not changed for {stale} step(s): your last actions had no visible effect. Look again at where you clicked and do something different.\n"
+            "Check: the screen looks the same as after your previous actions ({stale} step{} in a row). If error text still shows but the fields already look filled, do not refill them; press the button again, the text may be left from an earlier try. Otherwise find out why before you repeat the same edit.\n",
+            plural(stale)
         ));
     }
-    if !memo.is_empty() {
-        out.push_str(&format!("\nYour notes so far:\n{memo}\n"));
+    let memo = memo.trim();
+    if memo.is_empty() {
+        out.push_str("Your notes so far: (none yet)\n");
+    } else {
+        out.push_str(&format!("Your notes so far:\n{memo}\n"));
     }
+    out.push_str("Answer with the JSON object.");
     out
 }
 
-fn result_line(r: &ActionResult) -> String {
-    let mut line = format!("{}: {}", r.id, if r.ok { "ok" } else { "failed" });
-    if !r.error.is_empty() {
-        line.push_str(&format!(" ({})", r.error));
+/// How much of the page lies off screen, so the model knows whether to scroll.
+fn scroll_line(v: &Viewport) -> String {
+    if v.page_height <= 0.0 {
+        return String::new();
     }
-    if !r.detail.is_empty() {
-        line.push_str(&format!(" {}", r.detail));
+    let below = v.page_height - v.scroll_y - v.height as f64;
+    let above = v.scroll_y;
+    match (above > 8.0, below > 8.0) {
+        (true, true) => format!("The page is scrolled: about {above:.0} px lies above and {below:.0} px below."),
+        (false, true) => format!("The page is at its top; about {below:.0} px lies below."),
+        (true, false) => format!("The page is at its bottom; about {above:.0} px lies above."),
+        (false, false) => "The whole page fits on the screen.".to_string(),
     }
-    if r.unreached {
-        line.push_str(" [reached no control]");
+}
+
+/// Which control has the keyboard, by the name the page gives it, so the model knows where
+/// typing goes. What the page says of the control's kind, value or state is not told: the
+/// screenshot shows that, and the page's own word lies for a control it draws itself. The
+/// options of a list the browser draws are the one thing told, since no screenshot shows that
+/// popup.
+fn focus_line(focus: Option<&Focus>) -> String {
+    let Some(focus) = focus else {
+        return "Keyboard focus: no control.\n".to_string();
+    };
+    let name = if focus.label.trim().is_empty() {
+        "a control the page does not name".to_string()
+    } else {
+        format!("the control labelled {:?}", focus.label.trim())
+    };
+    let mut line = format!("Keyboard focus: {name}.\n");
+    if focus.tag.eq_ignore_ascii_case("select") && !focus.options.is_empty() {
+        let several = if focus.multiple { " (several may be chosen)" } else { "" };
+        line.push_str(&format!(
+            "It is a list the browser draws itself, which no screenshot shows. Its options{several}: {}.\n",
+            focus.options.join(" | ")
+        ));
     }
     line
 }
 
-fn or_none(s: &str) -> &str {
-    if s.trim().is_empty() { "none" } else { s.trim() }
+/// The screens of a survey: how many, and where each is scrolled to.
+fn survey_line(obs: &Observation) -> String {
+    let positions: Vec<String> = obs.survey.iter().enumerate().map(|(i, screen)| format!("{} at {:.0} px", i + 1, screen.scroll_y)).collect();
+    format!(
+        "This look is a survey of the whole page: {} screens, numbered on each picture, from the top down. Screen {}.\n",
+        obs.survey.len(),
+        positions.join(", screen ")
+    )
+}
+
+/// One line for what became of one action.
+fn result_line(result: &ActionResult) -> String {
+    let mut line = format!("{} {}", result.id, if result.ok { "done" } else { "failed" });
+    if !result.error.is_empty() {
+        line.push_str(&format!(": {}", result.error));
+    }
+    if result.opened == Some(Opened::FilePicker) {
+        line.push_str(" (this click opened a file picker that you cannot see, and no file was chosen: to attach a file, use upload at this point)");
+    }
+    if result.unreached {
+        line.push_str(" (nothing had focus, so it reached no control)");
+    }
+    if !result.detail.is_empty() {
+        line.push_str(&format!(" ({})", result.detail));
+    }
+    line
+}
+
+fn or_none(text: &str) -> &str {
+    let text = text.trim();
+    if text.is_empty() { "none" } else { text }
+}
+
+fn plural(n: u32) -> &'static str {
+    if n == 1 { "" } else { "s" }
 }
 
 /// The JSON schema the reply must fit.
@@ -274,5 +334,26 @@ mod tests {
         assert!(!prompt.contains("{{"));
         task.survey = true;
         assert!(system_prompt(&task, &Profile::default(), &Config::default()).contains("# Seeing the whole page"));
+    }
+
+    #[test]
+    fn the_observation_text_says_where_the_run_stands() {
+        let obs = Observation {
+            title: "Checkout".into(),
+            url: "https://shop.test/pay".into(),
+            viewport: Viewport { width: 800, height: 600, scroll_y: 300.0, page_height: 2000.0, ..Default::default() },
+            focus: Some(Focus { tag: "select".into(), label: "Country".into(), options: vec!["France".into(), "Spain".into()], ..Default::default() }),
+            ..Default::default()
+        };
+        let results = vec![ActionResult { id: "s1a1".into(), ok: false, error: "nothing at that point".into(), ..Default::default() }];
+        let text = observation_text(2, 150, &obs, &results, &["the file was attached".to_string()], "pay by card", 1);
+        assert!(text.starts_with("Step 2 of at most 150.\nPage: Checkout (https://shop.test/pay)\n"));
+        assert!(text.contains("about 300 px lies above and 1100 px below"));
+        assert!(text.contains("labelled \"Country\""));
+        assert!(text.contains("France | Spain"));
+        assert!(text.contains("- s1a1 failed: nothing at that point"));
+        assert!(text.contains("Note: the file was attached"));
+        assert!(text.contains("(1 step in a row)"));
+        assert!(text.ends_with("Your notes so far:\npay by card\nAnswer with the JSON object."));
     }
 }
