@@ -1,0 +1,6 @@
+[submodule "Acorn"]
+	path = Acorn
+	url = https://github.com/sid0709/Acorn.git
+[submodule "codex"]
+	path = codex
+	url = https://github.com/openai/codex.git
