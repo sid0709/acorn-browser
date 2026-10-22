@@ -7,9 +7,14 @@ use image::RgbImage;
 
 use crate::action::{Action, Kind};
 use crate::change;
+use crate::observe::Observation;
 
 /// The JPEG quality of a screenshot with its actions drawn on it.
 pub const MARKED_QUALITY: u8 = 85;
+/// The JPEG quality of a screenshot with its badge.
+pub const BADGE_QUALITY: u8 = 75;
+/// The size of one pixel of a badge's letters, in screenshot pixels.
+const BADGE_PIXEL: i32 = 5;
 
 // The marker's shape, in screenshot pixels at scale 1. The ring is wide and open: a point sits on
 // the control's own text (a short button, the line a value is typed on), and the decision model
@@ -143,10 +148,95 @@ fn draw_number(img: &mut RgbImage, n: usize, x: i32, y: i32, scale: i32, c: Colo
     }
 }
 
+// A survey is several screenshots, and the model must say which of them a point is on. Counting
+// images is where it slips (a recorded run put a name field on screen 7 when it was on screen 6,
+// and typed the person's name into another question), so each screenshot has its number written
+// in its top left corner before the model sees it. The numbers are drawn on a copy: the survey
+// itself, and what the checks read from it, are untouched.
+
+/// The letters and digits a badge says ("SCREEN 6 OF 8"), each 5 rows high.
+fn badge_glyph(c: char) -> Option<&'static [&'static str; 5]> {
+    Some(match c {
+        'S' => &["###", "#  ", "###", "  #", "###"],
+        'C' => &["###", "#  ", "#  ", "#  ", "###"],
+        'R' => &["###", "# #", "###", "## ", "# #"],
+        'E' => &["###", "#  ", "###", "#  ", "###"],
+        'N' => &["#   #", "##  #", "# # #", "#  ##", "#   #"],
+        'O' => &["###", "# #", "# #", "# #", "###"],
+        'F' => &["###", "#  ", "###", "#  ", "#  "],
+        ' ' => &["  ", "  ", "  ", "  ", "  "],
+        '0'..='9' => &DIGIT_FONT[(c as u8 - b'0') as usize],
+        _ => return None,
+    })
+}
+
+/// What the badge of screen `n` of `total` says.
+pub fn badge_text(n: usize, total: usize) -> String {
+    format!("SCREEN {n} OF {total}")
+}
+
+/// Writes the text in the top left corner of the image, on a black plate.
+fn draw_badge(img: &mut RgbImage, text: &str) {
+    let width: i32 = text.chars().filter_map(badge_glyph).map(|glyph| glyph[0].len() as i32 + 1).sum();
+    for y in 0..9 * BADGE_PIXEL {
+        for x in 0..(width + 2) * BADGE_PIXEL {
+            set(img, x, y, PLATE);
+        }
+    }
+    let mut x = BADGE_PIXEL;
+    for c in text.chars() {
+        let Some(glyph) = badge_glyph(c) else { continue };
+        for (row, line) in glyph.iter().enumerate() {
+            for (col, cell) in line.bytes().enumerate() {
+                if cell != b'#' {
+                    continue;
+                }
+                for dy in 0..BADGE_PIXEL {
+                    for dx in 0..BADGE_PIXEL {
+                        set(img, x + col as i32 * BADGE_PIXEL + dx, (2 + row as i32) * BADGE_PIXEL + dy - BADGE_PIXEL / 2, LABEL);
+                    }
+                }
+            }
+        }
+        x += (glyph[0].len() as i32 + 1) * BADGE_PIXEL;
+    }
+}
+
+/// A screenshot (a data URL) with its badge, or the screenshot itself when it cannot be read: a
+/// badge is a help for the model, not a reason to refuse a look.
+pub fn badged(data_url: &str, n: usize, total: usize) -> String {
+    let Ok(raw) = change::decode_data_url(data_url) else { return data_url.to_string() };
+    let Ok(decoded) = image::load_from_memory(&raw) else { return data_url.to_string() };
+    let mut canvas = decoded.to_rgb8();
+    draw_badge(&mut canvas, &badge_text(n, total));
+    let mut out = Vec::new();
+    if image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, BADGE_QUALITY).encode_image(&canvas).is_err() {
+        return data_url.to_string();
+    }
+    format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(out))
+}
+
+/// The survey's screenshots, in order, each with its number written on it.
+pub fn badged_images(obs: &Observation) -> Vec<String> {
+    obs.survey.iter().enumerate().map(|(i, screen)| badged(&screen.screenshot, i + 1, obs.survey.len())).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use image::GenericImageView;
+
+    #[test]
+    fn a_badge_sits_on_a_black_plate_in_the_corner() {
+        let badged = badged(&change::test_screenshot(300, 100, false), 2, 3);
+        let img = image::load_from_memory(&change::decode_data_url(&badged).unwrap()).unwrap();
+        assert_eq!(img.dimensions(), (300, 100));
+        let [r, g, b, _] = img.get_pixel(2, 2).0;
+        assert!(r < 60 && g < 60 && b < 60, "the plate is black, got {r},{g},{b}");
+        let [r, g, b, _] = img.get_pixel(290, 90).0;
+        assert!(r > 200 && g > 200 && b > 200, "the page is untouched, got {r},{g},{b}");
+        assert_eq!(super::badged("not a data url", 1, 1), "not a data url");
+    }
 
     #[test]
     fn a_marked_screenshot_keeps_its_size_and_shows_the_point() {

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::action::{self, Action, Kind};
 use crate::change;
 use crate::focus;
+use crate::mark;
 use crate::memory::{self, Turn};
 use crate::gate::Gate;
 use crate::model::{self, REPLY_SCHEMA_NAME};
@@ -343,11 +344,8 @@ impl Agent {
             }
         }
         let text = prompt::observation_text(number, s.step_limit, &obs, &results, &notes, &s.memo, stale);
-        let images = if obs.survey.is_empty() {
-            vec![obs.screenshot.clone()]
-        } else {
-            obs.survey.iter().map(|screen| screen.screenshot.clone()).collect()
-        };
+        // A survey's screens go to the model with their numbers written on them.
+        let images = if obs.survey.is_empty() { vec![obs.screenshot.clone()] } else { mark::badged_images(&obs) };
         let system = prompt::system_prompt(&s.task, &s.profile, &self.config, checks);
         // Fold the oldest turns before building the prompt when the history passes budget.
         s.memory.compact_if_over(self.config.keep_turns, self.config.history_tokens, system.len() / 4);
