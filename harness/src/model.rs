@@ -44,6 +44,10 @@ pub struct Reply {
     /// is none this step.
     #[serde(default)]
     pub question: Option<String>,
+    /// The facts and choices the model took for the person on this step without being told, one
+    /// line each; `None` when it took none.
+    #[serde(default)]
+    pub assumed: Option<Vec<String>>,
     /// The screens of a survey the model will not need to come back to; `None` when the look is
     /// not a survey.
     #[serde(default)]
@@ -327,6 +331,7 @@ pub fn reply_schema(survey: bool, checks: bool) -> Value {
         ("message", string.clone()),
         ("stop", stop),
         ("question", null_string.clone()),
+        ("assumed", json!({"type": ["array", "null"], "items": {"type": "string"}})),
     ];
     if survey {
         // The screens the model will not come back to: asked last of the notes, before the plan.

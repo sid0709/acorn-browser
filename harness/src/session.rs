@@ -14,7 +14,7 @@ use crate::observe::{ActionResult, Viewport};
 use crate::ports::Usage;
 use crate::profile::Profile;
 use crate::review::{Expectation, Reviews};
-use crate::run::Question;
+use crate::run::{Question, Status, StopInfo};
 use crate::task::Task;
 use crate::todo::FieldState;
 
@@ -34,9 +34,14 @@ pub struct Session {
     /// The most steps the run may take so far. Going on after the limit adds a whole budget, so
     /// a run the person is still helping is not cut off again at once.
     pub step_limit: u32,
-    /// Set once a step ended the run; `stopped_for` is why, in the words of the step.
+    /// Set once a step ended the run; `stopped_for` is why, in the words of the step, and
+    /// `last_status` and `last_stop` how that step ended it.
     pub finished: bool,
     pub stopped_for: String,
+    pub last_status: Status,
+    pub last_stop: Option<StopInfo>,
+    /// What the model said it assumed for the person, each line once, for the report.
+    pub assumed: Vec<String>,
     /// What the person wrote since the model last looked, oldest first.
     pub inbox: Vec<String>,
     /// Every question the run asked the person, with the answer when one came.
@@ -128,6 +133,9 @@ impl Session {
             step_limit,
             finished: false,
             stopped_for: String::new(),
+            last_status: Status::Working,
+            last_stop: None,
+            assumed: Vec::new(),
             inbox: Vec::new(),
             questions: Vec::new(),
             memo: String::new(),

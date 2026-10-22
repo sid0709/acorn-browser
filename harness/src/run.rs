@@ -22,6 +22,7 @@ use crate::review;
 use crate::observe::{self, ActionResult, Observation};
 use crate::ports::{Browser, Decider, Error, ErrorKind, Message, Model, Role, Usage};
 use crate::profile::Profile;
+use crate::report::Report;
 use crate::session::Session;
 use crate::task::{StopReason, Task};
 use crate::todo::FieldState;
@@ -161,6 +162,9 @@ pub struct Step {
     /// through `Agent::answer`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub questions: Vec<Question>,
+    /// With a status that ends the run: the whole picture for the person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<Report>,
 }
 
 /// Why a step could not be answered.
@@ -305,6 +309,11 @@ impl Agent {
         step.fields = s.take_fields();
         // Every answer carries the settled parts when they changed, however it was made.
         step.settled = s.take_settled_map();
+        if step.status != Status::Working {
+            s.last_status = step.status;
+            s.last_stop = step.stop.clone();
+            step.report = Some(s.report(step.status, step.stop.clone()));
+        }
         Ok(step)
     }
 
@@ -479,6 +488,9 @@ impl Agent {
         }
         s.message = reply.message.trim().to_string();
         s.note_fields(&reply, &obs);
+        if let Some(assumed) = &reply.assumed {
+            s.note_assumed(assumed);
+        }
         // A question for the person is kept, and sent with the step; the run goes on. One the
         // run already asked, in the same words, is not asked again.
         let questions: Vec<Question> = reply
@@ -552,6 +564,7 @@ impl Agent {
             fields: Vec::new(),
             settled: None,
             questions,
+            report: None,
         };
         if step.status != Status::Working {
             s.finished = true;
