@@ -118,6 +118,7 @@ impl Agent {
     pub(crate) fn take_plan(&self, s: &mut Session, mut actions: Vec<Action>, mut dropped: Vec<String>) -> (Vec<Action>, Vec<String>) {
         s.forget_plan();
         s.load_waits = 0;
+        s.reviewed.clear();
         s.planned = actions.len();
         s.by_id = actions.iter().map(|a| (a.id.clone(), a.clone())).collect();
         if actions.is_empty() {

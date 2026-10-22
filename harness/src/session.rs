@@ -72,8 +72,16 @@ pub struct Session {
     /// The fields whose fill did not verify since the model last looked, for the survey that
     /// follows to show whole.
     pub retry: Vec<FocusTarget>,
-    /// The reviews running beside the plan, shared with the threads that run them.
+    /// The reviews running beside the plan, shared with the threads that run them; by zone,
+    /// whether the photo of each zone of the plan being carried out showed every field as
+    /// planned; and what the reviews taken in since the last look found wrong, for its note.
     pub reviews: Arc<Reviews>,
+    pub reviewed: BTreeMap<u32, bool>,
+    pub review_wrong: Vec<String>,
+    /// The labels of the fields the reviews found filled as planned on `confirmed_url`, for the
+    /// stretches settled row by row.
+    pub confirmed: Vec<String>,
+    pub confirmed_url: String,
     /// Asks for the next look to be a survey: something was found that the model must see the
     /// whole page again to put right.
     pub survey_again: bool,
@@ -83,6 +91,8 @@ pub struct Session {
     pub fields: Vec<FieldState>,
     pub fields_url: String,
     pub fields_changed: bool,
+    /// Counts the changes to the list, so a wait for a newer list (`Agent::wait_fields`) knows one.
+    pub fields_version: u32,
     /// The previous screenshot's signature, for telling whether the page changed.
     pub last_signature: Option<Signature>,
     /// Steps in a row where the screen did not change.
@@ -127,10 +137,15 @@ impl Session {
             plan_scroll_y: 0.0,
             retry: Vec::new(),
             reviews: Arc::new(Reviews::default()),
+            reviewed: BTreeMap::new(),
+            review_wrong: Vec::new(),
+            confirmed: Vec::new(),
+            confirmed_url: String::new(),
             survey_again: false,
             fields: Vec::new(),
             fields_url: String::new(),
             fields_changed: false,
+            fields_version: 0,
             last_signature: None,
             stale: 0,
             failed_streak: 0,

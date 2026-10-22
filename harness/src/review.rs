@@ -22,6 +22,7 @@ use crate::ports::{Decider, Decision, Part, Question, Usage};
 use crate::prompt;
 use crate::run::{Agent, StepError};
 use crate::session::Session;
+use crate::todo::FieldStatus;
 
 /// The most characters of a value a review asks about.
 pub const MAX_EXPECT_CHARS: usize = 120;
@@ -84,6 +85,8 @@ struct ReviewState {
     /// The zones of each plan that have a review, so a photo that comes twice (mid-batch and
     /// again with the look) is reviewed once.
     started: BTreeSet<(u32, u32)>,
+    /// Counts what a waiter may care about: a review that ended, the to-do list that changed.
+    changes: u64,
 }
 
 impl Reviews {
@@ -102,7 +105,34 @@ impl Reviews {
         let mut state = self.state.lock().unwrap();
         state.running = state.running.saturating_sub(1);
         state.done.push(result);
+        state.changes += 1;
         self.ended.notify_all();
+    }
+
+    /// Counts a change to what the reviews feed (the to-do list) and wakes whoever waits for one.
+    pub(crate) fn wake(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.changes += 1;
+        self.ended.notify_all();
+    }
+
+    /// How many changes there have been, to wait from.
+    pub(crate) fn changes(&self) -> u64 {
+        self.state.lock().unwrap().changes
+    }
+
+    /// Waits for a change past `since`, at most `timeout`, and says whether one came.
+    pub(crate) fn wait_change(&self, since: u64, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut state = self.state.lock().unwrap();
+        while state.changes <= since {
+            let now = Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            state = self.ended.wait_timeout(state, deadline - now).unwrap().0;
+        }
+        true
     }
 
     /// Waits for the running reviews, at most `timeout`, and says whether they all ended.
@@ -120,7 +150,7 @@ impl Reviews {
     }
 
     /// The reviews that ended since the last take.
-    fn take(&self) -> Vec<ReviewResult> {
+    pub(crate) fn take(&self) -> Vec<ReviewResult> {
         std::mem::take(&mut self.state.lock().unwrap().done)
     }
 
@@ -209,7 +239,7 @@ impl Agent {
         self.start_review(&mut s, shot);
         // A field filled earlier in the batch was found wrong: the rest of the batch would go on
         // to send what is wrong, so it stops, and the model looks at the page first.
-        if s.reviews.found_wrong(s.plan_gen) {
+        if s.reviews.found_wrong(s.plan_gen) || s.reviewed.values().any(|ok| !ok) {
             return Ok(AfterShot::Abort);
         }
         Ok(AfterShot::GoOn)
@@ -244,10 +274,10 @@ impl Agent {
     /// review still running is picked up at the next look. The session is locked.
     pub(crate) fn collect_reviews(&self, s: &mut Session) {
         s.reviews.wait_all(self.config.review_wait);
-        let mut wrong = Vec::new();
         for result in s.reviews.take() {
-            wrong.extend(s.apply_review(result));
+            s.apply_review(result);
         }
+        let wrong = std::mem::take(&mut s.review_wrong);
         if wrong.is_empty() {
             return;
         }
@@ -290,18 +320,45 @@ fn review_zone(decider: &(dyn Decider + Send + Sync), shot: ZoneShot, exps: Vec<
 }
 
 impl Session {
-    /// Takes one finished review into the run: its cost, and what it found wrong, as lines for
-    /// the note of the next look. A review that failed found nothing: the survey that follows
-    /// shows the zone.
-    pub(crate) fn apply_review(&mut self, result: ReviewResult) -> Vec<String> {
+    /// Takes one finished review into the run: its cost, the zone's standing, and the to-do list,
+    /// where a field found not showing what was planned goes back to empty and the rest are
+    /// ticked off. What it found wrong is kept for the note of the next look. A review that
+    /// failed found nothing: the survey that follows shows the zone.
+    pub(crate) fn apply_review(&mut self, result: ReviewResult) {
         self.usage.add(result.usage);
+        if result.plan_gen == self.plan_gen {
+            self.reviewed.insert(result.zone, result.error.is_none() && result.failed.is_empty());
+        }
         if result.error.is_some() {
-            return Vec::new();
+            return;
         }
         for exp in &result.failed {
+            self.review_wrong.push(format!("{:?} does not show {:?} (screen {})", exp.label, exp.value, result.zone));
+            self.set_field(&exp.label, FieldStatus::Empty);
             self.unverified(&exp.label, exp.y);
         }
-        result.failed.iter().map(|exp| format!("{:?} does not show {:?} (screen {})", exp.label, exp.value, result.zone)).collect()
+        // What the zone's review did not fault, it confirmed: those fields are ticked off the
+        // to-do list, and will settle their rows.
+        for exp in &result.asked {
+            if result.failed.iter().any(|bad| bad.label == exp.label) {
+                continue;
+            }
+            // A review that comes back after the run left the page confirms nothing on the page
+            // it is on now.
+            if self.expect_url == self.confirmed_url {
+                self.confirmed.push(exp.label.clone());
+            }
+            self.set_field(&exp.label, FieldStatus::Filled);
+        }
+    }
+
+    /// Notes the page a look is of: what the reviews confirmed is of the page they were on.
+    pub(crate) fn see_page(&mut self, url: &str) {
+        let url = crate::observe::without_fragment(url);
+        if self.confirmed_url != url {
+            self.confirmed.clear();
+            self.confirmed_url = url.to_string();
+        }
     }
 }
 

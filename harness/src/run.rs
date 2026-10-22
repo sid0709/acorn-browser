@@ -253,6 +253,7 @@ impl Agent {
             )));
         }
         s.viewport = obs.viewport;
+        s.see_page(&obs.url);
         // The photos of the zones the plan just filled are reviewed on the side, and the reviews
         // that ended are taken in: what they found wrong is told to the model.
         for shot in review::accept_zone_shots(&obs) {
