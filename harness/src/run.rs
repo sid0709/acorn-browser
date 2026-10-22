@@ -325,7 +325,11 @@ impl Agent {
         // whole run, so a check that fails along the way does not change the cached prompt.
         let checks = self.checks_available();
 
-        let text = prompt::observation_text(number, s.step_limit, &obs, &results, &s.notes, &s.memo, stale);
+        let mut notes = s.notes.clone();
+        if s.parts > 1 && s.sent == s.planned && s.notes.is_empty() {
+            notes.push(format!("Your plan ran in {} parts. After each part but the last, a checker confirmed the screen showed what you expected.", s.parts));
+        }
+        let text = prompt::observation_text(number, s.step_limit, &obs, &results, &notes, &s.memo, stale);
         let images = if obs.survey.is_empty() {
             vec![obs.screenshot.clone()]
         } else {
