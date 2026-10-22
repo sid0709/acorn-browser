@@ -4,6 +4,7 @@ use std::hash::{BuildHasher, Hasher, RandomState};
 use std::time::{Instant, SystemTime};
 
 use crate::change::Signature;
+use crate::memory::Memory;
 use crate::observe::ActionResult;
 use crate::ports::Usage;
 use crate::profile::Profile;
@@ -33,6 +34,8 @@ pub struct Session {
     pub usage: Usage,
     /// Things the model is told on its next look, about what its plan did.
     pub notes: Vec<String>,
+    /// The run's history of turns, folded and compacted as it grows.
+    pub memory: Memory,
     /// Results of actions sent since the model last looked, which may be several batches.
     pub carried: Vec<ActionResult>,
     /// The previous screenshot's signature, for telling whether the page changed.
@@ -61,6 +64,7 @@ impl Session {
             memo: String::new(),
             usage: Usage::default(),
             notes: Vec::new(),
+            memory: Memory::default(),
             carried: Vec::new(),
             last_signature: None,
             stale: 0,

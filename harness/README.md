@@ -39,7 +39,7 @@ One step, one commit. Build must pass; tests stay minimal.
 - [x] 17. OpenRouter client
 
 **D. Memory**
-- [ ] 18. Turn history, image lifetime
+- [x] 18. Turn history, image lifetime
 - [ ] 19. Fold old turns to one line
 - [ ] 20. Compact on token budget
 - [ ] 21. Context overflow: compact and retry

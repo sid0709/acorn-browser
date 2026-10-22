@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::action::{Action, Kind};
 use crate::change;
+use crate::memory::{self, Turn};
 use crate::gate::Gate;
 use crate::model::{self, REPLY_SCHEMA_NAME};
 use crate::prompt;
@@ -36,11 +37,13 @@ pub struct Config {
     pub checks: bool,
     /// The most actions that run before the screen is checked, when checks are on.
     pub chunk_actions: usize,
+    /// How many of the newest turns keep their screenshots in the history.
+    pub keep_images: usize,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { max_actions: 30, unchecked_actions: 6, max_stale: 6, max_failed_steps: 3, checks: false, chunk_actions: 6 }
+        Config { max_actions: 30, unchecked_actions: 6, max_stale: 6, max_failed_steps: 3, checks: false, chunk_actions: 6, keep_images: 0 }
     }
 }
 
@@ -245,10 +248,13 @@ impl Agent {
         } else {
             obs.survey.iter().map(|screen| screen.screenshot.clone()).collect()
         };
-        let messages = vec![
-            Message { role: Role::System, text: prompt::system_prompt(&s.task, &s.profile, &self.config), images: Vec::new(), cache: true },
-            Message { role: Role::User, text, images, cache: false },
-        ];
+        let mut messages = vec![Message { role: Role::System, text: prompt::system_prompt(&s.task, &s.profile, &self.config), cache: true, ..Default::default() }];
+        messages.extend(s.memory.history(self.config.keep_images));
+        // The prompt grows only at its end, so the provider caches up to the end of the history.
+        if let Some(last) = messages.last_mut() {
+            last.cache = true;
+        }
+        messages.push(Message { role: Role::User, text: text.clone(), images: images.clone(), cache: false });
         let answer = recover::ask(self.model.as_ref(), messages, REPLY_SCHEMA_NAME, model::reply_schema(s.task.survey, self.config.checks)).map_err(|e| match e {
             recover::AskError::Model(err) => StepError::Model(err),
             recover::AskError::Reply { why, usage } => {
@@ -297,6 +303,15 @@ impl Agent {
             }
             planned
         };
+
+        s.memory.record(Turn {
+            number,
+            text,
+            images,
+            answer: answer.content,
+            summary: memory::summary_line(number, reply.message.trim(), &actions),
+        });
+        s.memory.release_images(self.config.keep_images);
 
         let step = Step {
             status: reply.status,
