@@ -119,10 +119,11 @@ impl Persistence {
 }
 
 impl Default for Persistence {
-    /// Stop for what a person alone can do, and for a decision or anything else the model judges
-    /// the person must see.
+    /// Stop for what a person alone can do, for a page that would not take what was asked of it,
+    /// and for a decision or anything else the model judges the person must see.
     fn default() -> Self {
         let mut stop_for = StopReason::unavoidable();
+        stop_for.insert(StopReason::PageProblem);
         stop_for.insert(StopReason::Decision);
         stop_for.insert(StopReason::Other);
         Persistence { max_steps: Self::DEFAULT_MAX_STEPS, stop_for }

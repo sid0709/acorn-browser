@@ -89,7 +89,8 @@ fn stop_reason_text(reason: StopReason) -> Option<&'static str> {
     })
 }
 
-fn reason_name(reason: StopReason) -> String {
+/// A stop reason as the model names it.
+pub(crate) fn reason_name(reason: StopReason) -> String {
     serde_json::to_value(reason).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
 }
 

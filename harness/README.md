@@ -66,6 +66,6 @@ One step, one commit. Build must pass; tests stay minimal.
 
 **H. Gate**
 - [x] 36. Verify "done"
-- [ ] 37. Verify "stop"
+- [x] 37. Verify "stop"
 - [ ] 38. Irreversible actions and the safe flag
 - [ ] 39. Fixed rules

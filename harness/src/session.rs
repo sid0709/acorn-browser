@@ -8,6 +8,7 @@ use std::time::{Instant, SystemTime};
 use crate::action::{Action, Batch};
 use crate::change::Signature;
 use crate::focus::FocusTarget;
+use crate::gate::FieldHold;
 use crate::map::{Coverage, Settled};
 use crate::memory::Memory;
 use crate::observe::{ActionResult, Viewport};
@@ -49,8 +50,14 @@ pub struct Session {
     pub last_stop: Option<StopInfo>,
     /// What the model said it assumed for the person, each line once, for the report.
     pub assumed: Vec<String>,
-    /// How many "done" answers were sent back because the screen did not confirm them.
+    /// How many "done" answers were sent back because the screen did not confirm them; how many
+    /// stops for the person were sent back to finish the page first; how many stops for a human
+    /// check were sent back because the screen showed none; and the last stop sent back for the
+    /// fields read as empty.
     pub done_passes: u32,
+    pub stop_passes: u32,
+    pub captcha_passes: u32,
+    pub field_hold: FieldHold,
     /// What the person wrote since the model last looked, oldest first.
     pub inbox: Vec<String>,
     /// Every question the run asked the person, with the answer when one came.
@@ -149,6 +156,9 @@ impl Session {
             last_stop: None,
             assumed: Vec::new(),
             done_passes: 0,
+            stop_passes: 0,
+            captcha_passes: 0,
+            field_hold: FieldHold::default(),
             inbox: Vec::new(),
             questions: Vec::new(),
             memo: String::new(),

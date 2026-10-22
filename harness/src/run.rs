@@ -63,6 +63,16 @@ pub struct Config {
     pub done_passes: i32,
     /// How sure the checker must be that the screen shows the task done (a probability).
     pub done_confirm: f64,
+    /// How many times a stop for the person is sent back, to finish everything that does not
+    /// need them first; 0 accepts every stop at once.
+    pub stop_passes: u32,
+    /// How sure the decision model must be that a field the model read as empty is one only the
+    /// person can fill (a probability) for a stop to stand with it empty.
+    pub person_field: f64,
+    /// How sure the decision model must be that a check the person must pass by hand is on
+    /// screen for a stop with reason captcha to stand; below it the stop is sent back once, to
+    /// press the button that sends the page first. 0 takes the model's word.
+    pub captcha_confirm: f64,
 }
 
 impl Default for Config {
@@ -81,6 +91,9 @@ impl Default for Config {
             history_tokens: 30_000,
             done_passes: 2,
             done_confirm: 0.7,
+            stop_passes: 2,
+            person_field: 0.5,
+            captcha_confirm: 0.7,
         }
     }
 }

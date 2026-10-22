@@ -115,6 +115,13 @@ impl Session {
         self.fields_on(url).iter().filter(|f| f.state == FieldStatus::Empty).map(|f| f.label.as_str()).collect()
     }
 
+    /// Whether the model's own reading of the page says nothing is left to fill: it listed the
+    /// page's fields on a survey and none is empty. A field only the person can give is theirs,
+    /// not the run's, and does not count. Before the model has read the page, nothing is known.
+    pub(crate) fn nothing_left_to_fill(&self, obs: &Observation) -> bool {
+        !self.fields_on(&obs.url).is_empty() && self.empty_fields_on(&obs.url).is_empty()
+    }
+
     /// Whether a field the model read as empty lies in a stretch of the page.
     pub(crate) fn empty_field_near(&self, url: &str, from: f64, to: f64) -> bool {
         self.fields_on(url).iter().any(|f| f.state == FieldStatus::Empty && f.y >= from && f.y <= to)
