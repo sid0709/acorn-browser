@@ -10,6 +10,7 @@ cd app && scripts/build.sh run       # the browser must be running
 cd .. && bench/run.py                # the five levels, once
 bench/run.py --only L4-govuk-visa --repeat 2
 bench/run.py --missions bench/missions/basics --no-judge
+bench/run.py --mode both              # each mission in image mode, then in DOM mode
 ```
 
 ## The missions
@@ -35,8 +36,11 @@ with no sites or key points; run it with `--no-judge`.
 
 ## The score
 
-For each run the table shows the agent's own verdict (`done`, `need_person`, `stuck`), the
-judge's verdict (`pass` or `fail`, with its reason), the steps, the time and the cost. The
+For each run the table shows the mode the model saw the page in (`image`: a screenshot each
+step; `dom`: the page map and no picture, see `docs/dom-mode-plan.md`), the agent's own verdict
+(`done`, `need_person`, `stuck`), the judge's verdict (`pass` or `fail`, with its reason), the
+steps, the time and the cost. `--mode both` runs every mission both ways, one after the other,
+so the two columns of the comparison come from the same sites on the same day. The
 judge is given the request, the key points, up to eight screenshots (the last one always, the
 ones where a focused field had just changed its value, since a wrong pick in a dropdown and its
 correction a step later look the same in an even spread, and the rest spread over the run), and
@@ -52,3 +56,22 @@ to read next: `timeline.txt` for the run at a glance, then the step where it wen
 
 The sites are live, so a mission can become impossible (a page or an offer gone); the benchmark
 marks such tasks impossible rather than failed, and so should a reading of these results.
+
+## The page map
+
+`pagemap/pagemap.mjs` is the reference builder of the page map of DOM mode
+(`harness/src/page.rs`, `app/Sources/App/PageMap.swift`): on Playwright's Chromium it asks for
+the accessibility tree and the DOM snapshot and joins them the way the app does, so a change to
+the rules is tried here first and the harness's fixtures (`harness/src/fixtures/*.page.json`)
+are regenerated from `pagemap/pages/*.html`.
+
+```bash
+cd bench/pagemap && node pagemap.mjs pages/govuk.html https://www.gov.uk/   # → out/
+cd bench/pagemap && node compare.mjs https://www.amazon.com/s?k=laptop      # the three sources side by side
+```
+
+`compare.mjs` measures a page three ways, Chromium's DOM snapshot, its accessibility tree and
+Oak's own serializer (bundled from the `Oak` submodule, needs `bun`), and prints sizes, times,
+the controls each misses, the hidden nodes each keeps and the icon-only controls each leaves
+nameless: the comparison the page map was designed from, to repeat on pages with many cards
+(shopping results, long listings) whenever a rule of the map is in question.

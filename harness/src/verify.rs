@@ -10,6 +10,7 @@
 
 use crate::action::{self, Action, Batch, Kind};
 use crate::change::Signature;
+use crate::check::Check;
 use crate::memory;
 use crate::observe::{ActionResult, Observation};
 use crate::prompt;
@@ -19,6 +20,8 @@ use crate::run::{Agent, Status, Step};
 use crate::session::Session;
 use crate::trace::{CheckTrace, ModelCall};
 
+/// The checker's name in the trace when the harness judged the check from the page map.
+pub const PAGE_MAP_CHECKER: &str = "page map";
 /// The keys the checker's answers come back under.
 pub const ASK_MATCHES: &str = "matches";
 pub const ASK_CONTRADICTED: &str = "contradicted";
@@ -91,7 +94,8 @@ impl Outcome {
 /// whether something is in the way, and whether the page is still loading. `evidence` is what
 /// the page reports beside the picture (the focused control, the address, what became of the
 /// actions): what a screenshot cannot show, the checker is told.
-pub fn look(decider: &(dyn Decider + Send + Sync), screenshot: &str, evidence: &str, expect: &str) -> Result<(Verdict, Verdicts), Error> {
+/// In DOM mode `map` is the page map, which stands in for the picture.
+pub fn look(decider: &(dyn Decider + Send + Sync), screenshot: &str, map: Option<&str>, evidence: &str, expect: &str) -> Result<(Verdict, Verdicts), Error> {
     let mut questions = std::collections::BTreeMap::new();
     questions.insert(
         ASK_MATCHES.to_string(),
@@ -109,7 +113,10 @@ pub fn look(decider: &(dyn Decider + Send + Sync), screenshot: &str, evidence: &
         ASK_LOADING.to_string(),
         Question::yes_no("Is the page still loading or changing: a spinner, a progress bar, a blank or half-drawn page, or a control that says it is still working?"),
     );
-    let mut state = vec![Part::Text("A screenshot of a web page the browser is on.".to_string()), Part::Image(screenshot.to_string())];
+    let mut state = match map {
+        Some(map) => vec![Part::Text(format!("The map of a web page the browser is on, as the browser itself reports it: one line per control, heading or text, with its live state; what is on the screen now first, the rest of the page summed up after. Read it as you would a screenshot.\n{map}"))],
+        None => vec![Part::Text("A screenshot of a web page the browser is on.".to_string()), Part::Image(screenshot.to_string())],
+    };
     if !evidence.trim().is_empty() {
         state.push(Part::Text(format!("What the page itself reports, which the screenshot may not show:\n{}", evidence.trim())));
     }
@@ -254,44 +261,69 @@ impl Agent {
             self.abandon(s, &format!("The last actions failed: {failed}."));
             return None;
         }
-        // A page that is loading may look the same for a moment; anything else that did not move
-        // is not what the model expected. Typing and keys are the exception: a few characters in
-        // a field move too few pixels to register as a change, so the checker is asked instead.
-        if stale > 0 && s.load_waits == 0 && !changed_little(s, &obs.results) {
-            self.abandon(s, "The screen did not change after them, so it is not what you expected.");
-            return None;
-        }
-        let started = std::time::SystemTime::now();
-        let evidence = prompt::evidence_text(obs, results);
-        let looked = look(decider.as_ref(), &obs.screenshot, &evidence, &expect);
-        s.pending_calls.push(ModelCall::decision(&format!("expected: {expect}"), looked.as_ref().map(|(_, verdicts)| verdicts), started));
-        let (verdict, verdicts) = match looked {
-            Ok(looked) => looked,
-            Err(err) => {
-                // A checker that fails is not worth asking again this run; the model looks instead.
-                s.checks_off = true;
-                s.last_check = Some(CheckTrace { expect, outcome: Outcome::Look(String::new()).name().to_string(), error: err.to_string(), ..Default::default() });
-                self.abandon(s, "The screen could not be checked, so the rest of your plan did not run.");
+        let outcome = if let Some((check, page)) = Check::parse(&expect).zip(obs.page.as_ref()) {
+            // A check the harness judges itself, from the page map: no model and no wait, and
+            // the pixels do not come into it (a focus ring moves too few to count).
+            let outcome = match check.judge(page, &obs.url) {
+                Some(true) => Outcome::Continue,
+                Some(false) => Outcome::Look("the page map shows otherwise".to_string()),
+                None => Outcome::Unsure("the page map does not have the node the check names".to_string()),
+            };
+            s.last_check = Some(CheckTrace {
+                expect: expect.clone(),
+                matches: if outcome == Outcome::Continue { 1.0 } else { 0.0 },
+                outcome: outcome.name().to_string(),
+                reason: match &outcome {
+                    Outcome::Look(reason) | Outcome::Unsure(reason) => reason.clone(),
+                    _ => String::new(),
+                },
+                model: PAGE_MAP_CHECKER.to_string(),
+                ..Default::default()
+            });
+            outcome
+        } else {
+            // A page that is loading may look the same for a moment; anything else that did not
+            // move is not what the model expected. Typing and keys are the exception: a few
+            // characters in a field move too few pixels to register as a change, so the checker
+            // is asked instead.
+            if stale > 0 && s.load_waits == 0 && !changed_little(s, &obs.results) {
+                self.abandon(s, "The screen did not change after them, so it is not what you expected.");
                 return None;
             }
+            let started = std::time::SystemTime::now();
+            let evidence = prompt::evidence_text(obs, results);
+            let map = if s.task.dom_mode() { obs.page.as_ref().map(|page| page.text(&obs.viewport)) } else { None };
+            let looked = look(decider.as_ref(), &obs.screenshot, map.as_deref(), &evidence, &expect);
+            s.pending_calls.push(ModelCall::decision(&format!("expected: {expect}"), looked.as_ref().map(|(_, verdicts)| verdicts), started));
+            let (verdict, verdicts) = match looked {
+                Ok(looked) => looked,
+                Err(err) => {
+                    // A checker that fails is not worth asking again this run; the model looks instead.
+                    s.checks_off = true;
+                    s.last_check = Some(CheckTrace { expect, outcome: Outcome::Look(String::new()).name().to_string(), error: err.to_string(), ..Default::default() });
+                    self.abandon(s, "The screen could not be checked, so the rest of your plan did not run.");
+                    return None;
+                }
+            };
+            s.usage.add(verdicts.usage);
+            let outcome = judge(verdict, &self.config.checkpoint, s.load_waits);
+            s.last_check = Some(CheckTrace {
+                expect: expect.clone(),
+                matches: verdict.matches,
+                contradicted: verdict.contradicted,
+                blocked: verdict.blocked,
+                loading: verdict.loading,
+                outcome: outcome.name().to_string(),
+                reason: match &outcome {
+                    Outcome::Look(reason) | Outcome::Unsure(reason) => reason.clone(),
+                    _ => String::new(),
+                },
+                model: verdicts.model.clone(),
+                latency_ms: verdicts.latency.as_millis() as i64,
+                error: String::new(),
+            });
+            outcome
         };
-        s.usage.add(verdicts.usage);
-        let outcome = judge(verdict, &self.config.checkpoint, s.load_waits);
-        s.last_check = Some(CheckTrace {
-            expect: expect.clone(),
-            matches: verdict.matches,
-            contradicted: verdict.contradicted,
-            blocked: verdict.blocked,
-            loading: verdict.loading,
-            outcome: outcome.name().to_string(),
-            reason: match &outcome {
-                Outcome::Look(reason) | Outcome::Unsure(reason) => reason.clone(),
-                _ => String::new(),
-            },
-            model: verdicts.model.clone(),
-            latency_ms: verdicts.latency.as_millis() as i64,
-            error: String::new(),
-        });
         match outcome {
             Outcome::Continue => {
                 s.carried = results.to_vec();
@@ -463,6 +495,55 @@ mod tests {
         assert!(second.dropped.is_empty(), "{:?}", second.dropped);
         let seen = seen.lock().unwrap();
         assert!(seen[1].contains("could not tell") && seen[1].contains("is kept, not run: s1a2 type"), "{}", seen[1]);
+    }
+
+    /// A decider that must never be asked.
+    struct Never;
+
+    impl crate::ports::Decider for Never {
+        fn decide(&self, _decision: crate::ports::Decision) -> Result<crate::ports::Verdicts, crate::ports::Error> {
+            panic!("the decision model was asked")
+        }
+        fn name(&self) -> &str {
+            "never"
+        }
+    }
+
+    /// A look that carries a page map with one radio, checked or not.
+    fn mapped(checked: bool, done: &[&str]) -> Observation {
+        let mut obs = look_at(true, done);
+        obs.page = Some(crate::page::PageMap {
+            nodes: vec![crate::page::PageNode { id: 1, role: "radio".into(), name: "Work".into(), x: 10.0, y: 10.0, w: 12.0, h: 12.0, states: if checked { vec!["checked".into()] } else { vec![] }, ..Default::default() }],
+        });
+        obs
+    }
+
+    #[test]
+    fn a_check_the_harness_can_judge_from_the_page_map_never_asks_the_decision_model() {
+        let plan = r#"{"status":"working","message":"Choosing.","actions":[
+            {"kind":"click","target":1,"check":"[1] checked"},
+            {"kind":"click","x":10,"y":50,"label":"Continue","check":"url~=\"/next\""}]}"#;
+        let (model, _) = Replying::new(plan);
+        let agent = Agent::new(Config::default(), model).with_decider(Box::new(Never));
+        let id = agent.start(task(), Profile::default());
+        let first = agent.step(&id, mapped(false, &[])).unwrap();
+        assert_eq!(ids(&first), ["s1a1"]);
+        // The target gave the click its point and the check was bound to the node's name.
+        assert_eq!(first.actions[0].target.as_ref().map(|t| t.name.as_str()), Some("Work"));
+        assert_eq!(first.actions[0].point().map(|p| (p.x, p.y)), Some((16.0, 16.0)));
+        // The next look's map says the radio is checked: the plan goes on, no model asked.
+        let second = agent.step(&id, mapped(true, &["s1a1"])).unwrap();
+        assert_eq!(ids(&second), ["s1a2"]);
+        assert_eq!(second.number, 1);
+        // Then the address did not change: the model looks, told so.
+        let (model, seen) = Replying::new(plan);
+        let agent = Agent::new(Config::default(), model).with_decider(Box::new(Never));
+        let id = agent.start(task(), Profile::default());
+        agent.step(&id, mapped(false, &[])).unwrap();
+        agent.step(&id, mapped(true, &["s1a1"])).unwrap();
+        let third = agent.step(&id, mapped(true, &["s1a2"])).unwrap();
+        assert_eq!(third.number, 2);
+        assert!(seen.lock().unwrap()[1].contains("the page map shows otherwise"), "{}", seen.lock().unwrap()[1]);
     }
 
     #[test]

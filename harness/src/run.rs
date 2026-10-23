@@ -249,7 +249,11 @@ impl Agent {
     }
 
     /// Begins a run and returns its id.
-    pub fn start(&self, task: Task, profile: Profile) -> String {
+    pub fn start(&self, mut task: Task, profile: Profile) -> String {
+        // DOM mode plans from the map, never from screens of a survey.
+        if task.dom_mode() {
+            task.survey = false;
+        }
         let session = Session::new(task, profile);
         let id = session.id.clone();
         if let Some(tracer) = &self.trace {
@@ -260,6 +264,7 @@ impl Agent {
                     url: session.task.start_url.as_deref().unwrap_or(""),
                     goal: &session.task.goal,
                     survey: session.task.survey,
+                    mode: session.task.mode,
                     max_steps: session.task.persistence.max_steps,
                 },
                 model: self.model.name(),
@@ -482,7 +487,7 @@ impl Agent {
             entry.message = step.message.clone();
             entry.dropped = step.dropped.clone();
             entry.usage = s.usage;
-            self.record(s, entry, &obs.screenshot, &obs.survey, &step.actions, Vec::new());
+            self.record(s, entry, &obs.screenshot, &obs.survey, obs.page.as_ref(), &step.actions, Vec::new());
             return Ok(step);
         }
         // A plan refused whole, the same way, step after step, is a loop the model cannot see out
@@ -530,13 +535,37 @@ impl Agent {
                 }
             }
         }
-        let text = prompt::observation_text(number, s.step_limit, &obs, &results, &notes, &s.inbox, &s.memo, stale);
-        // A survey's screens go to the model with their numbers written on them.
-        let images = if obs.survey.is_empty() { vec![obs.screenshot.clone()] } else { mark::badged_images(&obs) };
+        // In DOM mode the model reads the page map and no picture; a page the browser could not
+        // map is one this mode cannot read, and the run says so rather than guessing.
+        let dom = s.task.dom_mode();
+        let map = if dom { obs.page.as_ref().map(|page| page.text(&obs.viewport)) } else { None };
+        if dom && obs.page.as_ref().is_none_or(|page| page.nodes.is_empty()) {
+            return Ok(self.end_run(
+                s,
+                &obs,
+                stale,
+                Status::Stuck,
+                "The page could not be read in DOM mode: the browser sent no page map for it.".to_string(),
+                StopInfo {
+                    reason: StopReason::PageProblem,
+                    problem: "This page cannot be read in DOM mode.".to_string(),
+                    action: "Run the task in image mode, or do this page yourself and let the run go on.".to_string(),
+                },
+            ));
+        }
+        let text = prompt::observation_text(number, s.step_limit, &obs, &results, &notes, &s.inbox, &s.memo, stale, map.as_deref());
+        // A survey's screens go to the model with their numbers written on them; DOM mode sends none.
+        let images = if dom {
+            Vec::new()
+        } else if obs.survey.is_empty() {
+            vec![obs.screenshot.clone()]
+        } else {
+            mark::badged_images(&obs)
+        };
         let system = prompt::system_prompt(&s.task, &s.profile, &self.config, checks);
         // Fold the oldest turns before building the prompt when the history passes budget.
         s.memory.compact_if_over(self.config.keep_turns, self.config.history_tokens, system.len() / 4);
-        let schema = model::reply_schema(s.task.survey, checks);
+        let schema = model::reply_schema(s.task.survey, checks, dom);
         // The prompt may still be too long for the model; one overflow folds the history to its
         // most recent turn and the step is tried once more.
         let mut compacted_for_overflow = false;
@@ -608,7 +637,7 @@ impl Agent {
 
         let screens: Vec<f64> = obs.survey.iter().map(|screen| screen.scroll_y).collect();
         let written = reply.actions.len();
-        let (planned, mut dropped) = model::check_actions(number, std::mem::take(&mut reply.actions), &obs.viewport, self.config.plan_limit(checks), &screens);
+        let (planned, mut dropped) = model::check_actions(number, std::mem::take(&mut reply.actions), &obs.viewport, self.config.plan_limit(checks), &screens, obs.page.as_ref());
         // How many actions of the plan could not be carried out: the click that sends the page
         // waits for them.
         // A survey or a resume is a request the harness grants, not an action lost.
@@ -709,7 +738,7 @@ impl Agent {
         entry.dropped = step.dropped.clone();
         entry.check = s.last_check.take();
         entry.usage = s.usage;
-        self.record(s, entry, &obs.screenshot, &obs.survey, &step.actions, calls);
+        self.record(s, entry, &obs.screenshot, &obs.survey, obs.page.as_ref(), &step.actions, calls);
         Ok(step)
     }
 
@@ -717,7 +746,7 @@ impl Agent {
     fn refuse(&self, s: &mut Session, obs: &Observation, why: String) -> StepError {
         let mut entry = entry_for(s, obs, 0);
         entry.error = format!("bad observation: {why}");
-        self.record(s, entry, &obs.screenshot, &[], &[], Vec::new());
+        self.record(s, entry, &obs.screenshot, &[], obs.page.as_ref(), &[], Vec::new());
         StepError::BadObservation(why)
     }
 
@@ -726,7 +755,7 @@ impl Agent {
         let mut entry = entry_for(s, obs, stale);
         entry.error = error;
         entry.usage = s.usage;
-        self.record(s, entry, &obs.screenshot, &obs.survey, &[], calls);
+        self.record(s, entry, &obs.screenshot, &obs.survey, obs.page.as_ref(), &[], calls);
     }
 
     /// Ends the run with no actions: the person is told why and what they can do, and the trace
@@ -738,7 +767,7 @@ impl Agent {
         entry.status = status;
         entry.message = message.clone();
         entry.stop = Some(stop.clone());
-        self.record(s, entry, &obs.screenshot, &obs.survey, &[], Vec::new());
+        self.record(s, entry, &obs.screenshot, &obs.survey, obs.page.as_ref(), &[], Vec::new());
         Step { status, message, stop: Some(stop), number: s.step, usage: s.usage, ..Default::default() }
     }
 }
@@ -748,6 +777,7 @@ fn entry_for(s: &Session, obs: &Observation, stale: u32) -> StepTrace {
     StepTrace {
         seq: s.seq,
         step: s.step + 1,
+        mode: s.task.mode,
         at: trace::rfc3339(SystemTime::now()),
         url: obs.url.clone(),
         title: obs.title.clone(),
@@ -981,6 +1011,51 @@ mod tests {
         assert!(agent.step(&id, look()).unwrap().questions.is_empty());
         let seen = seen.lock().unwrap();
         assert!(seen[1].contains("- Answer to your question \"Which card should I use, the blue one or the red one?\": the blue one\n- and no gift wrap\n"), "{}", seen[1]);
+    }
+
+    #[test]
+    fn dom_mode_sends_the_map_and_no_picture_and_cannot_go_on_without_a_map() {
+        use crate::page::{PageMap, PageNode};
+        use crate::ports::ModelRequest;
+        struct Seeing(std::sync::Mutex<Vec<(usize, String, String)>>);
+        impl Model for Seeing {
+            fn complete(&self, request: ModelRequest) -> Result<ModelResponse, Error> {
+                let last = request.messages.last().unwrap();
+                self.0.lock().unwrap().push((last.images.len(), last.text.clone(), request.messages[0].text.clone()));
+                Ok(ModelResponse { content: r#"{"status":"working","message":"","actions":[{"kind":"click","target":1,"label":"Go","commit":null,"modifiers":null,"check":"url~=\"/next\""}]}"#.to_string(), ..Default::default() })
+            }
+            fn name(&self) -> &str {
+                "seeing"
+            }
+        }
+        let seen = std::sync::Arc::new(Seeing(std::sync::Mutex::new(Vec::new())));
+        struct Shared(std::sync::Arc<Seeing>);
+        impl Model for Shared {
+            fn complete(&self, request: ModelRequest) -> Result<ModelResponse, Error> {
+                self.0.complete(request)
+            }
+            fn name(&self) -> &str {
+                "seeing"
+            }
+        }
+        let agent = Agent::new(Config::default(), Box::new(Shared(seen.clone())));
+        let mut task = Task::new("go");
+        task.mode = crate::task::Mode::Dom;
+        let id = agent.start(task, Profile::default());
+        let mut obs = look();
+        obs.page = Some(PageMap { nodes: vec![PageNode { id: 1, role: "button".into(), name: "Go".into(), x: 10.0, y: 10.0, w: 20.0, h: 10.0, ..Default::default() }] });
+        let step = agent.step(&id, obs).unwrap();
+        assert_eq!(step.status, Status::Working);
+        assert_eq!(step.actions[0].target.as_ref().map(|t| t.id), Some(1));
+        let calls = seen.0.lock().unwrap();
+        assert_eq!(calls[0].0, 0, "no image in DOM mode");
+        assert!(calls[0].1.contains("The map of the page") && calls[0].1.contains("button[1] \"Go\""), "{}", calls[0].1);
+        assert!(calls[0].2.contains("# The map"), "the DOM prompt");
+        drop(calls);
+        // A look with no map ends the run rather than guessing from nothing.
+        let stuck = agent.step(&id, look()).unwrap();
+        assert_eq!(stuck.status, Status::Stuck);
+        assert_eq!(stuck.stop.unwrap().reason, StopReason::PageProblem);
     }
 
     #[test]

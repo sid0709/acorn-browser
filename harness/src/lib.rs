@@ -12,6 +12,7 @@ pub use image;
 
 pub mod action;
 pub mod change;
+pub mod check;
 pub mod focus;
 pub mod gate;
 pub mod intake;
@@ -21,6 +22,7 @@ pub mod memory;
 pub mod model;
 pub mod observe;
 pub mod openrouter;
+pub mod page;
 pub mod pointcheck;
 pub mod ports;
 pub mod profile;

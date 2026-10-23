@@ -5,6 +5,7 @@
     bench/run.py                    # every mission in bench/missions/levels, once
     bench/run.py --only L3-flightaware-discussions --repeat 2
     bench/run.py --missions bench/missions/basics --no-judge
+    bench/run.py --mode both                  # every mission in image mode, then in DOM mode
 
 A mission is a request in plain words, as a person would type it, followed by an HTML comment
 with its level, the site it starts on, and what a judge must see. As in Online-Mind2Web, the
@@ -21,6 +22,7 @@ The judge needs OPENROUTER_API_KEY (from the environment, or the app's or kit's 
 Exits 0 when every run passed, 1 otherwise.
 """
 import argparse
+import itertools
 import base64
 import datetime
 import json
@@ -93,7 +95,7 @@ def run_mission(runner, task_file, trace_dir, extra):
     command = [str(runner), str(task_file), "--trace", str(trace_dir)] + extra
     started = datetime.datetime.now()
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    row = {"status": "crashed", "message": "", "seconds": 0.0, "cost": 0.0, "steps": 0, "understood": "", "run": ""}
+    row = {"status": "crashed", "message": "", "seconds": 0.0, "cost": 0.0, "steps": 0, "understood": "", "run": "", "mode": ""}
     for line in process.stdout:
         line = line.strip()
         if not line:
@@ -105,6 +107,7 @@ def run_mission(runner, task_file, trace_dir, extra):
         kind = event.get("event")
         if kind == "start":
             row["run"] = event.get("run", "")
+            row["mode"] = event.get("mode", "")
         elif kind == "understood":
             row["understood"] = event.get("summary", "")
             print(f"  understood: {row['understood']}  [{event.get('startUrl') or '(current page)'}]")
@@ -231,11 +234,11 @@ def judge(key, request, key_points, shots, actions):
 
 
 def table(rows, judged):
-    head = "| mission | level | agent | judge | steps | seconds | cost | note |"
-    lines = [head, "| --- | ---: | --- | --- | ---: | ---: | ---: | --- |"]
+    head = "| mission | level | mode | agent | judge | steps | seconds | cost | note |"
+    lines = [head, "| --- | ---: | --- | --- | --- | ---: | ---: | ---: | --- |"]
     for r in rows:
         note = (r["judge_reason"] if judged else r["message"]).replace("|", "/").replace("\n", " ")[:140]
-        lines.append(f"| {r['mission']} | {r['level']} | {r['status']} | {r['judge']} | {r['steps']} | {r['seconds']:.0f} | ${r['cost']:.3f} | {note} |")
+        lines.append(f"| {r['mission']} | {r['level']} | {r.get('mode', '')} | {r['status']} | {r['judge']} | {r['steps']} | {r['seconds']:.0f} | ${r['cost']:.3f} | {note} |")
     passed = sum(1 for r in rows if (r["judge"] if judged else r["status"]) in ("pass", "done"))
     lines.append("")
     lines.append(f"**{passed} of {len(rows)} {'passed' if judged else 'done'}** · {sum(r['seconds'] for r in rows):.0f} s · ${sum(r['cost'] for r in rows):.2f}")
@@ -250,6 +253,7 @@ def main():
     parser.add_argument("--repeat", type=int, default=1, help="how many times to run each mission")
     parser.add_argument("--model", help="the driving model (passed to the runner)")
     parser.add_argument("--decider", help="the decision model, or none (passed to the runner)")
+    parser.add_argument("--mode", choices=["image", "dom", "both"], default="image", help="how the model sees the page: a screenshot (image), the page map and no picture (dom), or each mission in both, one after the other")
     parser.add_argument("--no-site", action="store_true", help="do not give the runner the mission's site: it must find it from the request")
     parser.add_argument("--no-judge", action="store_true", help="skip the judge; the agent's own verdict is the score")
     args = parser.parse_args()
@@ -265,6 +269,7 @@ def main():
         extra += ["--model", args.model]
     if args.decider:
         extra += ["--decider", args.decider]
+    modes = ["image", "dom"] if args.mode == "both" else [args.mode]
     key = "" if args.no_judge else read_key()
     if not args.no_judge and not key:
         print("no OPENROUTER_API_KEY for the judge: the agent's own verdict will be the score")
@@ -274,13 +279,15 @@ def main():
     rows = []
     for mission in missions:
         request, meta = read_mission(mission)
-        for n in range(args.repeat):
+        for n, mode in itertools.product(range(args.repeat), modes):
             name = mission.stem if args.repeat == 1 else f"{mission.stem}-{n + 1}"
-            print(f"\n== {name} (level {meta.get('level', '?')}): {request.splitlines()[0]}")
+            if len(modes) > 1:
+                name = f"{name}-{mode}"
+            print(f"\n== {name} (level {meta.get('level', '?')}, {mode} mode): {request.splitlines()[0]}")
             task_file = write_task(request, meta.get("site", ""), not args.no_site)
             trace_dir = traces / name
             try:
-                row = run_mission(runner, task_file, trace_dir, extra)
+                row = run_mission(runner, task_file, trace_dir, extra + ["--mode", mode])
             finally:
                 task_file.unlink(missing_ok=True)
             row["mission"] = name

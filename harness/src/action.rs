@@ -42,6 +42,23 @@ pub struct Action {
     /// ends here and the screen is checked against it. Empty means no check.
     #[serde(default, skip_serializing)]
     pub check: String,
+    /// The node of the page map the action acts on, in DOM mode: the browser measures it again
+    /// just before acting and finds it anew by role and name when its number has gone stale.
+    /// The point is then only a hint of where it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<Target>,
+}
+
+/// A node of the page map named by an action: its number on the map the model was shown, and
+/// what that map said it was, for finding it again on a page that was redrawn since.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Target {
+    pub id: u32,
+    pub role: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub frame: u32,
 }
 
 impl Action {
@@ -56,6 +73,7 @@ impl Action {
             label: String::new(),
             commit: Commit::None,
             check: String::new(),
+            target: None,
         }
     }
 
@@ -125,7 +143,8 @@ pub enum Kind {
     /// One key or chord (`Enter`, `Control+a`, `ArrowDown`), or several separated by spaces.
     Key { keys: String },
     /// Scroll by `dx`, `dy` screenshot pixels (positive goes right and down), with the wheel at
-    /// the point when one is given.
+    /// the point when one is given; or, with `to`, straight to that height of the page (CSS
+    /// pixels from its top), as DOM mode asks.
     Scroll {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         x: Option<f64>,
@@ -135,6 +154,8 @@ pub enum Kind {
         dx: f64,
         #[serde(default)]
         dy: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<f64>,
     },
     /// Click the control at the point and answer the file picker with a file of the task's.
     Upload {
@@ -155,6 +176,9 @@ pub enum Kind {
     Choose { option: String },
     /// Go back to the page before this one.
     Back,
+    /// The whole text of the target node, for a map that cut it short: the browser answers
+    /// with it in the action's result.
+    Read,
     /// Not sent to the browser: the model asks for the next look to be a survey of the whole page.
     Survey,
     /// Not sent to the browser: the model asks for the rest of its kept plan to run as planned.
@@ -387,7 +411,7 @@ mod tests {
 
     #[test]
     fn a_plan_splits_at_checks_scrolls_and_the_limit() {
-        let scroll = Action::new("s", Kind::Scroll { x: None, y: None, dx: 0.0, dy: 500.0 });
+        let scroll = Action::new("s", Kind::Scroll { x: None, y: None, dx: 0.0, dy: 500.0, to: None });
         let plan = vec![click("a", ""), click("b", "the box is ticked"), click("c", ""), scroll, click("d", ""), click("e", ""), click("f", "")];
         let batches = split_plan(plan, 2, false);
         let ids: Vec<Vec<&str>> = batches.iter().map(|b| b.actions.iter().map(|a| a.id.as_str()).collect()).collect();
@@ -403,7 +427,7 @@ mod tests {
             a.check = check.to_string();
             a
         };
-        let scroll = Action::new("s", Kind::Scroll { x: None, y: None, dx: 0.0, dy: 500.0 });
+        let scroll = Action::new("s", Kind::Scroll { x: None, y: None, dx: 0.0, dy: 500.0, to: None });
         let plan = vec![click("c1", ""), typed("t1", "Name shows x"), click("c2", ""), typed("t2", "Email shows x"), scroll, click("c3", "the box is ticked")];
         let batches = split_plan_for_checks(plan, 2, true);
         let ids: Vec<Vec<&str>> = batches.iter().map(|b| b.actions.iter().map(|a| a.id.as_str()).collect()).collect();

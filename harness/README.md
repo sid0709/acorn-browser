@@ -1,8 +1,10 @@
 # harness
 
-A general-purpose agent harness for a browser that does any task given in chat. Pure image
-based: the browser sends a screenshot, the harness answers with the next actions. It is the brain
-of Acorn Browser; the browser (the app, over its agent socket) is the hands and eyes.
+A general-purpose agent harness for a browser that does any task given in chat. The browser
+sends a look at the page, the harness answers with the next actions. It is the brain of Acorn
+Browser; the browser (the app, over its agent socket) is the hands and eyes. A look is a
+screenshot (image mode, the first way and the default) or the page map, the page as the browser
+itself knows it, with no picture (DOM mode, `page.rs`); a task's `mode` says which.
 
 ```bash
 cargo build                    # no warnings
@@ -176,6 +178,35 @@ allowances say: on its own, after asking the person (the question goes out with 
 run goes on), or never. The fixed rules hold a send while part of the plan failed, while the
 to-do list has a required field empty, and for one look after the page refused the last send.
 
+### The page map (`page.rs`)
+
+The material of DOM mode, the second way of seeing a page, which is being built in stages
+(`docs/dom-mode-plan.md`). A browser that can describe the page sends, beside the screenshot, a
+flat, depth-first list of its nodes: role, computed name, live state (`checked`, `disabled`,
+`selected`, ...), the value a control holds, and the box in page coordinates (CSS pixels from
+the document's top left, a frame's offset already added). The harness renders it for the model
+as one line per node in view and a minimap of the rest, one line per screen's worth of page,
+under a byte budget; options of a closed native list have no box and follow their list.
+
+An action may name a node of the map instead of a point (`target`): the harness gives it the
+node's centre as its point and the browser measures the node again just before acting, scrolls
+it into view, makes sure the point hits it and not something over it, and finds it anew by role
+and name when its number went stale. `scroll` takes `to` (a height of the page) or a target;
+`read` answers with a node's whole text. A check written in the harness's words (`check.rs`:
+`[12] checked`, `[12] value="laptop"`, `url~="/results"`, `exists "Thank you"`) is bound to
+the node's role and name when the plan is taken and judged from the next look's map, with no
+model and no wait; a check in other words still goes to the decision model. The browser also
+reads a targeted control before and after the action and reports what changed
+(`checked: false → true`).
+
+In DOM mode (`Task::mode`, the runner's `--mode dom`) the model reads the map and no picture:
+its own prompt (`prompts/system-dom.md`) and reply schema name nodes by number, there is no
+survey and no point check, and the gate's questions (the proof of done, a refused send, a
+human check) go to the decision model with the map text. A look the browser could not map ends
+the run as stuck, with the reason, rather than falling back to a picture: the benchmark then
+shows where this way of seeing fails. The screenshot is still taken every look, for the trace
+and the bench judge.
+
 ### Intervention and the end (`run.rs`, `report.rs`, `trace.rs`)
 
 Questions to the person are queued with the step and the run keeps going; answers arrive through
@@ -183,8 +214,8 @@ Questions to the person are queued with the step and the run keeps going; answer
 `Report`: the outcome, what the model assumed for the person, which parts of the page no look
 showed, which fields are still open, and every question with its answer. With a trace folder set
 every step is written to disk in the layout acorn's `tracesum` reads: the screenshot the model
-saw, the same with every action drawn on it, what it was sent and answered, tokens, cost and
-time. Typed secrets are never written.
+saw, the same with every action drawn on it, the page map as the model would read it, what it
+was sent and answered, tokens, cost and time. Typed secrets are never written.
 
 ## What goes over the wire
 

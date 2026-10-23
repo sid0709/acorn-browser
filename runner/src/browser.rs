@@ -17,7 +17,7 @@ use harness::run::Step;
 use serde_json::{Value, json};
 
 /// The version of the line protocol this runner speaks; the app must speak the same.
-pub const PROTOCOL: u64 = 3;
+pub const PROTOCOL: u64 = 4;
 
 /// How long one request may take before the app is taken to be stuck. A look waits for the page
 /// to settle (a few seconds) and a survey scrolls the whole page, so this is generous.

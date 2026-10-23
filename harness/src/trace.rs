@@ -16,6 +16,7 @@
 //! system.txt     the standing prompt the model was given
 //! NNN.jpg        the screenshot the model saw (NNN.surveyK.jpg for a survey's screens)
 //! NNN.marked.jpg the same screenshot with each action's point drawn and numbered
+//! NNN.page.txt   the page map the browser sent, as the model would read it in DOM mode
 //! NNN.json       what the page reported, what the model decided, what was sent back
 //! NNN.model.json every model call of the step: messages, raw answer, tokens, cost, time
 //! timeline.txt   one line per entry, to read a run at a glance
@@ -34,6 +35,7 @@ use crate::mark;
 use crate::memory;
 use crate::model;
 use crate::observe::{ActionResult, Focus, SurveyScreen, Viewport};
+use crate::page::PageMap;
 use crate::ports::{Error, Role, Usage, Verdicts};
 use crate::recover::Call;
 use crate::run::{Agent, Config, Status, StopInfo};
@@ -59,11 +61,16 @@ pub struct Tracer {
 pub struct StepTrace {
     pub seq: u32,
     pub step: u32,
+    /// How the model saw the page on this step: `image` or `dom`.
+    pub mode: crate::task::Mode,
     /// `check` when the decision model carried the plan on; empty when the driving model looked.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub source: String,
     #[serde(skip_serializing_if = "is_zero")]
     pub survey_screens: usize,
+    /// How many nodes the page map had, and how many of them controls; 0 without a map.
+    pub page_nodes: usize,
+    pub page_controls: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check: Option<CheckTrace>,
     pub at: String,
@@ -194,6 +201,8 @@ pub struct StartTrace<'a> {
     pub url: &'a str,
     pub goal: &'a str,
     pub survey: bool,
+    /// How the model sees the page: `image` or `dom`.
+    pub mode: crate::task::Mode,
     pub max_steps: u32,
 }
 
@@ -300,9 +309,12 @@ impl Tracer {
     /// Writes one entry: what the page reported and the model decided, every model call, the
     /// screenshot and the same screenshot with each action drawn on it (a survey's screens
     /// likewise), and a line of the timeline. `actions` are the entry's actions as sent.
-    pub fn record(&self, id: &str, entry: &StepTrace, screenshot: &str, survey: &[SurveyScreen], actions: &[Action], calls: &[ModelCall]) -> Result<(), String> {
+    pub fn record(&self, id: &str, entry: &StepTrace, screenshot: &str, survey: &[SurveyScreen], page: Option<(&PageMap, &Viewport)>, actions: &[Action], calls: &[ModelCall]) -> Result<(), String> {
         let name = format!("{:03}", entry.seq);
         let mut files = vec![(format!("{name}.json"), serde_json::to_vec_pretty(entry).map_err(|e| format!("encode entry: {e}"))?)];
+        if let Some((map, viewport)) = page {
+            files.push((format!("{name}.page.txt"), map.text(viewport).into_bytes()));
+        }
         if !calls.is_empty() {
             files.push((format!("{name}.model.json"), serde_json::to_vec_pretty(calls).map_err(|e| format!("encode calls: {e}"))?));
         }
@@ -411,17 +423,22 @@ impl Agent {
 
     /// Writes one entry of the run to the trace, with the decision model's calls made since the
     /// last entry before the step's own. A trace that cannot be written never stops the run.
-    pub(crate) fn record(&self, s: &mut Session, mut entry: StepTrace, screenshot: &str, survey: &[SurveyScreen], actions: &[Action], calls: Vec<ModelCall>) {
+    pub(crate) fn record(&self, s: &mut Session, mut entry: StepTrace, screenshot: &str, survey: &[SurveyScreen], page: Option<&PageMap>, actions: &[Action], calls: Vec<ModelCall>) {
         let mut all = std::mem::take(&mut s.pending_calls);
         all.extend(calls);
         let Some(tracer) = &self.trace else { return };
+        if let Some(map) = page {
+            entry.page_nodes = map.nodes.len();
+            entry.page_controls = map.controls();
+        }
         let now = SystemTime::now();
         entry.started_at = rfc3339(s.step_started);
         entry.ended_at = rfc3339(now);
         entry.duration_ms = now.duration_since(s.step_started).unwrap_or_default().as_millis() as i64;
         entry.actions = traced_actions(actions);
         // A write that fails is the operator's to notice from the folder; the run goes on.
-        let _ = tracer.record(&s.id, &entry, screenshot, survey, actions, &all);
+        let viewport = entry.viewport;
+        let _ = tracer.record(&s.id, &entry, screenshot, survey, page.map(|map| (map, &viewport)), actions, &all);
     }
 }
 

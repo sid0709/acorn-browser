@@ -36,6 +36,13 @@ final class AgentRunner: ObservableObject {
     }
     static let defaultModel = "openai/gpt-6-luna"
     private static let modelKey = "agentModel"
+    /// How the model sees the page: `image` (a screenshot each step) or `dom` (the page map
+    /// and no picture), kept between launches. In DOM mode no picture reaches the model at all,
+    /// so a run measures that way of seeing on its own.
+    @Published var mode: String = UserDefaults.standard.string(forKey: AgentRunner.modeKey) ?? "image" {
+        didSet { UserDefaults.standard.set(mode, forKey: Self.modeKey) }
+    }
+    private static let modeKey = "agentMode"
 
     private var process: Process?
     private var stopped = false
@@ -90,6 +97,7 @@ final class AgentRunner: ObservableObject {
             "--socket", AgentServer.socketPath,
             "--trace", runDirectory.path,
             "--model", drivingModel,
+            "--mode", mode == "dom" ? "dom" : "image",
             "--env-file", Self.appDirectory.appendingPathComponent(".env").path,
         ]
         let output = Pipe()

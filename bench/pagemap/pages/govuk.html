@@ -1,0 +1,31 @@
+<!doctype html><html lang="en"><head><title>Check if you need a UK visa - GOV.UK</title>
+<style>body{font-family:sans-serif;margin:0}.govuk-header{background:#0b0c0c;color:#fff;padding:12px 30px}.govuk-width-container{max-width:960px;margin:0 auto;padding:0 15px}
+.govuk-button{background:#00703c;color:#fff;border:0;padding:10px 16px;font-size:19px;cursor:pointer}.govuk-radios__item{margin:8px 0}.govuk-footer{background:#f3f2f1;padding:40px 30px;margin-top:400px}
+.hidden{display:none}.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.icon-btn{width:40px;height:40px;cursor:pointer;background:#1d70b8;border-radius:4px}
+.card{cursor:pointer;border:1px solid #ccc;padding:10px;margin:8px 0}</style></head>
+<body>
+<header class="govuk-header"><a href="/" class="govuk-header__link"><img src="crown.png" alt="GOV.UK"></a>
+<nav aria-label="Menu"><a href="/search">Search</a> <div class="icon-btn" role="button" aria-label="Open menu"></div></nav></header>
+<main class="govuk-width-container" id="main">
+<form action="/check-uk-visa/y" method="post">
+<fieldset class="govuk-fieldset"><legend><h1 class="govuk-fieldset__heading">What will you be doing in the UK?</h1></legend>
+<div class="govuk-radios">
+<div class="govuk-radios__item"><input type="radio" id="r1" name="purpose" value="tourism"><label for="r1">Tourism or visiting family and friends</label></div>
+<div class="govuk-radios__item"><input type="radio" id="r2" name="purpose" value="work"><label for="r2">Work, academic visit or business</label></div>
+<div class="govuk-radios__item"><input type="radio" id="r3" name="purpose" value="study"><label for="r3">Study</label></div>
+<div class="govuk-radios__item"><input type="radio" id="r4" name="purpose" value="transit" disabled><label for="r4">Transit (passing through the UK)</label></div>
+</div></fieldset>
+<p class="hidden" id="error">Select what you will be doing in the UK</p>
+<details><summary>Help with this question</summary><p>Choose the option that best describes your main reason for coming.</p></details>
+<label for="country">Select a country</label>
+<select id="country" name="country"><option value="">Choose</option><option value="us" selected>United States</option><option value="fr">France</option></select>
+<div class="card" onclick="void 0"><strong>Healthcare worker visa</strong><span>Read about eligibility</span></div>
+<div class="card" data-id="2"><span class="sr">Open</span></div>
+<button class="govuk-button" type="submit">Continue</button>
+</form>
+<p>You need a visa if you are coming for more than 6 months. <a href="/healthcare">Health and Care Worker visa</a></p>
+</main>
+<footer class="govuk-footer"><h2>Support links</h2><ul><li><a href="/help">Help</a></li><li><a href="/help/cookies">Cookies</a></li><li><a href="/contact">Contact</a></li><li><a href="/help/terms-conditions">Terms and conditions</a></li></ul>
+<a href="/" class="govuk-footer__link"><span class="govuk-footer__licence-logo"></span>All content is available under the Open Government Licence v3.0</a></footer>
+<script>document.getElementById('r2').checked = true;</script>
+</body></html>

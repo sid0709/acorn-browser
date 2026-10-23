@@ -8,6 +8,7 @@
 //! allow: send, pay=never
 //! steps: 40
 //! survey: no
+//! mode: dom
 //! persistence: relentless
 //! resource: cv = files/cv.pdf | My résumé
 //! ---
@@ -23,12 +24,21 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use harness::task::{Allowance, Irreversible, Persistence, Resource, Task};
+use harness::task::{Allowance, Irreversible, Mode, Persistence, Resource, Task};
 
 /// A task read from its file, with the files it may upload by id.
 pub struct Loaded {
     pub task: Task,
     pub files: HashMap<String, PathBuf>,
+}
+
+/// How the model sees the page: `image` (the default) or `dom`.
+pub fn mode_of(value: &str) -> Result<Mode, String> {
+    match value.trim().to_lowercase().as_str() {
+        "image" | "" => Ok(Mode::Image),
+        "dom" => Ok(Mode::Dom),
+        other => Err(format!("mode is image or dom, not {other:?}")),
+    }
 }
 
 /// Reads a task file.
@@ -47,6 +57,7 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
             "watch_out" => task.watch_out.push(value),
             "steps" => steps = Some(value.parse::<u32>().map_err(|_| format!("steps must be a number, not {value:?}"))?),
             "survey" => task.survey = matches!(value.to_lowercase().as_str(), "yes" | "true" | "on"),
+            "mode" => task.mode = mode_of(&value)?,
             "persistence" => match value.to_lowercase().as_str() {
                 "relentless" => task.persistence = Persistence::relentless(),
                 "default" => task.persistence = Persistence::default(),

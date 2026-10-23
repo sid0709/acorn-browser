@@ -155,17 +155,24 @@ pub fn summary_line(number: u32, message: &str, actions: &[Action]) -> String {
     line
 }
 
+/// The node an action targets, as `[id] "name"`, or nothing.
+fn target_name(action: &Action) -> String {
+    action.target.as_ref().map(|t| format!("[{}] {:?}", t.id, clip(&t.name, 40))).unwrap_or_default()
+}
+
 /// One short phrase saying what an action did, for the history and the trace.
 pub(crate) fn describe(action: &Action) -> String {
     match &action.kind {
         Kind::Type { text, secret: true } => format!("type [{} secret characters]", text.chars().count()),
         Kind::Type { text, secret: false } => format!("type {:?}", clip(text, 60)),
         Kind::Key { keys } => format!("key {keys}"),
+        Kind::Scroll { to: Some(to), .. } => format!("scroll to {to:.0}"),
         Kind::Scroll { dx, dy, .. } => format!("scroll {dx:.0},{dy:.0}"),
         Kind::Wait { ms } => format!("wait {ms}ms"),
         Kind::Navigate { url } => format!("go to {url}"),
         Kind::Choose { option } => format!("choose {:?}", clip(option, 60)),
         Kind::Back => "go back".to_string(),
+        Kind::Read => format!("read {}", target_name(action)),
         Kind::Survey => "survey".to_string(),
         Kind::Resume => "resume the kept plan".to_string(),
         Kind::Upload { x, y, file_name, .. } if !file_name.is_empty() => format!("upload {file_name} at {x:.0},{y:.0}"),

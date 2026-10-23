@@ -9,8 +9,9 @@ use crate::run::Config;
 use crate::task::{Allowance, Irreversible, StopReason, Task};
 
 /// The standing instruction, as a template: `{{key}}` is filled in, and `{{#if key}}...{{/if}}`
-/// stays only when the key has a value.
+/// stays only when the key has a value. One for each way of seeing the page.
 const SYSTEM_TEMPLATE: &str = include_str!("prompts/system.md");
+const SYSTEM_DOM_TEMPLATE: &str = include_str!("prompts/system-dom.md");
 
 /// The standing instruction, the same on every step of a run so the provider can cache it: the
 /// task, how to answer, when to stop, what the person allows, and who they are. `checks` is
@@ -36,7 +37,7 @@ pub fn system_prompt(task: &Task, profile: &Profile, config: &Config, checks: bo
         task.resources.iter().map(|r| format!("- {}: {} ({})", r.id, r.description.trim(), r.name)).collect::<Vec<_>>().join("\n"),
     );
     values.insert("today", today().unwrap_or_default());
-    render(SYSTEM_TEMPLATE, &values)
+    render(if task.dom_mode() { SYSTEM_DOM_TEMPLATE } else { SYSTEM_TEMPLATE }, &values)
 }
 
 /// Lines as a numbered list, one per line; empty for none.
@@ -139,10 +140,14 @@ fn today() -> Option<String> {
 /// page, the window onto it, what has focus, what became of the last actions, the notes, what
 /// the person wrote meanwhile, and the model's own memo. Only the newest step carries the memo in
 /// full, so it is paid for once.
-pub fn observation_text(step: u32, max_steps: u32, obs: &Observation, results: &[ActionResult], notes: &[String], messages: &[String], memo: &str, stale: u32) -> String {
+/// `map` is the page map as the model reads it, in DOM mode, where it stands in for the picture.
+pub fn observation_text(step: u32, max_steps: u32, obs: &Observation, results: &[ActionResult], notes: &[String], messages: &[String], memo: &str, stale: u32, map: Option<&str>) -> String {
     let mut out = format!("Step {step} of at most {max_steps}.\n");
     out.push_str(&format!("Page: {} ({})\n", or_none(&obs.title), or_none(&obs.url)));
-    out.push_str(&format!("Screenshot: {}x{} pixels. {}\n", obs.viewport.width, obs.viewport.height, scroll_line(&obs.viewport)));
+    match map {
+        Some(map) => out.push_str(&format!("The map of the page ({}x{} pixel screen). {}\n{map}\n", obs.viewport.width, obs.viewport.height, scroll_line(&obs.viewport))),
+        None => out.push_str(&format!("Screenshot: {}x{} pixels. {}\n", obs.viewport.width, obs.viewport.height, scroll_line(&obs.viewport))),
+    }
     out.push_str(&focus_line(obs.focus.as_ref()));
     if !obs.survey.is_empty() {
         out.push_str(&survey_line(obs));
@@ -322,6 +327,13 @@ mod tests {
         assert!(prompt.contains("# Seeing the whole page"));
         assert!(prompt.contains("up to 30,"));
         assert!(prompt.contains("\"check\""));
+        // DOM mode: the map, numbers for points, the harness's checks, no survey.
+        task.mode = crate::task::Mode::Dom;
+        let prompt = system_prompt(&task, &Profile::default(), &Config::default(), true);
+        assert!(prompt.contains("# The map") && prompt.contains("\"target\"") && prompt.contains("[12] checked"), "{prompt}");
+        assert!(!prompt.contains("# Seeing the whole page") && !prompt.contains("{{"), "{prompt}");
+        let text = observation_text(1, 150, &Observation::default(), &[], &[], &[], "", 0, Some("VIEW y=0..600 of 600\nbutton[1] \"Go\""));
+        assert!(text.contains("The map of the page") && text.contains("button[1] \"Go\"") && !text.contains("Screenshot:"), "{text}");
     }
 
     #[test]
@@ -334,7 +346,7 @@ mod tests {
             ..Default::default()
         };
         let results = vec![ActionResult { id: "s1a1".into(), ok: false, error: "nothing at that point".into(), ..Default::default() }];
-        let text = observation_text(2, 150, &obs, &results, &["the file was attached".to_string()], &["use my work email".to_string()], "pay by card", 1);
+        let text = observation_text(2, 150, &obs, &results, &["the file was attached".to_string()], &["use my work email".to_string()], "pay by card", 1, None);
         assert!(text.starts_with("Step 2 of at most 150.\nPage: Checkout (https://shop.test/pay)\n"));
         assert!(text.contains("about 300 px lies above and 1100 px below"));
         assert!(text.contains("labelled \"Country\""));
