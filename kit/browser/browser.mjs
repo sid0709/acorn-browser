@@ -14,19 +14,21 @@
 import readline from 'node:readline';
 import { chromium } from 'playwright';
 
-// How the page is looked at and acted on.
+// How the page is looked at and acted on. A look is taken when the page has settled: no change
+// to its DOM for QUIET_MS and no request still in flight, judged by a MutationObserver in the
+// page and a count of its requests here, never by a fixed wait. The caps only bound a page that
+// never settles (an endless animation, a long poll).
 const SURVEY_OVERLAP_PX = 120; // shared by neighbouring survey screens, so a control cut by one edge is whole on the next
 const FOCUS_NEAR_PX = 24; // a survey screen this close to a wanted one is the same screen
-const SETTLE_MS = 150; // what the page gets to settle after a scroll
-const AFTER_ACTION_MS = 100; // what the page gets to react after a click or a key
-const STILL_MS = 150; // two screenshots this far apart that match mean the page has settled
-const STILL_TRIES = 10; // how many times a look waits for the page to settle before it goes with what it has
-const LOAD_MS = 3000; // how long a look waits for the network to go quiet: a menu that fetches its contents on the first click needs it
+const QUIET_MS = 250; // this long without a DOM change, with no request in flight, is settled
+const SETTLE_CAP_MS = 5000; // the longest a look waits for the page to settle
+const SCROLL_SETTLE_CAP_MS = 1000; // the longest a scroll waits for what it brought into view
 const OPEN_MS = 30000; // how long opening the start page may take
 const CHOOSER_MS = 3000; // how long an upload waits for the file picker
 const MAX_WAIT_MS = 10000; // the longest one wait action may be
 const JPEG_QUALITY = 80;
 const EVALUATE_RETRIES = 5; // how many times a page function is tried again across a navigation
+const RETRY_MS = 150; // between those tries
 const MAX_LABEL_CHARS = 80;
 const MAX_VALUE_CHARS = 200;
 
@@ -44,6 +46,7 @@ let page = await context.newPage();
 let notes = []; // things the screenshot cannot show, for the next look
 let zoneShots = []; // photos taken when a zone of the last batch was done
 let chooser = null; // a file picker a click opened, until it is answered
+const inFlight = new Set(); // the page's requests not yet answered, for the settle check
 
 context.on('page', (opened) => {
   page = opened;
@@ -53,6 +56,12 @@ context.on('page', (opened) => {
 watch(page);
 
 function watch(p) {
+  p.on('request', (request) => {
+    // A socket or an event stream stays open for the page's life and does not keep it busy.
+    if (!['websocket', 'eventsource'].includes(request.resourceType())) inFlight.add(request);
+  });
+  p.on('requestfinished', (request) => inFlight.delete(request));
+  p.on('requestfailed', (request) => inFlight.delete(request));
   p.on('dialog', async (dialog) => {
     const accept = dialog.type() === 'alert' || dialog.type() === 'beforeunload';
     notes.push(`A dialog said: ${clip(dialog.message(), MAX_VALUE_CHARS)} (it was ${accept ? 'accepted' : 'dismissed'}).`);
@@ -91,8 +100,8 @@ async function evaluate(fn, arg) {
       return await page.evaluate(fn, arg);
     } catch (error) {
       if (attempt >= EVALUATE_RETRIES) throw error;
-      await page.waitForLoadState('load', { timeout: LOAD_MS }).catch(() => {});
-      await page.waitForTimeout(SETTLE_MS);
+      await page.waitForLoadState('load', { timeout: SETTLE_CAP_MS }).catch(() => {});
+      await page.waitForTimeout(RETRY_MS);
     }
   }
 }
@@ -110,23 +119,41 @@ async function shot() {
   return `data:image/jpeg;base64,${raw.toString('base64')}`;
 }
 
-/// A screenshot of the page once it holds still: a menu that is still opening, a page still
-/// drawing, is not what the model should plan from. Two shots STILL_MS apart that match are the
-/// page settled; a page that never settles (an animation) is shot after STILL_TRIES.
-async function stillShot() {
-  let last = await shot();
-  for (let i = 0; i < STILL_TRIES; i++) {
-    await page.waitForTimeout(STILL_MS);
-    const next = await shot();
-    if (next === last) return next;
-    last = next;
+/// Waits until the page has settled: no DOM change for QUIET_MS (a MutationObserver in the page
+/// says so) and no request in flight, within `cap`. A menu that is still opening, a list still
+/// filling, a page still loading what a click asked for, is not what the model should plan from.
+async function settled(cap = SETTLE_CAP_MS) {
+  const started = Date.now();
+  while (Date.now() - started < cap) {
+    const left = cap - (Date.now() - started);
+    const quiet = await evaluate(
+      ({ quietMs, capMs }) =>
+        new Promise((resolve) => {
+          let timer = setTimeout(() => done(true), quietMs);
+          const stop = setTimeout(() => done(false), capMs);
+          const observer = new MutationObserver(() => {
+            clearTimeout(timer);
+            timer = setTimeout(() => done(true), quietMs);
+          });
+          function done(result) {
+            observer.disconnect();
+            clearTimeout(timer);
+            clearTimeout(stop);
+            resolve(result);
+          }
+          observer.observe(document, { childList: true, subtree: true, attributes: true, characterData: true });
+        }),
+      { quietMs: QUIET_MS, capMs: Math.max(QUIET_MS, left) },
+    ).catch(() => true);
+    if (quiet && inFlight.size === 0) return true;
+    if (inFlight.size > 0) await page.waitForTimeout(RETRY_MS);
   }
-  return last;
+  return false;
 }
 
 async function scrollTo(y) {
   await evaluate((top) => window.scrollTo(window.scrollX, top), y);
-  await page.waitForTimeout(SETTLE_MS);
+  await settled(SCROLL_SETTLE_CAP_MS);
 }
 
 /// Whether a control has the keyboard: typing goes somewhere.
@@ -186,13 +213,13 @@ async function open(url) {
 
 /// One look at the page: the screenshot, where it is, what has focus, and, when asked, the whole
 /// page as screens from top to bottom, leaving out the parts the harness settled.
-async function observe(survey, focusYs, settled) {
-  await page.waitForLoadState('load', { timeout: LOAD_MS }).catch(() => {});
-  await page.waitForLoadState('networkidle', { timeout: LOAD_MS }).catch(() => {});
+async function observe(survey, focusYs, settledSpans) {
+  await page.waitForLoadState('load', { timeout: SETTLE_CAP_MS }).catch(() => {});
+  await settled();
   const vp = page.viewportSize();
   const m = await metrics();
   const observation = {
-    screenshot: await stillShot(),
+    screenshot: await shot(),
     url: page.url(),
     title: await page.title(),
     viewport: { width: vp.width, height: vp.height, ...m },
@@ -201,23 +228,23 @@ async function observe(survey, focusYs, settled) {
     zoneShots: zoneShots.splice(0),
   };
   if (survey) {
-    observation.survey = await surveyScreens(m, focusYs || [], settled);
+    observation.survey = await surveyScreens(m, focusYs || [], settledSpans);
   }
   return observation;
 }
 
-function inSettled(settled, from, to) {
-  return !!settled && settled.spans.some((span) => span.from <= from + 1 && span.to >= to - 1);
+function inSettled(settledSpans, from, to) {
+  return !!settledSpans && settledSpans.spans.some((span) => span.from <= from + 1 && span.to >= to - 1);
 }
 
-async function surveyScreens(m, focusYs, settled) {
+async function surveyScreens(m, focusYs, settledSpans) {
   const h = page.viewportSize().height;
   const last = Math.max(0, m.pageHeight - h);
   const step = Math.max(1, h - SURVEY_OVERLAP_PX);
   const tops = [];
   for (let y = 0; ; y += step) {
     const top = Math.min(y, last);
-    if (!inSettled(settled, top, top + h)) tops.push(top);
+    if (!inSettled(settledSpans, top, top + h)) tops.push(top);
     if (top >= last) break;
   }
   // A field whose fill did not verify gets a screen centred on it, so it is whole.
@@ -265,7 +292,7 @@ async function act(actions) {
     // A zone's photo once its last action is done, for the harness to review on the side.
     const next = actions[i + 1];
     if (action.zone > 0 && (!next || next.zone !== action.zone)) {
-      await page.waitForTimeout(AFTER_ACTION_MS);
+      await settled();
       zoneShots.push({ zone: action.zone, screenshot: await shot(), scrollY: (await metrics()).scrollY });
     }
   }
@@ -307,7 +334,7 @@ async function doAction(action) {
     case 'scroll':
       await page.mouse.move(action.x ?? width / 2, action.y ?? height / 2);
       await page.mouse.wheel(action.dx ?? 0, action.dy ?? 0);
-      await page.waitForTimeout(SETTLE_MS);
+      await settled(SCROLL_SETTLE_CAP_MS);
       return {};
     case 'upload': {
       const [opened] = await Promise.all([page.waitForEvent('filechooser', { timeout: CHOOSER_MS }), page.mouse.click(action.x, action.y)]);
@@ -317,7 +344,6 @@ async function doAction(action) {
         throw new Error('the task has no file to upload');
       }
       await opened.setFiles(action.path);
-      await page.waitForTimeout(AFTER_ACTION_MS);
       return { detail: `attached ${action.fileName || action.path}` };
     }
     case 'wait':
@@ -326,7 +352,9 @@ async function doAction(action) {
     default:
       throw new Error(`the browser cannot do an action of kind ${action.kind}`);
   }
-  await page.waitForTimeout(AFTER_ACTION_MS);
+  // A click that opens the file picker reports it within the settle; the next action, or the
+  // look, waits for the page anyway.
+  await settled();
   // A plain click that opened the file picker: it is closed, and the harness is told.
   if (chooser) {
     const opened = chooser;
