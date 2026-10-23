@@ -247,6 +247,8 @@ std::atomic<const char *> gSection{nullptr};
 /// The last ping the main thread answered, and whether the app was frontmost then.
 std::atomic<uint64_t> gAnsweredPing{0};
 std::atomic<bool> gAppActive{true};
+/// The main thread, recorded by `startWatching` (which runs on it) before the watcher starts.
+pthread_t gMainThread = nullptr;
 /// perf.log and its clock, on the log's queue only.
 NSFileHandle *gPerfFile = nil;
 NSISO8601DateFormatter *gPerfStamp = nil;
@@ -351,10 +353,9 @@ uintptr_t CodeAddress(uintptr_t address) {
 /// Stops the main thread for a moment and walks its frame pointers. Nothing between suspend
 /// and resume takes a lock or allocates: the main thread may be holding the lock.
 bool SampleMainStack(MainStack &stack) {
-  pthread_t main = pthread_main_thread_np();
-  const mach_port_t thread = pthread_mach_thread_np(main);
-  const uintptr_t top = (uintptr_t)pthread_get_stackaddr_np(main);
-  const uintptr_t bottom = top - pthread_get_stacksize_np(main);
+  const mach_port_t thread = pthread_mach_thread_np(gMainThread);
+  const uintptr_t top = (uintptr_t)pthread_get_stackaddr_np(gMainThread);
+  const uintptr_t bottom = top - pthread_get_stacksize_np(gMainThread);
   if (thread_suspend(thread) != KERN_SUCCESS) {
     return false;
   }
@@ -442,7 +443,7 @@ NSString *DescribeStack(const MainStack &stack) {
 double MainThreadCPUMs() {
   thread_basic_info_data_t info;
   mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
-  const mach_port_t thread = pthread_mach_thread_np(pthread_main_thread_np());
+  const mach_port_t thread = pthread_mach_thread_np(gMainThread);
   if (thread_info(thread, THREAD_BASIC_INFO, (thread_info_t)&info, &count) != KERN_SUCCESS) {
     return 0;
   }
@@ -677,6 +678,7 @@ PerfScope::~PerfScope() {
     if (wanted && !wanted.boolValue) {
       return;
     }
+    gMainThread = pthread_self();
     NSThread *watcher = [[NSThread alloc] initWithBlock:^{
       WatchMainThread();
     }];
