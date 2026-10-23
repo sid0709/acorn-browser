@@ -9,6 +9,11 @@ struct TabGroup: Identifiable, Equatable {
     var collapsed = false
 }
 
+enum CommandBarMode: Hashable {
+    case newTab
+    case tab(UUID)
+}
+
 /// A stretch of the tab list as the strip and the sidebar show it: a lone tab, or a group's
 /// consecutive members folded together.
 enum TabRun: Identifiable {
@@ -51,8 +56,14 @@ final class TabStore: ObservableObject {
         didSet { UserDefaults.standard.set(Double(sidebarWidth), forKey: "sidebarWidth") }
     }
 
-    /// Set by ⌘L: the active tab's address, wherever it is shown, opens for typing.
-    @Published var editingAddress = false
+    /// The agent panel beside the page (⌘K).
+    @Published var showAgent = true
+
+    /// The command bar, when open: for a new tab (⌘T) or to send one tab elsewhere (⌘L).
+    @Published var commandBar: CommandBarMode?
+
+    /// The history sheet (⌘Y).
+    @Published var showingHistory = false
 
     static let groupColors: [Color] = [.red, .orange, .yellow, .green, .blue, .purple, .pink]
 
@@ -68,8 +79,9 @@ final class TabStore: ObservableObject {
     /// Tabs in a group, in the order they already sit in `tabs`.
     func members(of groupID: UUID) -> [BrowserModel] { tabs.filter { $0.groupID == groupID } }
 
-    func newTab(url: String = "https://www.google.com") {
-        let tab = BrowserModel(url: url)
+    /// A tab on `url`, or on the search engine's page.
+    func newTab(url: String? = nil) {
+        let tab = BrowserModel(url: url ?? BrowserSettings.shared.searchEngine.home)
         withAnimation(.snappy) {
             tabs.append(tab)
             activeID = tab.id
@@ -196,3 +208,36 @@ final class TabStore: ObservableObject {
         groups[index].color = color
     }
 }
+
+// MARK: - Window commands
+
+/// What the shortcuts, the menu bar, the ⋮ menu and the command bar all do, in one place.
+extension TabStore {
+    func toggleAgent() { withAnimation(Theme.layout) { showAgent.toggle() } }
+
+    func toggleSidebar() {
+        guard verticalLayout else { return }
+        withAnimation(Theme.layout) { sidebarHidden.toggle() }
+    }
+
+    func toggleBookmark() {
+        guard !active.isIncognito else { return }
+        BookmarkStore.shared.toggle(url: active.address, title: active.title)
+    }
+
+    func copyLink() { copyToPasteboard(active.address) }
+
+    /// Opens what the command bar was given: in the tab it was opened for, or a new one.
+    func open(_ url: String, in mode: CommandBarMode) {
+        switch mode {
+        case .newTab:
+            newTab(url: url)
+        case .tab(let id):
+            let tab = tabs.first { $0.id == id } ?? active
+            tab.view.loadURL(url)
+            select(tab)
+            tab.view.focusBrowser()
+        }
+    }
+}
+

@@ -31,7 +31,7 @@ struct TabStrip: View {
                 }
                 .transition(.scale(scale: 0.85).combined(with: .opacity))
             }
-            Button { store.newTab() } label: { Image(systemName: "plus") }
+            Button { store.commandBar = .newTab } label: { Image(systemName: "plus") }
                 .buttonStyle(.chrome)
                 .help("New tab (⌘T)")
         }

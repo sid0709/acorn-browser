@@ -135,9 +135,17 @@ The window is a tinted canvas behind rounded cards: the page in one, the agent p
 address, or down a sidebar on the left, Arc's way (the layout is chosen in the ⋮ menu): window
 controls and navigation, the address, pinned tabs as tiles, the agent's tab, then groups as
 folders and the open tabs. ⌘S puts the sidebar away; the window's left edge brings it back over
-the page while the pointer is on it. The address shows the site's name only until it is
-clicked or ⌘L opens it for typing. Shortcuts live in `WindowShortcuts`, so they work in either
-layout.
+the page while the pointer is on it. The address shows the site's name only (with copy-link and
+a bookmark star under the pointer).
+
+The command bar (`CommandBar.swift`) is how anything is opened: ⌘T for a new tab, ⌘L or a click
+on the address for the tab shown. It ranks, from what the browser already knows, the address or
+search, open tabs, bookmarks, history and the window's commands, and offers the words to the
+agent as a task. History (⌘Y), bookmarks (⌘D) and the search engine and translate language are
+in `Library.swift`, kept as JSON beside the runs; pages the agent opens while it drives are not
+written to history. The menu bar lists every command; the keys are also held by
+`WindowShortcuts` inside the window, so they work with the page focused. Settings (⌘,) holds
+the theme, the layout, search, translation and clearing data.
 
 The first tab is the agent's: it is marked with a sparkle, cannot be closed, and is the page
 `AgentDriver` and the harness work in. While the harness has it (from its first request to the

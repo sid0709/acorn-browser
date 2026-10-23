@@ -25,7 +25,7 @@ struct Sidebar: View {
             Rectangle().fill(palette.hairline).frame(height: 1).padding(.horizontal, Theme.Space.xs)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    Button { store.newTab() } label: {
+                    Button { store.commandBar = .newTab } label: {
                         Label("New Tab", systemImage: "plus").foregroundStyle(palette.inkSecondary)
                     }
                     .buttonStyle(.row)
@@ -89,7 +89,7 @@ struct Sidebar: View {
                 .popover(isPresented: $showingMenu, arrowEdge: .top) {
                     BrowserMenu(tab: store.active, store: store, isPresented: $showingMenu)
                 }
-            Button { store.newTab() } label: { Image(systemName: "plus") }
+            Button { store.commandBar = .newTab } label: { Image(systemName: "plus") }
                 .buttonStyle(.chrome)
                 .help("New tab (⌘T)")
         }

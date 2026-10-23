@@ -11,10 +11,9 @@ struct BrowserPane: NSViewRepresentable {
 struct ContentView: View {
     @StateObject private var store = TabStore.shared
     @StateObject private var runner = AgentRunner()
-    @State private var showAgent = true
 
     var body: some View {
-        Shell(store: store, runner: runner, showAgent: $showAgent)
+        Shell(store: store, runner: runner, showAgent: $store.showAgent)
             .themed()
     }
 }
@@ -42,7 +41,17 @@ private struct Shell: View {
         }
         .frame(minWidth: 960, minHeight: 580)
         .background(WindowDragArea())
-        .background(WindowShortcuts(store: store, showAgent: $showAgent))
+        .background(WindowShortcuts(store: store))
+        .overlay {
+            if let mode = store.commandBar {
+                CommandBar(store: store, runner: runner, mode: mode)
+                    .id(mode)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: store.commandBar)
+        .sheet(isPresented: $store.showingHistory) { HistoryView(store: store).themed() }
+        .focusedSceneObject(store)
         .containerBackground(for: .window) { WindowCanvas() }
         .navigationTitle(store.active.title.isEmpty ? "Acorn Browser" : store.active.title)
         .toolbar(.hidden, for: .windowToolbar)

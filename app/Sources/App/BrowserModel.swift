@@ -21,6 +21,9 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
     /// glows while it does, and the sidebar steps aside so the page keeps its width.
     @Published var isDriven = false
 
+    /// A tab of a private window: nothing it visits is kept.
+    let isIncognito: Bool
+
     /// Tab organization: not the page's own state, but kept here since every tab already
     /// carries one of these and `TabStrip` already observes it per tab.
     @Published var isPinned = false
@@ -64,7 +67,8 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
 
     func printPage() { view.printPage() }
 
-    init(url: String) {
+    init(url: String, incognito: Bool = false) {
+        isIncognito = incognito
         view = ChromiumBrowserView(url: url)
         // A page's own drag and drop (a card to another column) is part of using it.
         view.allowsDragAndDrop = true
@@ -73,19 +77,31 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
         view.delegate = self
     }
 
-    /// Opens what the person typed: a web address as it is, anything else as a search.
+    /// Opens what the person typed: a web address as it is, anything else as a search with the
+    /// engine chosen in Settings.
     func go(to text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        view.loadURL(Self.resolve(trimmed))
+        view.loadURL(BrowserSettings.shared.resolve(trimmed))
     }
 
-    private static func resolve(_ text: String) -> String {
-        if text.contains("://") { return text }
-        let looksLikeHost = !text.contains(" ") && (text.contains(".") || text.hasPrefix("localhost"))
-        if looksLikeHost { return "https://" + text }
-        let query = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? text
-        return "https://www.google.com/search?q=" + query
+    /// The page as Google's translator shows it, in the language chosen in Settings.
+    func translate() {
+        if let url = BrowserSettings.shared.translated(address) { view.loadURL(url) }
+    }
+
+    /// The address last written to history, to give it its title when that comes later.
+    private var recorded = ""
+
+    /// Pages the person opens go to history; those the agent opens while it drives do not.
+    private func noteInHistory() {
+        guard !isDriven, !isIncognito else { return }
+        if !isLoading, address != recorded {
+            recorded = address
+            HistoryStore.shared.record(url: address, title: title)
+        } else if address == recorded {
+            HistoryStore.shared.retitle(url: address, title: title)
+        }
     }
 
     // MARK: ChromiumBrowserViewDelegate
@@ -98,6 +114,7 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
         canGoForward = browserView.canGoForward
         progress = browserView.loadingProgress
         favicon = browserView.favicon
+        noteInHistory()
     }
 
     func browserView(_ browserView: ChromiumBrowserView,

@@ -10,6 +10,77 @@ struct AcornBrowserApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
+        .commands { BrowserCommands() }
+
+        Settings {
+            SettingsView().themed()
+        }
+    }
+}
+
+/// The menu bar: every command the window has, with its key. The keys themselves are also
+/// held by `WindowShortcuts` inside the window, which gets them first when the page has focus;
+/// either way one press does one thing. ⌘W is left to the window, where it closes the tab.
+struct BrowserCommands: Commands {
+    @FocusedObject private var store: TabStore?
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("New Tab") { store?.commandBar = .newTab }
+                .keyboardShortcut("t")
+            Button("Open Location\u{2026}") { if let store { store.commandBar = .tab(store.activeID) } }
+                .keyboardShortcut("l")
+            Divider()
+            Button("Close Tab") { if let store { store.close(store.active) } }
+        }
+        CommandGroup(replacing: .printItem) {
+            Button("Print\u{2026}") { store?.active.printPage() }
+                .keyboardShortcut("p")
+        }
+        CommandGroup(after: .textEditing) {
+            Button("Find in Page\u{2026}") { store?.active.startFinding() }
+                .keyboardShortcut("f")
+        }
+        CommandGroup(before: .toolbar) {
+            Button("Reload Page") { store?.active.view.reload() }
+                .keyboardShortcut("r")
+            Divider()
+            Button("Zoom In") { store?.active.zoomIn() }
+                .keyboardShortcut("=")
+            Button("Zoom Out") { store?.active.zoomOut() }
+                .keyboardShortcut("-")
+            Button("Actual Size") { store?.active.zoomReset() }
+                .keyboardShortcut("0")
+            Divider()
+            Button(store?.verticalLayout == true ? "Use Tabs Across the Top" : "Use a Sidebar for Tabs") {
+                withAnimation(Theme.layout) { store?.verticalLayout.toggle() }
+            }
+            Button(store?.sidebarHidden == true ? "Show Sidebar" : "Hide Sidebar") { store?.toggleSidebar() }
+                .keyboardShortcut("s")
+                .disabled(store?.verticalLayout != true)
+            Button(store?.showAgent == true ? "Hide Agent" : "Show Agent") { store?.toggleAgent() }
+                .keyboardShortcut("k")
+            Divider()
+        }
+        CommandMenu("Tab") {
+            Button(store?.active.isPinned == true ? "Unpin Tab" : "Pin Tab") {
+                if let store { store.togglePin(store.active) }
+            }
+            .disabled(store.map { $0.isAgentTab($0.active) } ?? true)
+            Button("Duplicate Tab") { if let store { store.duplicate(store.active) } }
+                .disabled(store.map { $0.isAgentTab($0.active) } ?? true)
+            Button("Copy Link") { store?.copyLink() }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+            Button("Translate Page") { store?.active.translate() }
+        }
+        CommandMenu("Bookmarks") {
+            Button("Bookmark This Page") { store?.toggleBookmark() }
+                .keyboardShortcut("d")
+        }
+        CommandMenu("History") {
+            Button("Show All History") { store?.showingHistory = true }
+                .keyboardShortcut("y")
+        }
     }
 }
 

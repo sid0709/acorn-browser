@@ -74,74 +74,59 @@ struct NavigationButtons: View {
     }
 }
 
-/// The address as a quiet pill: the site's name only, until it is clicked (or ⌘L), when it
-/// opens for typing with the whole address selected.
+/// The address as a quiet pill: the site's name, a copy-link button and the bookmark star. A
+/// click opens the command bar on this tab, with the whole address ready to replace.
 struct AddressPill: View {
     @ObservedObject var tab: BrowserModel
     @ObservedObject var store: TabStore
-    /// Whether ⌘L opens this one: the active tab's pill, not a second pane's.
-    var answersShortcut = true
+    @ObservedObject private var bookmarks = BookmarkStore.shared
     @Environment(\.palette) private var palette
-    @State private var editing = false
-    @State private var text = ""
     @State private var hovering = false
     @State private var copied = false
-    @FocusState private var focused: Bool
+
+    private var isBookmarked: Bool { bookmarks.isBookmarked(tab.address) }
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: icon)
+            Image(systemName: tab.address.hasPrefix("https://") ? "lock.fill" : "globe")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(palette.inkTertiary)
                 .frame(width: 14)
-            if editing {
-                TextField("Search or enter address", text: $text)
-                    .textFieldStyle(.plain)
-                    .font(Theme.Text.body)
-                    .foregroundStyle(palette.ink)
-                    .focused($focused)
-                    .onSubmit {
-                        tab.go(to: text)
-                        endEditing()
-                        tab.view.focusBrowser()
-                    }
-                    .onExitCommand { endEditing() }
-                    .onChange(of: focused) { _, now in if !now { endEditing() } }
-            } else {
-                Text(host.isEmpty ? "Search or enter address" : host)
-                    .font(Theme.Text.body)
-                    .foregroundStyle(host.isEmpty ? palette.inkTertiary : palette.ink)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 4)
-                if hovering && !tab.address.isEmpty {
-                    Button(action: copyLink) {
-                        Image(systemName: copied ? "checkmark" : "link")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .buttonStyle(ChromeButtonStyle(size: 22))
-                    .help("Copy link")
-                    .transition(.opacity)
+            Text(host.isEmpty ? "Search or enter address" : host)
+                .font(Theme.Text.body)
+                .foregroundStyle(host.isEmpty ? palette.inkTertiary : palette.ink)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 4)
+            if hovering && !tab.address.isEmpty {
+                Button(action: copyLink) {
+                    Image(systemName: copied ? "checkmark" : "link").font(.system(size: 11, weight: .medium))
                 }
+                .buttonStyle(ChromeButtonStyle(size: 22))
+                .help("Copy link (⇧⌘C)")
+                .transition(.opacity)
+            }
+            if (hovering || isBookmarked) && !tab.address.isEmpty && !tab.isIncognito {
+                Button { bookmarks.toggle(url: tab.address, title: tab.title) } label: {
+                    Image(systemName: isBookmarked ? "star.fill" : "star")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(isBookmarked ? palette.accent : palette.inkSecondary)
+                }
+                .buttonStyle(ChromeButtonStyle(size: 22))
+                .help(isBookmarked ? "Remove bookmark (⌘D)" : "Bookmark this page (⌘D)")
+                .transition(.opacity)
             }
         }
         .padding(.leading, 10)
         .padding(.trailing, 4)
         .frame(height: 30)
         .frame(maxWidth: .infinity)
-        .background(editing ? palette.card : hovering ? palette.selection : palette.hover,
+        .background(hovering ? palette.selection : palette.hover,
                     in: RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous)
-            .strokeBorder(palette.accent.opacity(editing ? 0.5 : 0), lineWidth: 1.5))
         .contentShape(Rectangle())
-        .onTapGesture { if !editing { beginEditing() } }
+        .onTapGesture { store.commandBar = .tab(tab.id) }
         .onHover { hovering = $0 }
         .animation(Theme.hover, value: hovering)
-        .onChange(of: store.editingAddress) { _, now in
-            guard now, answersShortcut else { return }
-            store.editingAddress = false
-            beginEditing()
-        }
         .help(tab.address)
     }
 
@@ -151,32 +136,16 @@ struct AddressPill: View {
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
-    private var icon: String {
-        if editing { return "magnifyingglass" }
-        return tab.address.hasPrefix("https://") ? "lock.fill" : "globe"
-    }
-
-    private func beginEditing() {
-        text = tab.address
-        editing = true
-        // Focus once the field exists, then select what is in it so typing replaces it.
-        DispatchQueue.main.async {
-            focused = true
-            DispatchQueue.main.async { NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil) }
-        }
-    }
-
-    private func endEditing() {
-        editing = false
-        focused = false
-    }
-
     private func copyLink() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(tab.address, forType: .string)
+        copyToPasteboard(tab.address)
         copied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
     }
+}
+
+func copyToPasteboard(_ text: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
 }
 
 /// The page card's header in the top layout: navigation, the address, a new tab and the menu.
@@ -191,7 +160,7 @@ struct PageToolbar: View {
             NavigationButtons(tab: tab)
             AddressPill(tab: tab, store: store)
                 .padding(.horizontal, Theme.Space.xs)
-            Button { store.newTab() } label: { Image(systemName: "plus") }
+            Button { store.commandBar = .newTab } label: { Image(systemName: "plus") }
                 .buttonStyle(.chrome)
                 .help("New tab (⌘T)")
             Button { showingMenu = true } label: { Image(systemName: "ellipsis") }
@@ -232,22 +201,25 @@ struct AgentGlow: View {
     }
 }
 
-/// The window's keyboard shortcuts, as buttons nobody sees, so they work in either layout
-/// whether or not the control they stand for is on screen.
+/// The window's keyboard shortcuts, as buttons nobody sees, so they work in either layout and
+/// with the page focused (Chromium's view takes key equivalents a menu would miss). The menu
+/// bar lists the same commands with the same keys.
 struct WindowShortcuts: View {
     @ObservedObject var store: TabStore
-    @Binding var showAgent: Bool
 
     var body: some View {
         ZStack {
-            key("t") { store.newTab() }
+            key("t") { store.commandBar = .newTab }
             key("w") { store.close(store.active) }
-            key("k") { withAnimation(Theme.layout) { showAgent.toggle() } }
-            key("s") { if store.verticalLayout { withAnimation(Theme.layout) { store.sidebarHidden.toggle() } } }
-            key("l") { store.editingAddress = true }
+            key("k") { store.toggleAgent() }
+            key("s") { store.toggleSidebar() }
+            key("l") { store.commandBar = .tab(store.activeID) }
             key("r") { store.active.view.reload() }
             key("f") { store.active.startFinding() }
             key("p") { store.active.printPage() }
+            key("d") { store.toggleBookmark() }
+            key("y") { store.showingHistory = true }
+            key("c", modifiers: [.command, .shift]) { store.copyLink() }
             key("=") { store.active.zoomIn() }
             key("-") { store.active.zoomOut() }
             key("0") { store.active.zoomReset() }
@@ -257,8 +229,9 @@ struct WindowShortcuts: View {
         .accessibilityHidden(true)
     }
 
-    private func key(_ character: Character, action: @escaping () -> Void) -> some View {
+    private func key(_ character: Character, modifiers: EventModifiers = .command,
+                     action: @escaping () -> Void) -> some View {
         Button(action: action) { EmptyView() }
-            .keyboardShortcut(KeyEquivalent(character), modifiers: .command)
+            .keyboardShortcut(KeyEquivalent(character), modifiers: modifiers)
     }
 }

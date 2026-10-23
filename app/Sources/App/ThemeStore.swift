@@ -231,21 +231,25 @@ enum Grain {
 struct RGB: Hashable {
     var r, g, b: Double
 
-    init(_ r: Double, _ g: Double, _ b: Double) { (self.r, self.g, self.b) = (r, g, b) }
+    init(_ r: Double, _ g: Double, _ b: Double) {
+        self.r = r
+        self.g = g
+        self.b = b
+    }
 
     init(hsl h: Double, _ s: Double, _ l: Double) {
         let c = (1 - abs(2 * l - 1)) * s
         let hp = (h.truncatingRemainder(dividingBy: 1) + 1).truncatingRemainder(dividingBy: 1) * 6
         let x = c * (1 - abs(hp.truncatingRemainder(dividingBy: 2) - 1))
-        let (r1, g1, b1): (Double, Double, Double) =
-            switch hp {
-            case ..<1: (c, x, 0)
-            case ..<2: (x, c, 0)
-            case ..<3: (0, c, x)
-            case ..<4: (0, x, c)
-            case ..<5: (x, 0, c)
-            default: (c, 0, x)
-            }
+        let r1, g1, b1: Double
+        switch hp {
+        case ..<1: r1 = c; g1 = x; b1 = 0
+        case ..<2: r1 = x; g1 = c; b1 = 0
+        case ..<3: r1 = 0; g1 = c; b1 = x
+        case ..<4: r1 = 0; g1 = x; b1 = c
+        case ..<5: r1 = x; g1 = 0; b1 = c
+        default: r1 = c; g1 = 0; b1 = x
+        }
         let m = l - c / 2
         self.init(r1 + m, g1 + m, b1 + m)
     }
