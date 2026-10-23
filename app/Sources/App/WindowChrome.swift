@@ -48,10 +48,6 @@ struct WindowConfigurator: NSViewRepresentable {
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
             window.styleMask.insert(.fullSizeContentView)
-            // See-through, so the canvas can blur the desktop behind it (`WindowCanvas`). The
-            // pages are opaque views of their own and are not affected.
-            window.isOpaque = false
-            window.backgroundColor = .clear
             // The sidebar's edge watch needs the pointer's moves over the whole window.
             window.acceptsMouseMovedEvents = true
             let center = NotificationCenter.default
@@ -150,16 +146,6 @@ struct WindowButtonsSpace: View {
     }
 }
 
-/// Lets the canvas move the window, as a title bar would.
-struct WindowDragArea: NSViewRepresentable {
-    final class DragView: NSView {
-        override var mouseDownCanMoveWindow: Bool { true }
-    }
-
-    func makeNSView(context: Context) -> NSView { DragView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
-}
-
 /// Marks an incognito window, beside its tabs.
 struct IncognitoBadge: View {
     var compact = false
@@ -256,8 +242,7 @@ struct AddressField: View {
             if !items.isEmpty {
                 SuggestionList(items: items, selection: $selection) { run(items, at: $0) }
                     .frame(minWidth: 420)
-                    .card(radius: Theme.Radius.popover, weight: .overlay)
-                    .shadow(color: .black.opacity(palette.isDark ? 0.4 : 0.12), radius: 24, y: 10)
+                    .crystal(RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous))
                     .offset(y: Self.height + 6)
             }
         }
@@ -276,10 +261,9 @@ struct AddressField: View {
     @ViewBuilder
     private var plate: some View {
         if editing {
-            GlassPlate(shape: shape, weight: .overlay)
+            shape.fill(palette.card)
         } else if filled {
             shape.fill(hovering ? palette.selection : palette.hover)
-                .overlay(GlassRim(shape: shape, strength: hovering ? 0.8 : 0.5))
         } else {
             shape.fill(hovering ? palette.hover : .clear)
         }
@@ -470,6 +454,8 @@ struct SidebarTopBar: View {
             }
         }
         .frame(height: WindowConfigurator.headerHeight)
+        // Not clipped: the address's suggestions hang below it.
+        .background(FrostedPane(shape: Rectangle(), movesWindow: true, zooms: true))
     }
 }
 

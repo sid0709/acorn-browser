@@ -22,7 +22,7 @@ struct ThemePicker: View {
                 slider("Grain", value: $store.settings.grain)
             }
             slider("Glass", value: $store.settings.glass)
-                .help("How much of the desktop shows through the window")
+                .help("How clear the glass of the window's panes is")
             Picker("", selection: $store.settings.appearance) {
                 ForEach(ThemeAppearance.allCases) { Text($0.title).tag($0) }
             }

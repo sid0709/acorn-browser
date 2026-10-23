@@ -33,7 +33,7 @@ enum ThemeAppearance: String, Codable, CaseIterable, Identifiable {
 }
 
 /// What the person chose: one to three colors, how strongly they tint the window, how much
-/// grain sits on top, how much of the desktop the glass lets through, and light or dark.
+/// grain sits on top, how clear the panes' glass is, and light or dark.
 struct ThemeSettings: Codable, Hashable {
     var colors: [ThemeColor]
     var intensity: Double    // 0...1
@@ -147,15 +147,14 @@ struct Palette {
     let accent: Color
     let onAccent: Color
     let grain: Double
-    /// How much of the desktop shows through the canvas, 0 (none) to 1.
+    /// How clear the glass is: 0 frosted nearly solid, 1 the clearest it goes.
     let glass: Double
-    /// The theme's colors at full strength, for the light the canvas holds under the glass.
+    /// The theme's colors at full strength, for the discs the canvas holds under the glass.
     let glows: [Color]
-    /// The glass's own color, the theme's hue very faint, at each weight.
+    /// The glass's own color: the theme's hue, faint, nearly white (or, in dark, nearly black).
     private let glassBase: RGB
-    /// The lit edge of glass (top and leading, where the light falls) and its far edge.
+    /// The glint where light catches crystal.
     let rimLight: Color
-    let rimShade: Color
     /// The soft highlight across the upper part of a pane of glass.
     let sheen: Color
 
@@ -167,30 +166,28 @@ struct Palette {
     /// The tint at a given strength, for washes over a card (a group, a done message).
     func tint(_ opacity: Double) -> Color { accent.opacity(isDark ? opacity * 1.4 : opacity) }
 
-    /// How solid the canvas gradient lies over the blurred desktop.
-    var canvasOpacity: Double { 1 - 0.7 * glass }
-
-    /// The color glass is tinted with: more of it the more a surface carries (a panel of text
-    /// more than a bar of buttons), so what is written on it stays readable over any page.
-    func glassTint(_ weight: GlassWeight) -> Color {
-        let alpha: Double = switch weight {
-        case .bar: isDark ? 0.22 : 0.18
-        case .panel: isDark ? 0.42 : 0.38
-        case .overlay: isDark ? 0.62 : 0.58
+    /// How much of what is behind a pane its glass holds back, by what the pane carries. The
+    /// shell is never clear enough to lose the theme's color or the text on it: clear glass over
+    /// a tinted window shows neither, and reads poorly. What floats over the page (`.overlay`)
+    /// is tinted lighter, since a blur of the page lies under it.
+    func glassDensity(_ weight: GlassWeight) -> Double {
+        let base: Double = switch weight {
+        case .bar: 0.72
+        case .panel: 0.8
+        case .overlay: 0.5
         }
-        return glassBase.color.opacity(alpha)
+        return min(max(base - (glass - 0.5) * 0.4, 0.4), 0.97)
     }
 
-    /// The same, drawn over a material where real Liquid Glass is not there (before macOS 26):
-    /// the material is clearer than Liquid Glass, so the body is denser.
-    func glassFill(_ weight: GlassWeight) -> Color {
-        let alpha: Double = switch weight {
-        case .bar: isDark ? 0.30 : 0.34
-        case .panel: isDark ? 0.52 : 0.58
-        case .overlay: isDark ? 0.72 : 0.78
-        }
-        return glassBase.color.opacity(alpha)
-    }
+    /// The body of a pane of glass, the theme's hue through it.
+    func glassBody(_ weight: GlassWeight) -> Color { glassBase.color.opacity(glassDensity(weight)) }
+
+    /// The tint the system's Liquid Glass gets (macOS 26), lighter than the body drawn before
+    /// it, as the system's glass is frosted already.
+    func glassTint(_ weight: GlassWeight) -> Color { glassBase.color.opacity(glassDensity(weight) * 0.6) }
+
+    /// A pane that stands for no glass at all (Reduce Transparency): the body, solid.
+    var glassSolid: Color { glassBase.color }
 
     init(_ theme: ThemeSettings, dark: Bool) {
         isDark = dark
@@ -220,8 +217,7 @@ struct Palette {
             RGB(hsl: color.hue, min(0.35 + color.saturation * 0.6, 1) * (0.55 + 0.45 * k), dark ? 0.42 : 0.70).color
         }
         glassBase = dark ? RGB(hsl: base.hue, base.saturation * 0.35, 0.14) : RGB(hsl: base.hue, base.saturation * 0.45, 0.975)
-        rimLight = Color.white.opacity(dark ? 0.26 : 0.85)
-        rimShade = dark ? Color.white.opacity(0.05) : Color.white.opacity(0.22)
+        rimLight = Color.white.opacity(dark ? 0.24 : 0.65)
         sheen = Color.white.opacity(dark ? 0.07 : 0.32)
 
         // The accent keeps the base hue, with enough color to be one, at a lightness that
@@ -305,28 +301,17 @@ private struct WindowAppearance: NSViewRepresentable {
 
 // MARK: - Canvas
 
-/// The window's background, the stuff the glass is made over: the desktop, blurred, through the
-/// theme's gradient, with the theme's colors glowing in two corners for the glass to bend, and
-/// the grain over it all. Nothing in it moves, so it costs nothing once drawn.
+/// The window's background, what the glass is made over: the theme's gradient, with discs of
+/// the theme's colors that show through the shell's glass as a haze, and the grain over it all.
+/// It is opaque, and nothing in it moves, so it is drawn once.
 struct WindowCanvas: View {
     /// Handed in rather than read from the environment: the window's background is hosted
     /// apart from its content, where the palette the content sees does not reliably reach.
     let palette: Palette
 
-    /// Where the glows sit, as fractions of the window: top leading, bottom trailing, and a
-    /// third color's at the top trailing.
-    private static let glowCenters: [UnitPoint] = [UnitPoint(x: 0.08, y: 0.05), UnitPoint(x: 0.95, y: 0.98),
-                                                   UnitPoint(x: 0.82, y: 0.08)]
-
     var body: some View {
         ZStack {
-            if palette.glass > 0 { DesktopBlur() }
-            Rectangle().fill(palette.canvas).opacity(palette.canvasOpacity)
-            ForEach(Array(glows.enumerated()), id: \.offset) { index, glow in
-                Rectangle().fill(EllipticalGradient(
-                    colors: [glow.color.opacity(glow.strength), glow.color.opacity(0)],
-                    center: Self.glowCenters[index], startRadiusFraction: 0, endRadiusFraction: 0.75))
-            }
+            CanvasArt(palette: palette)
             if palette.grain > 0 {
                 Image(nsImage: Grain.tile)
                     .resizable(resizingMode: .tile)
@@ -337,28 +322,46 @@ struct WindowCanvas: View {
         .allowsHitTesting(false)
         .ignoresSafeArea()
     }
-
-    /// One glow per color; a single color glows in both corners, fainter in the second.
-    private var glows: [(color: Color, strength: Double)] {
-        let strength = palette.isDark ? 0.38 : 0.5
-        guard let first = palette.glows.first else { return [] }
-        if palette.glows.count == 1 { return [(color: first, strength: strength), (color: first, strength: strength * 0.6)] }
-        return palette.glows.prefix(3).map { (color: $0, strength: strength) }
-    }
 }
 
-/// The desktop behind the window, blurred: the window itself is see-through (see
-/// `WindowConfigurator`), and this is what shows there, light or dark with the appearance.
-private struct DesktopBlur: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .underWindowBackground
-        view.blendingMode = .behindWindow
-        view.state = .followsWindowActiveState
-        return view
-    }
+/// The canvas's picture, drawn in one pass at the window's size.
+struct CanvasArt: View {
+    let palette: Palette
 
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+    /// The discs, as fractions of the window (center) and of its longer side (radius): at the
+    /// top leading corner under the sidebar and the top bar, the trailing side under the agent
+    /// panel, the bottom leading corner, and the top's middle.
+    private static let discs: [(x: CGFloat, y: CGFloat, radius: CGFloat)] = [
+        (0.10, 0.06, 0.26), (0.97, 0.34, 0.24), (0.03, 0.88, 0.22), (0.56, -0.02, 0.15),
+    ]
+
+    var body: some View {
+        Canvas(opaque: true) { context, size in
+            let stops = palette.canvasStops.count == 1 ? [palette.canvasStops[0], palette.canvasStops[0]] : palette.canvasStops
+            context.fill(Path(CGRect(origin: .zero, size: size)),
+                         with: .linearGradient(Gradient(colors: stops), startPoint: .zero,
+                                               endPoint: CGPoint(x: size.width, y: size.height)))
+            guard !palette.glows.isEmpty else { return }
+            let side = max(size.width, size.height)
+            let strength = palette.isDark ? 0.5 : 0.58
+            for (index, disc) in Self.discs.enumerated() {
+                let color = palette.glows[index % palette.glows.count]
+                let radius = disc.radius * side
+                let center = CGPoint(x: disc.x * size.width, y: disc.y * size.height)
+                // Full color most of the way out, then a short falloff: soft, but with enough
+                // shape to read through frosted glass as color rather than as a wash.
+                let gradient = Gradient(stops: [
+                    .init(color: color.opacity(strength), location: 0),
+                    .init(color: color.opacity(strength * 0.9), location: 0.74),
+                    .init(color: color.opacity(strength * 0.35), location: 0.9),
+                    .init(color: color.opacity(0), location: 1),
+                ])
+                context.fill(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius,
+                                                    width: radius * 2, height: radius * 2)),
+                             with: .radialGradient(gradient, center: center, startRadius: 0, endRadius: radius))
+            }
+        }
+    }
 }
 
 /// A square of random grey speckle, made once and tiled: the cost of grain is one small image.
