@@ -65,7 +65,7 @@ private struct Shell: View {
             if store.verticalLayout { sidebarLayout } else { topLayout }
         }
         .frame(minWidth: 960, minHeight: 580)
-        .background(WindowDragArea())
+        .background(WindowMover(shape: Rectangle()))
         .background(WindowConfigurator { window = $0 })
         .background(WindowShortcuts(store: store))
         .overlay {
@@ -122,18 +122,22 @@ private struct Shell: View {
         }
     }
 
-    /// The tabs on their own pane of glass, floating on the canvas like the page beside them.
+    /// The tabs on their own pane of frosted glass, floating on the canvas like the page beside
+    /// them. Its empty places move the window.
     private func sidebarPane(weight: GlassWeight = .bar) -> some View {
         Sidebar(store: store, runner: runner, showAgent: $showAgent)
-            .card(radius: Theme.Radius.popover, weight: weight)
+            .frosted(RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous),
+                     weight: weight, movesWindow: true)
     }
 
     /// The sidebar out over the page, below the top row: in the very place it sits when shown,
-    /// on denser glass, since a page lies beneath it now, and with a deeper shadow.
+    /// on a blur of the page beneath it, so the page does not show through sharp, and with a
+    /// deeper shadow.
     @ViewBuilder
     private var peekingSidebar: some View {
         if peeking {
-            sidebarPane(weight: .overlay)
+            sidebarPane(weight: .panel)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous))
                 .shadow(color: .black.opacity(palette.isDark ? 0.45 : 0.16), radius: 24, x: 4)
                 .padding(.leading, Theme.gutter)
                 .padding(.bottom, Theme.gutter)
@@ -165,6 +169,7 @@ private struct Shell: View {
         }
         .padding(.trailing, Theme.Space.m)
         .frame(height: WindowConfigurator.headerHeight)
+        .background(FrostedPane(shape: Rectangle(), movesWindow: true, zooms: true))
     }
 
     private var askButton: some View {
@@ -181,7 +186,7 @@ private struct Shell: View {
             .frame(height: 30)
             .background {
                 let shape = Capsule()
-                if showAgent { GlassBead(shape: shape) } else { GlassPlate(shape: shape, lifted: false) }
+                if showAgent { GlassBead(shape: shape) } else { shape.fill(palette.hover) }
             }
         }
         .buttonStyle(.plain)

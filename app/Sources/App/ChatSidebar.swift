@@ -26,7 +26,8 @@ struct ChatSidebar: View {
             conversation
             composer
         }
-        .card(radius: Theme.Radius.popover)
+        .frosted(RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous),
+                 weight: .panel, movesWindow: true)
         .task { await catalog.refresh() }
         .task { await runTaskFromLaunchArguments() }
     }
