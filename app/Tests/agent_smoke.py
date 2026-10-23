@@ -140,6 +140,33 @@ def main():
     check("survey returned several screens", len(o.get("survey", [])) >= 3, str(len(o.get("survey", []))))
     check("survey put the page back", abs(o["viewport"]["scrollY"] - scrolled) < 2, f"{o['viewport']['scrollY']} vs {scrolled}")
 
+    # The row of controls below is fixed at the top of the viewport, wherever the page is.
+    # A page dialog is answered without being shown, and reported.
+    results = c.act({"kind": "click", "x": 650, "y": 20})
+    check("dialog button click ok", results[0]["ok"], str(results[0]))
+    o = c.look("7-dialog")
+    notes = " | ".join(o.get("notes", []))
+    check("alert reported and accepted", "A dialog said: Hello from the page (it was accepted)." in notes, notes)
+    check("confirm reported and dismissed", "A dialog said: Go on? (it was dismissed)." in notes, notes)
+
+    # A plain click on a file control reports the picker instead of showing it.
+    results = c.act({"kind": "click", "x": 470, "y": 20})
+    check("file control click ok", results[0]["ok"], str(results[0]))
+    check("file picker reported", results[0].get("opened") == "file_picker", str(results[0]))
+
+    # An upload hands the page the file in the picker's place.
+    results = c.act({"kind": "upload", "x": 470, "y": 20, "path": str(ROOT / "page.html"), "fileName": "page.html"})
+    check("upload ok", results[0]["ok"], str(results[0]))
+    check("upload says what it attached", results[0].get("detail") == "attached page.html", str(results[0]))
+
+    # A link to a new window opens in this tab, and the harness is told.
+    results = c.act({"kind": "click", "x": 770, "y": 20})
+    check("new-window link click ok", results[0]["ok"], str(results[0]))
+    o = c.look("8-popup")
+    notes = " | ".join(o.get("notes", []))
+    check("popup opened in this tab", o["url"].endswith("#bottom"), o["url"])
+    check("popup reported", "it was opened in this tab instead" in notes, notes)
+
     results = c.act({"kind": "bogus"})
     check("unknown action fails cleanly", results[0]["ok"] is False, str(results[0]))
 

@@ -56,6 +56,23 @@ NS_SWIFT_UI_ACTOR
 
 @end
 
+typedef NS_ENUM(NSInteger, ChromiumDialogKind) {
+  ChromiumDialogKindAlert,
+  ChromiumDialogKindConfirm,
+  ChromiumDialogKindPrompt,
+  /// The page asks whether to leave (beforeunload).
+  ChromiumDialogKindBeforeUnload,
+};
+
+/// Answers a page's dialog without showing it: nil dismisses it (Cancel, or stay on the page);
+/// a string accepts it (OK, or leave), and is the answer to a prompt.
+typedef NSString *_Nullable (^ChromiumDialogHandler)(ChromiumDialogKind kind,
+                                                      NSString *message,
+                                                      NSString *defaultText);
+
+/// A DevTools protocol event for a domain the page enabled (`Network.enable`, `Page.enable`).
+typedef void (^ChromiumDevToolsEventHandler)(NSString *method, NSDictionary *_Nullable params);
+
 typedef NS_ENUM(NSInteger, ChromiumScreenshotArea) {
   /// What's currently on screen in the tab.
   ChromiumScreenshotAreaVisible,
@@ -107,10 +124,27 @@ NS_SWIFT_UI_ACTOR
 
 /// Runs one Chrome DevTools Protocol method on this page (for example `Page.navigate` or
 /// `Input.dispatchMouseEvent`). Calls back on the main thread with whether it worked and the
-/// method's result (or the protocol's error). Events are not delivered, only the result.
+/// method's result (or the protocol's error). Events go to `devToolsEventHandler`.
 - (void)sendDevToolsMethod:(NSString *)method
                     params:(nullable NSDictionary *)params
                 completion:(void (^)(BOOL success, NSDictionary *_Nullable result))completion;
+
+/// Receives the DevTools events of the domains that were enabled with `sendDevToolsMethod`
+/// (`Network.requestWillBeSent`, `Page.fileChooserOpened`, ...), on the main thread.
+@property (nonatomic, copy, nullable) ChromiumDevToolsEventHandler devToolsEventHandler;
+
+/// While set, the page's JavaScript dialogs are answered by this block instead of being shown.
+/// For an agent driving the page, which cannot click a native dialog.
+@property (nonatomic, copy, nullable) ChromiumDialogHandler dialogHandler;
+
+/// Called on the main thread when a download starts (`finished` NO) and when it completes
+/// (`finished` YES), with the file's name.
+@property (nonatomic, copy, nullable) void (^downloadHandler)(NSString *fileName, BOOL finished);
+
+/// Called on the main thread when the page asked for a new window that this view did not get
+/// a tab for (its delegate declined, or popups are off), with the window's URL. The handler
+/// may open it in this tab.
+@property (nonatomic, copy, nullable) void (^blockedPopupHandler)(NSString *url);
 
 /// Renders the page inside Chromium (no screen recording involved, so it works while the
 /// window is hidden from capture). Calls back on the main thread with PNG data and an

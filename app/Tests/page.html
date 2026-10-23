@@ -10,6 +10,10 @@
     #log { margin-top: 12px; color: #060; white-space: pre-wrap; }
     /* Fixed, so writing into it never moves the page (scroll anchoring would shift the scroll). */
     #keys { position: fixed; top: 4px; right: 8px; margin: 0; }
+    /* Fixed too, at known places, so the test can click them whatever the log holds. */
+    #file { position: fixed; top: 4px; left: 360px; width: 220px; }
+    #ask { position: fixed; top: 4px; left: 600px; width: 100px; }
+    #pop { position: fixed; top: 4px; left: 720px; width: 100px; display: inline-block; }
   </style>
 </head>
 <body>
@@ -19,6 +23,9 @@
   <button id="go">Say hello</button>
   <div id="log"></div>
   <p id="keys"></p>
+  <input id="file" type="file">
+  <button id="ask">Ask</button>
+  <a id="pop" href="page.html#bottom" target="_blank">New window</a>
   <div class="spacer"></div>
   <h2 id="bottom">Bottom of the page</h2>
   <script>
@@ -28,6 +35,13 @@
     });
     document.getElementById('name').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') log('Enter pressed');
+    });
+    document.getElementById('file').addEventListener('change', (e) => {
+      log('chose ' + (e.target.files[0] ? e.target.files[0].name : 'nothing'));
+    });
+    document.getElementById('ask').addEventListener('click', () => {
+      alert('Hello from the page');
+      log(confirm('Go on?') ? 'confirmed' : 'declined');
     });
     window.addEventListener('scroll', () => {
       document.getElementById('keys').textContent = 'scrollY=' + Math.round(window.scrollY);

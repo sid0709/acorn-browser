@@ -18,8 +18,16 @@ the harness cannot tell this browser from the Playwright one.
 
 - Screenshots are JPEGs at one pixel to a CSS pixel, so a point in the picture is a point to click.
 - Actions: click, double/triple/right click, hover, type, key chords (`Enter`, `Meta+a`),
-  scroll, wait. `upload` is not done yet.
-- A look waits for the page to settle (no DOM change for 250 ms, nothing loading).
+  scroll, wait, upload (the file picker is intercepted and the task's file handed to the page;
+  a plain click that opens the picker reports `opened: file_picker`).
+- A look waits for the page to settle: no DOM change for 250 ms, the document loaded, and
+  none of the page's requests (fetch, XHR, images; not sockets or event streams) still open.
+- While the harness is connected, the page's dialogs are answered (alert and beforeunload
+  accepted, confirm and prompt dismissed), downloads are noted, and a window the page tries to
+  open is opened in this tab; all of it is reported in `notes`. When the connection ends the
+  page is given back to the person.
+- If the window is hidden when a picture is needed, it is brought forward and the picture
+  taken again.
 
 ```bash
 scripts/build.sh run        # start the app
@@ -47,8 +55,8 @@ Each run keeps a folder under `~/Library/Application Support/com.acorn.browser/r
 
 `AcornBrowser --run-task <file>` submits a task file at launch, for trying it without typing.
 
-Known limits: Chromium only paints a visible window, so the window must be on screen; JavaScript
-dialogs and downloads are not reported in `notes` yet; popups are blocked (one tab).
+Known limits: Chromium only paints a visible window, so the window is brought on screen when
+a picture is needed; there is one tab, so a window the page opens takes this tab's place.
 
 ```text
 Sources/App/        SwiftUI: window, toolbar, chat sidebar, one tab's state

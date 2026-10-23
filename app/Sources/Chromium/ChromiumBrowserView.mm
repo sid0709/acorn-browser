@@ -7,6 +7,7 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_devtools_message_observer.h"
+#include "include/cef_jsdialog_handler.h"
 #include "include/cef_parser.h"
 
 namespace {
@@ -197,6 +198,13 @@ NSHashTable<ChromiumBrowserView *> *LiveViews() {
 - (void)cef_dismissPermissionPrompt:(uint64_t)promptID;
 - (BOOL)cef_handleExternalURL:(NSString *)url fromPage:(NSString *)pageURL;
 - (void)cef_devToolsResult:(int)messageID success:(BOOL)success data:(NSData *)data;
+- (void)cef_devToolsEvent:(NSString *)method data:(NSData *)data;
+- (BOOL)cef_answerDialog:(ChromiumDialogKind)kind
+                 message:(NSString *)message
+             defaultText:(NSString *)defaultText
+                callback:(CefRefPtr<CefJSDialogCallback>)callback;
+- (void)cef_download:(NSString *)fileName finished:(BOOL)finished;
+- (void)cef_blockedPopup:(NSString *)url;
 @end
 
 #pragma mark - CEF client
@@ -244,6 +252,14 @@ class DevToolsObserver : public CefDevToolsMessageObserver {
     [view_ cef_devToolsResult:message_id success:success data:data];
   }
 
+  void OnDevToolsEvent(CefRefPtr<CefBrowser> browser,
+                       const CefString &method,
+                       const void *params,
+                       size_t params_size) override {
+    NSData *data = [NSData dataWithBytes:params length:params_size];
+    [view_ cef_devToolsEvent:ToNSString(method) data:data];
+  }
+
  private:
   __weak ChromiumBrowserView *view_;
   IMPLEMENT_REFCOUNTING(DevToolsObserver);
@@ -256,7 +272,8 @@ class BrowserClient : public CefClient,
                       public CefDragHandler,
                       public CefDownloadHandler,
                       public CefPermissionHandler,
-                      public CefRequestHandler {
+                      public CefRequestHandler,
+                      public CefJSDialogHandler {
  public:
   explicit BrowserClient(ChromiumBrowserView *view) : view_(view) {}
 
@@ -267,6 +284,39 @@ class BrowserClient : public CefClient,
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+  CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
+
+  // CefJSDialogHandler
+
+  /// Returning false shows Chromium's own dialog; true means the view answered it.
+  bool OnJSDialog(CefRefPtr<CefBrowser> browser,
+                  const CefString &origin_url,
+                  JSDialogType dialog_type,
+                  const CefString &message_text,
+                  const CefString &default_prompt_text,
+                  CefRefPtr<CefJSDialogCallback> callback,
+                  bool &suppress_message) override {
+    ChromiumDialogKind kind = ChromiumDialogKindAlert;
+    if (dialog_type == JSDIALOGTYPE_CONFIRM) {
+      kind = ChromiumDialogKindConfirm;
+    } else if (dialog_type == JSDIALOGTYPE_PROMPT) {
+      kind = ChromiumDialogKindPrompt;
+    }
+    return [view_ cef_answerDialog:kind
+                           message:ToNSString(message_text)
+                       defaultText:ToNSString(default_prompt_text)
+                          callback:callback];
+  }
+
+  bool OnBeforeUnloadDialog(CefRefPtr<CefBrowser> browser,
+                            const CefString &message_text,
+                            bool is_reload,
+                            CefRefPtr<CefJSDialogCallback> callback) override {
+    return [view_ cef_answerDialog:ChromiumDialogKindBeforeUnload
+                           message:ToNSString(message_text)
+                       defaultText:@""
+                          callback:callback];
+  }
 
   // CefRequestHandler
 
@@ -299,11 +349,15 @@ class BrowserClient : public CefClient,
     if (!view) {
       return true;
     }
-    return [view cef_shouldBlockPopup:popup_id
-                          disposition:target_disposition
-                          userGesture:user_gesture
-                           windowInfo:windowInfo
-                               client:client];
+    const BOOL blocked = [view cef_shouldBlockPopup:popup_id
+                                        disposition:target_disposition
+                                        userGesture:user_gesture
+                                         windowInfo:windowInfo
+                                             client:client];
+    if (blocked) {
+      [view cef_blockedPopup:ToNSString(target_url)];
+    }
+    return blocked;
   }
 
   void OnBeforePopupAborted(CefRefPtr<CefBrowser> browser, int popup_id) override {
@@ -416,7 +470,9 @@ class BrowserClient : public CefClient,
                         CefRefPtr<CefDownloadItem> download_item,
                         const CefString &suggested_name,
                         CefRefPtr<CefBeforeDownloadCallback> callback) override {
-    callback->Continue(ToCefString(UniqueDownloadPath(ToNSString(suggested_name))), false);
+    NSString *path = UniqueDownloadPath(ToNSString(suggested_name));
+    callback->Continue(ToCefString(path), false);
+    [view_ cef_download:path.lastPathComponent finished:NO];
     return true;
   }
 
@@ -428,9 +484,11 @@ class BrowserClient : public CefClient,
       return;
     }
     // Bounces the Downloads stack in the Dock, like Safari and Chrome do.
+    NSString *path = ToNSString(download_item->GetFullPath());
     [[NSDistributedNotificationCenter defaultCenter]
         postNotificationName:@"com.apple.DownloadFileFinished"
-                      object:ToNSString(download_item->GetFullPath())];
+                      object:path];
+    [view_ cef_download:path.lastPathComponent finished:YES];
   }
 
   // CefPermissionHandler
@@ -1044,6 +1102,44 @@ class BrowserClient : public CefClient,
   [_devToolsCallbacks removeObjectForKey:key];
   id result = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
   completion(success, [result isKindOfClass:NSDictionary.class] ? result : nil);
+}
+
+- (void)cef_devToolsEvent:(NSString *)method data:(NSData *)data {
+  ChromiumDevToolsEventHandler handler = self.devToolsEventHandler;
+  if (!handler) {
+    return;
+  }
+  id params = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+  handler(method, [params isKindOfClass:NSDictionary.class] ? params : nil);
+}
+
+#pragma mark Dialogs, downloads and popups
+
+- (BOOL)cef_answerDialog:(ChromiumDialogKind)kind
+                 message:(NSString *)message
+             defaultText:(NSString *)defaultText
+                callback:(CefRefPtr<CefJSDialogCallback>)callback {
+  ChromiumDialogHandler handler = self.dialogHandler;
+  if (!handler || _destroyed) {
+    return NO;
+  }
+  NSString *answer = handler(kind, message, defaultText);
+  callback->Continue(answer != nil, ToCefString(answer ?: @""));
+  return YES;
+}
+
+- (void)cef_download:(NSString *)fileName finished:(BOOL)finished {
+  void (^handler)(NSString *, BOOL) = self.downloadHandler;
+  if (handler) {
+    handler(fileName, finished);
+  }
+}
+
+- (void)cef_blockedPopup:(NSString *)url {
+  void (^handler)(NSString *) = self.blockedPopupHandler;
+  if (handler && !_destroyed) {
+    handler(url);
+  }
 }
 
 - (void)captureScreenshotOfArea:(ChromiumScreenshotArea)area

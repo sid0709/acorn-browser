@@ -29,14 +29,128 @@ final class AgentDriver {
     nonisolated private static let evaluateRetries = 5
     nonisolated private static let maxLabel = 80
     nonisolated private static let maxValue = 200
+    /// How long one in-page wait for quiet may last: each DevTools call has a time limit in
+    /// the browser view, so a long settle is made of short waits.
+    nonisolated private static let maxQuietWait = 2.0
+    /// A request still open after this long (a long poll, a stream) no longer holds a look.
+    nonisolated private static let staleRequest = 8.0
+    /// How long an upload waits for the page to ask for a file after the click.
+    nonisolated private static let chooserWait = 3.0
+    nonisolated private static let pollMs = 50
 
     private let model: BrowserModel
     private var view: ChromiumBrowserView { model.view }
     private var notes: [String] = []
     private var zoneShots: [[String: Any]] = []
+    /// The page's requests not yet answered, by request id, with when each was sent.
+    private var inFlight: [String: Date] = [:]
+    /// The file picker the page opened and the browser intercepted, until an upload takes it.
+    private var chooser: [String: Any]?
+    /// Whether the DevTools domains this driver listens to are on for the current browser.
+    private var domainsOn = false
+    private var attached = false
 
     init(model: BrowserModel) {
         self.model = model
+        // The browser view calls these on the main thread, which the actor is.
+        model.view.devToolsEventHandler = { [weak self] method, params in
+            MainActor.assumeIsolated { self?.event(method, (params as? [String: Any]) ?? [:]) }
+        }
+    }
+
+    // MARK: Attaching
+
+    /// Takes the page over for the harness: dialogs are answered, file pickers intercepted,
+    /// blocked windows opened in this tab, and the page's traffic watched.
+    private func attach() async {
+        if !attached {
+            attached = true
+            view.dialogHandler = { [weak self] kind, message, _ in
+                MainActor.assumeIsolated {
+                    // An alert only informs, and leaving a page is what the plan asked for; a
+                    // question the page asks is not the harness's to answer, so it is declined.
+                    let accept = kind == .alert || kind == .beforeUnload
+                    let shown = Self.cut(message, Self.maxValue)
+                    self?.notes.append("A dialog said: \(shown) (it was \(accept ? "accepted" : "dismissed")).")
+                    return accept ? "" : nil
+                }
+            }
+            view.downloadHandler = { [weak self] name, finished in
+                MainActor.assumeIsolated {
+                    self?.notes.append(finished ? "A file downloaded: \(name)." : "A download started: \(name).")
+                }
+            }
+            view.blockedPopupHandler = { [weak self] url in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if url.isEmpty || url == "about:blank" {
+                        self.notes.append("The page tried to open a new window, which this browser blocked.")
+                    } else {
+                        self.notes.append("The page opened a new window for \(url); it was opened in this tab instead.")
+                        self.view.loadURL(url)
+                    }
+                }
+            }
+        }
+        await enableDomains()
+    }
+
+    /// Gives the page back to the person: dialogs and file pickers show again.
+    func detach() async {
+        guard attached else { return }
+        attached = false
+        view.dialogHandler = nil
+        view.downloadHandler = nil
+        view.blockedPopupHandler = nil
+        if domainsOn {
+            _ = try? await call("Page.setInterceptFileChooserDialog", ["enabled": false])
+        }
+        domainsOn = false
+        inFlight.removeAll()
+        chooser = nil
+    }
+
+    private func enableDomains() async {
+        guard !domainsOn else { return }
+        do {
+            _ = try await call("Network.enable")
+            _ = try await call("Page.enable")
+            _ = try await call("DOM.enable")
+            _ = try await call("Page.setInterceptFileChooserDialog", ["enabled": true])
+            domainsOn = true
+        } catch {
+            // Without a browser yet (the window is still opening) there is nothing to enable;
+            // the next request tries again.
+        }
+    }
+
+    /// A DevTools event of one of the enabled domains.
+    private func event(_ method: String, _ params: [String: Any]) {
+        switch method {
+        case "Network.requestWillBeSent":
+            // A socket or an event stream stays open on purpose; it is not loading.
+            let type = params["type"] as? String ?? ""
+            if type == "WebSocket" || type == "EventSource" { return }
+            if let id = params["requestId"] as? String { inFlight[id] = Date() }
+        case "Network.loadingFinished", "Network.loadingFailed":
+            if let id = params["requestId"] as? String { inFlight.removeValue(forKey: id) }
+        case "Page.fileChooserOpened":
+            chooser = params
+        default:
+            break
+        }
+    }
+
+    /// Whether the page is waiting on a request, leaving out those open for too long.
+    private var loading: Bool {
+        let now = Date()
+        inFlight = inFlight.filter { now.timeIntervalSince($0.value) < Self.staleRequest }
+        return !inFlight.isEmpty
+    }
+
+    nonisolated private static func cut(_ text: String, _ max: Int) -> String {
+        let one = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return String(one.prefix(max))
     }
 
     // MARK: Requests
@@ -45,6 +159,7 @@ final class AgentDriver {
     func handle(_ request: [String: Any]) async -> [String: Any] {
         var reply: [String: Any]
         do {
+            await attach()
             switch request["cmd"] as? String {
             case "open":
                 guard let url = request["url"] as? String else { throw AgentError("open needs a url") }
@@ -59,6 +174,7 @@ final class AgentDriver {
                 let actions = request["actions"] as? [[String: Any]] ?? []
                 reply = ["ok": true, "results": await act(actions)]
             case "close":
+                await detach()
                 reply = ["ok": true]
             default:
                 reply = ["ok": false, "error": "unknown command \(request["cmd"] as? String ?? "")"]
@@ -131,25 +247,38 @@ final class AgentDriver {
     private func shot(_ m: [String: Any]? = nil) async throws -> String {
         let size: [String: Any]
         if let m { size = m } else { size = try await metrics() }
-        let result = try await call("Page.captureScreenshot", [
+        let params: [String: Any] = [
             "format": "jpeg", "quality": Self.jpegQuality, "fromSurface": true,
             "clip": ["x": number(size["scrollX"]), "y": number(size["scrollY"]),
                      "width": number(size["width"]), "height": number(size["height"]),
                      // Chromium multiplies the scale by the screen's pixel ratio; undo that so
                      // the picture has one pixel to a CSS pixel.
                      "scale": 1 / max(number(size["ratio"]), 1)],
-        ])
+        ]
+        var result: [String: Any]
+        do {
+            result = try await call("Page.captureScreenshot", params)
+        } catch {
+            // Chromium only paints a window that is on screen: bring it there and try again.
+            if let window = view.window {
+                if window.isMiniaturized { window.deminiaturize(nil) }
+                window.makeKeyAndOrderFront(nil)
+            }
+            NSApp.activate()
+            try? await Task.sleep(for: .milliseconds(300))
+            result = try await call("Page.captureScreenshot", params)
+        }
         guard let data = result["data"] as? String else { throw AgentError("the browser returned no picture") }
         return "data:image/jpeg;base64," + data
     }
 
-    /// Waits until the page has settled: no change to its DOM for a quarter second, and nothing
-    /// still loading, within `cap` seconds. A menu still opening or a list still filling is not
-    /// what the model should plan from.
+    /// Waits until the page has settled: no change to its DOM for a quarter second, no request
+    /// of the page's still open, and the document loaded, within `cap` seconds. A menu still
+    /// opening or a list still filling is not what the model should plan from.
     private func settled(cap: Double = AgentDriver.settleCap) async {
         let started = Date()
         while Date().timeIntervalSince(started) < cap {
-            let left = max(cap - Date().timeIntervalSince(started), Self.quietMs / 1000)
+            let left = min(max(cap - Date().timeIntervalSince(started), Self.quietMs / 1000), Self.maxQuietWait)
             let quiet = (try? await evaluate("""
             new Promise((resolve) => {
               let timer = setTimeout(() => done(true), \(Self.quietMs));
@@ -165,7 +294,7 @@ final class AgentDriver {
             })
             """) as? Bool) ?? true
             let ready = ((try? await evaluate("document.readyState === 'complete'")) as? Bool) ?? false
-            if quiet && ready && !view.isLoading { return }
+            if quiet && ready && !view.isLoading && !loading { return }
             try? await Task.sleep(for: .milliseconds(150))
         }
     }
@@ -309,8 +438,15 @@ final class AgentDriver {
                     }
                     if abs(number(m["scrollY"]) - target.doubleValue) > 1 { try await scrollTo(target.doubleValue) }
                 }
+                chooser = nil
                 var result: [String: Any] = ["id": id, "ok": true]
                 for (key, value) in try await doAction(action) { result[key] = value }
+                // A plain click that opened the file picker: the browser held it back, and the
+                // harness is told so it can plan an upload.
+                if chooser != nil && action["kind"] as? String != "upload" {
+                    chooser = nil
+                    result["opened"] = "file_picker"
+                }
                 results.append(result)
             } catch let failure as ActionFailure {
                 results.append(["id": id, "ok": false, "error": failure.message, "unreached": failure.unreached])
@@ -370,7 +506,7 @@ final class AgentDriver {
             await settled(cap: Self.scrollSettleCap)
             return [:]
         case "upload":
-            throw ActionFailure(message: "this browser cannot attach files yet")
+            return try await upload(x, y, path: action["path"] as? String ?? "", name: action["fileName"] as? String ?? "")
         case "wait":
             let ms = min((action["ms"] as? NSNumber)?.doubleValue ?? 1000, Self.maxWaitMs)
             try? await Task.sleep(for: .milliseconds(Int(ms)))
@@ -380,6 +516,27 @@ final class AgentDriver {
         }
         await settled()
         return [:]
+    }
+
+    /// Clicks what opens the file picker, and hands the page the task's file in its place.
+    private func upload(_ x: Double, _ y: Double, path: String, name: String) async throws -> [String: Any] {
+        chooser = nil
+        try await click(x, y, count: 1)
+        let started = Date()
+        while chooser == nil && Date().timeIntervalSince(started) < Self.chooserWait {
+            try? await Task.sleep(for: .milliseconds(Self.pollMs))
+        }
+        guard let opened = chooser else {
+            throw ActionFailure(message: "the click did not open a file picker")
+        }
+        chooser = nil
+        if path.isEmpty { throw ActionFailure(message: "the task has no file to upload") }
+        guard let nodeId = opened["backendNodeId"] as? NSNumber else {
+            throw ActionFailure(message: "the browser did not say which control asked for the file")
+        }
+        _ = try await call("DOM.setFileInputFiles", ["files": [path], "backendNodeId": nodeId.intValue])
+        await settled()
+        return ["detail": "attached \(name.isEmpty ? path : name)"]
     }
 
     private func mouse(_ type: String, _ x: Double, _ y: Double, button: String = "none", count: Int = 0, buttons: Int = 0) async throws {
