@@ -188,6 +188,7 @@ struct Themed: ViewModifier {
 }
 
 extension View {
+    @MainActor
     func themed(_ store: ThemeStore = .shared, fixed: ThemeSettings? = nil) -> some View {
         modifier(Themed(store: store, fixed: fixed))
     }
