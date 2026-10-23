@@ -226,13 +226,14 @@ private struct SidebarTabRow: View {
                 .foregroundStyle(isActive ? palette.ink : palette.ink.opacity(0.82))
                 .lineLimit(1)
             Spacer(minLength: 0)
-            if hovering {
-                Button { store.close(tab) } label: {
-                    Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
-                }
-                .buttonStyle(ChromeButtonStyle(size: 20))
-                .help("Close tab (⌘W)")
+            // Always laid out, shown under the pointer: a hover never changes the layout.
+            Button { store.close(tab) } label: {
+                Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
             }
+            .buttonStyle(ChromeButtonStyle(size: 20))
+            .help("Close tab (⌘W)")
+            .opacity(hovering ? 1 : 0)
+            .allowsHitTesting(hovering)
         }
         .padding(.leading, Theme.Space.s + 1)
         .padding(.trailing, Theme.Space.xs)
@@ -240,7 +241,10 @@ private struct SidebarTabRow: View {
         .background(SidebarRowBackground(active: isActive, hovering: hovering))
         .contentShape(Rectangle())
         .onTapGesture { store.select(tab) }
-        .onHover { hovering = $0 }
+        .onHover {
+            HoverWatch.flipped("a tab in the sidebar")
+            hovering = $0
+        }
         .help(tab.title)
         .contextMenu { TabContextMenu(tab: tab, store: store) }
         .tabDraggable(tab, store: store)
