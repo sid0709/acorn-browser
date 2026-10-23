@@ -124,6 +124,11 @@ NS_SWIFT_UI_ACTOR
 /// the Web Store among them. Alloy (NO, the default) is the plain view the agent drives. Must be
 /// set before the view joins a window; a page's popups take the style of their opener.
 @property (nonatomic) BOOL usesChromeStyle;
+/// Whether the browser exists yet (it is made when the view first joins a window).
+@property (nonatomic, readonly) BOOL hasBrowser;
+/// The style the browser actually got, which may differ from the one asked for: YES only for a
+/// live Chrome-style browser.
+@property (nonatomic, readonly) BOOL isChromeStyle;
 @property (nonatomic) BOOL allowsPopups;
 @property (nonatomic) BOOL allowsDragAndDrop;
 @property (nonatomic) BOOL allowsTooltips;

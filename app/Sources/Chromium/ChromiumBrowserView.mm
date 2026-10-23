@@ -709,7 +709,20 @@ static NSInteger gIncognitoViews = 0;
       windowInfo, _client.get(), ToCefString(_pendingURL), browserSettings, nullptr, context);
   if (browser) {
     [self cef_didCreateBrowser:browser];
+    NSLog(@"ChromiumBrowserView: asked for %@ style, got %@.", _usesChromeStyle ? @"Chrome" : @"Alloy",
+          self.isChromeStyle ? @"Chrome" : @"Alloy");
+  } else {
+    NSLog(@"ChromiumBrowserView: no browser was made (asked for %@ style).",
+          _usesChromeStyle ? @"Chrome" : @"Alloy");
   }
+}
+
+- (BOOL)hasBrowser {
+  return _browser.get() != nullptr && !_destroyed;
+}
+
+- (BOOL)isChromeStyle {
+  return self.hasBrowser && _browser->GetHost()->GetRuntimeStyle() == CEF_RUNTIME_STYLE_CHROME;
 }
 
 - (void)requestClose {

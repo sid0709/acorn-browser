@@ -368,11 +368,15 @@ private struct ExtensionsPage: View {
                 store.newTab(url: "https://chromewebstore.google.com")
             } label: { Label("Chrome Web Store", systemImage: "bag") }
                 .buttonStyle(.row)
-            Button {
-                isPresented = false
-                store.newTab(url: "chrome://extensions")
-            } label: { Label("Manage Extensions", systemImage: "gearshape") }
-                .buttonStyle(.row)
+            SupportLine(support: ExtensionStore.support(in: store))
+                .padding(.horizontal, Theme.Space.s)
+            if ExtensionStore.support(in: store) == .on {
+                Button {
+                    isPresented = false
+                    store.newTab(url: "chrome://extensions")
+                } label: { Label("Chromium's Extensions Page", systemImage: "gearshape") }
+                    .buttonStyle(.row)
+            }
 
             Rectangle().fill(palette.hairline).frame(height: 1).padding(.vertical, Theme.Space.xs)
             Text("Site Boosts").font(Theme.Text.section).foregroundStyle(palette.inkSecondary)

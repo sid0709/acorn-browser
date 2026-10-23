@@ -72,6 +72,16 @@ final class ExtensionStore: ObservableObject {
         installed = found.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
+    /// Whether the person's tabs can run extensions, as the engine reports it for the tabs it
+    /// has made: a tab asked for Chrome style may have been given Alloy, which runs none.
+    enum Support { case unknown, on, off }
+
+    static func support(in store: TabStore) -> Support {
+        let live = store.tabs.filter { !store.isAgentTab($0) && $0.view.hasBrowser }
+        if live.isEmpty { return .unknown }
+        return live.contains { $0.view.isChromeStyle } ? .on : .off
+    }
+
     func isInstalled(_ id: String) -> Bool { installed.contains { $0.id == id } }
     func isEnabled(_ info: ExtensionInfo) -> Bool { info.source == .webStore || !disabled.contains(info.id) }
 
@@ -354,8 +364,10 @@ struct ExtensionsList: View {
     }
 
     private var list: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
+        let support = ExtensionStore.support(in: store)
+        return VStack(alignment: .leading, spacing: Theme.Space.s) {
             Text("Extensions").font(Theme.Text.title).foregroundStyle(palette.ink)
+            SupportLine(support: support)
             if extensions.installed.isEmpty {
                 Text("None yet. Find some in the Chrome Web Store; on an extension's page, use its Add button or Add to Acorn in the address.")
                     .font(Theme.Text.secondary).foregroundStyle(palette.inkSecondary)
@@ -377,11 +389,13 @@ struct ExtensionsList: View {
                 store.newTab(url: "https://chromewebstore.google.com")
             } label: { Label("Chrome Web Store", systemImage: "bag") }
                 .buttonStyle(.row)
-            Button {
-                close()
-                store.newTab(url: "chrome://extensions")
-            } label: { Label("Manage Extensions", systemImage: "gearshape") }
-                .buttonStyle(.row)
+            if support == .on {
+                Button {
+                    close()
+                    store.newTab(url: "chrome://extensions")
+                } label: { Label("Chromium's Extensions Page", systemImage: "gearshape") }
+                    .buttonStyle(.row)
+            }
         }
         .frame(width: 320)
     }
@@ -416,6 +430,30 @@ struct ExtensionsList: View {
             }
         }
         .frame(height: 38)
+    }
+}
+
+/// What the engine says about extensions here, in a line.
+struct SupportLine: View {
+    let support: ExtensionStore.Support
+    @Environment(\.palette) private var palette
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Circle()
+                .fill(support == .on ? Color.green : support == .off ? Color.orange : palette.inkTertiary)
+                .frame(width: 7, height: 7)
+            Text(text).font(Theme.Text.caption).foregroundStyle(palette.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var text: String {
+        switch support {
+        case .on: "On: your tabs run Chrome's extension system."
+        case .off: "Off: the engine made your tabs plain (Alloy) views, which run no extensions."
+        case .unknown: "Open a tab of your own to see whether extensions can run."
+        }
     }
 }
 
