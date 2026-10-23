@@ -21,8 +21,8 @@ final class AgentDriver {
     nonisolated private static let surveyOverlap = 120.0
     nonisolated private static let focusNear = 24.0
     nonisolated private static let quietMs = 250.0
-    nonisolated private static let settleCap = 5.0
-    nonisolated private static let scrollSettleCap = 1.0
+    nonisolated static let settleCap = 5.0
+    nonisolated static let scrollSettleCap = 1.0
     nonisolated private static let openCap = 30.0
     nonisolated private static let maxWaitMs = 30_000.0
     /// The version of the line protocol this driver speaks; the runner checks it on connecting.
@@ -339,7 +339,7 @@ final class AgentDriver {
     /// Waits until the page has settled: no change to its DOM for a quarter second, no request
     /// of the page's still open, and the document loaded, within `cap` seconds. A menu still
     /// opening or a list still filling is not what the model should plan from.
-    private func settled(cap: Double = AgentDriver.settleCap) async {
+    func settled(cap: Double = AgentDriver.settleCap) async {
         let started = Date()
         while Date().timeIntervalSince(started) < cap {
             let left = min(max(cap - Date().timeIntervalSince(started), Self.quietMs / 1000), Self.maxQuietWait)
