@@ -21,6 +21,7 @@ pub mod memory;
 pub mod model;
 pub mod observe;
 pub mod openrouter;
+pub mod page;
 pub mod pointcheck;
 pub mod ports;
 pub mod profile;

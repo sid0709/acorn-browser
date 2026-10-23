@@ -176,6 +176,18 @@ allowances say: on its own, after asking the person (the question goes out with 
 run goes on), or never. The fixed rules hold a send while part of the plan failed, while the
 to-do list has a required field empty, and for one look after the page refused the last send.
 
+### The page map (`page.rs`)
+
+The material of DOM mode, the second way of seeing a page, which is being built in stages
+(`docs/dom-mode-plan.md`). A browser that can describe the page sends, beside the screenshot, a
+flat, depth-first list of its nodes: role, computed name, live state (`checked`, `disabled`,
+`selected`, ...), the value a control holds, and the box in page coordinates (CSS pixels from
+the document's top left, a frame's offset already added). The harness renders it for the model
+as one line per node in view and a minimap of the rest, one line per screen's worth of page,
+under a byte budget; options of a closed native list have no box and follow their list. Stage
+1, this: the map is built by the app and written to the trace (`NNN.page.txt`); the model
+still sees the screenshot.
+
 ### Intervention and the end (`run.rs`, `report.rs`, `trace.rs`)
 
 Questions to the person are queued with the step and the run keeps going; answers arrive through
@@ -183,8 +195,8 @@ Questions to the person are queued with the step and the run keeps going; answer
 `Report`: the outcome, what the model assumed for the person, which parts of the page no look
 showed, which fields are still open, and every question with its answer. With a trace folder set
 every step is written to disk in the layout acorn's `tracesum` reads: the screenshot the model
-saw, the same with every action drawn on it, what it was sent and answered, tokens, cost and
-time. Typed secrets are never written.
+saw, the same with every action drawn on it, the page map as the model would read it, what it
+was sent and answered, tokens, cost and time. Typed secrets are never written.
 
 ## What goes over the wire
 

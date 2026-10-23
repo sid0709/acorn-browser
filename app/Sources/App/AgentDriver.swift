@@ -125,6 +125,8 @@ final class AgentDriver {
             _ = try await call("Network.enable")
             _ = try await call("Page.enable")
             _ = try await call("DOM.enable")
+            // The accessibility tree, for the page map of DOM mode (PageMap.swift).
+            _ = try await call("Accessibility.enable")
             _ = try await call("Page.setInterceptFileChooserDialog", ["enabled": true])
             // A page's own drag (a card to another column) would otherwise become a drag of
             // the system's, which follows the person's mouse, not the agent's pointer.
@@ -207,7 +209,7 @@ final class AgentDriver {
 
     // MARK: DevTools
 
-    private func call(_ method: String, _ params: [String: Any] = [:]) async throws -> [String: Any] {
+    func call(_ method: String, _ params: [String: Any] = [:]) async throws -> [String: Any] {
         try await withCheckedThrowingContinuation { continuation in
             view.sendDevToolsMethod(method, params: params) { success, result in
                 if success {
@@ -494,6 +496,9 @@ final class AgentDriver {
         notes.removeAll()
         zoneShots.removeAll()
         if let focused = await focus() { observation["focus"] = focused }
+        // The page as this browser knows it, beside the picture (PageMap.swift). In stage 1 the
+        // harness only writes it to the trace.
+        if let page = await pageMap() { observation["page"] = page }
         if survey { observation["survey"] = try await surveyScreens(m, focusYs: focusYs, settledSpans: settledSpans) }
         return observation
     }

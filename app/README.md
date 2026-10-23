@@ -111,6 +111,14 @@ Config/             Info.plist and entitlements
 scripts/            setup-cef.sh, build.sh
 ```
 
+## The page map (stage 1 of DOM mode)
+
+Every look also carries the page as this browser knows it (`PageMap.swift`): the accessibility
+tree joined with the DOM snapshot through DevTools, as a list of nodes with their computed name,
+live state and box in page coordinates, child frames fetched apart and hung under their frame.
+Nothing is written to the page. The harness writes it to the trace (`NNN.page.txt`); the model
+still sees the screenshot. The plan for the rest is in `docs/dom-mode-plan.md`.
+
 ## Build and run
 
 ```bash

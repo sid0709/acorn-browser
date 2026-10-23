@@ -482,7 +482,7 @@ impl Agent {
             entry.message = step.message.clone();
             entry.dropped = step.dropped.clone();
             entry.usage = s.usage;
-            self.record(s, entry, &obs.screenshot, &obs.survey, &step.actions, Vec::new());
+            self.record(s, entry, &obs.screenshot, &obs.survey, obs.page.as_ref(), &step.actions, Vec::new());
             return Ok(step);
         }
         // A plan refused whole, the same way, step after step, is a loop the model cannot see out
@@ -709,7 +709,7 @@ impl Agent {
         entry.dropped = step.dropped.clone();
         entry.check = s.last_check.take();
         entry.usage = s.usage;
-        self.record(s, entry, &obs.screenshot, &obs.survey, &step.actions, calls);
+        self.record(s, entry, &obs.screenshot, &obs.survey, obs.page.as_ref(), &step.actions, calls);
         Ok(step)
     }
 
@@ -717,7 +717,7 @@ impl Agent {
     fn refuse(&self, s: &mut Session, obs: &Observation, why: String) -> StepError {
         let mut entry = entry_for(s, obs, 0);
         entry.error = format!("bad observation: {why}");
-        self.record(s, entry, &obs.screenshot, &[], &[], Vec::new());
+        self.record(s, entry, &obs.screenshot, &[], obs.page.as_ref(), &[], Vec::new());
         StepError::BadObservation(why)
     }
 
@@ -726,7 +726,7 @@ impl Agent {
         let mut entry = entry_for(s, obs, stale);
         entry.error = error;
         entry.usage = s.usage;
-        self.record(s, entry, &obs.screenshot, &obs.survey, &[], calls);
+        self.record(s, entry, &obs.screenshot, &obs.survey, obs.page.as_ref(), &[], calls);
     }
 
     /// Ends the run with no actions: the person is told why and what they can do, and the trace
@@ -738,7 +738,7 @@ impl Agent {
         entry.status = status;
         entry.message = message.clone();
         entry.stop = Some(stop.clone());
-        self.record(s, entry, &obs.screenshot, &obs.survey, &[], Vec::new());
+        self.record(s, entry, &obs.screenshot, &obs.survey, obs.page.as_ref(), &[], Vec::new());
         Step { status, message, stop: Some(stop), number: s.step, usage: s.usage, ..Default::default() }
     }
 }

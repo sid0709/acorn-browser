@@ -2,11 +2,15 @@
 //! the last actions, and what has focus.
 //!
 //! The harness is image based. The model measures every point in the screenshot it is shown, so
-//! the screenshot and the viewport it describes must agree; `run` checks that before a step.
+//! the screenshot and the viewport it describes must agree; `run` checks that before a step. A
+//! browser that can also describe the page as a map of its controls sends that beside the
+//! screenshot (`page`), the material of DOM mode.
 //! Field names serialize in camelCase so a browser side written against Acorn's extension
 //! protocol can talk to this harness unchanged.
 
 use serde::{Deserialize, Serialize};
+
+use crate::page::PageMap;
 
 /// One look at the page, sent by the browser before each step.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -39,6 +43,10 @@ pub struct Observation {
     /// What became of the actions sent at the step before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub results: Vec<ActionResult>,
+    /// The page as the browser knows it, for DOM mode (`page.rs`): sent by a browser that can
+    /// build it, absent from one that cannot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<PageMap>,
 }
 
 /// A URL without its fragment: the page, whatever part of it the address points into.

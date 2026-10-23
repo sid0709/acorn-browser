@@ -52,3 +52,15 @@ to read next: `timeline.txt` for the run at a glance, then the step where it wen
 
 The sites are live, so a mission can become impossible (a page or an offer gone); the benchmark
 marks such tasks impossible rather than failed, and so should a reading of these results.
+
+## The page map
+
+`pagemap/pagemap.mjs` is the reference builder of the page map of DOM mode
+(`harness/src/page.rs`, `app/Sources/App/PageMap.swift`): on Playwright's Chromium it asks for
+the accessibility tree and the DOM snapshot and joins them the way the app does, so a change to
+the rules is tried here first and the harness's fixtures (`harness/src/fixtures/*.page.json`)
+are regenerated from `pagemap/pages/*.html`.
+
+```bash
+cd bench/pagemap && node pagemap.mjs pages/govuk.html https://www.gov.uk/   # → out/
+```
