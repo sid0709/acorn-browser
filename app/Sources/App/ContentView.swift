@@ -33,13 +33,20 @@ struct ContentView: View {
         .containerBackground(.regularMaterial, for: .window)
         .navigationTitle(store.active.title.isEmpty ? "Acorn Browser" : store.active.title)
         .toolbar(.hidden, for: .windowToolbar)
+        .ignoresSafeArea(.container, edges: .top)
     }
 
-    /// Tabs on the left (clear of the window's own buttons), the agent toggle on the right.
+    /// Tabs after the window's own close/minimize/zoom, the agent toggle on the right.
+    ///
+    /// The system's own buttons are asked for (`.windowStyle(.hiddenTitleBar)`) but do not
+    /// paint on this build of macOS: the `NSWindow` reports them present, unhidden, fully
+    /// opaque and correctly framed, yet nothing draws and Accessibility finds none — a
+    /// compositor bug outside this app's window code, not something more AppKit calls fix.
+    /// `WindowControls` below draws working stand-ins in their place.
     private var topBar: some View {
         HStack(spacing: 10) {
+            WindowControls()
             TabStrip(store: store)
-                .padding(.leading, 78)
             Spacer(minLength: 8)
             Button { withAnimation(.snappy) { showAgent.toggle() } } label: {
                 HStack(spacing: 6) {
@@ -57,8 +64,44 @@ struct ContentView: View {
             .help("Show or hide the agent (⌘K)")
             .padding(.trailing, 10)
         }
+        .padding(.leading, 20)
         .frame(height: 44)
         .background(WindowDragArea())
+    }
+}
+
+/// Close, minimize and zoom, drawn and wired by hand (see the note on `topBar`).
+private struct WindowControls: View {
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            light(color: Color(red: 1.00, green: 0.37, blue: 0.34), glyph: "xmark") {
+                NSApp.keyWindow?.performClose(nil)
+            }
+            light(color: Color(red: 1.00, green: 0.74, blue: 0.18), glyph: "minus") {
+                NSApp.keyWindow?.miniaturize(nil)
+            }
+            light(color: Color(red: 0.16, green: 0.78, blue: 0.25), glyph: "plus") {
+                NSApp.keyWindow?.zoom(nil)
+            }
+        }
+        .onHover { hovering = $0 }
+    }
+
+    private func light(color: Color, glyph: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            ZStack {
+                Circle().fill(color)
+                if hovering {
+                    Image(systemName: glyph)
+                        .font(.system(size: 7, weight: .heavy))
+                        .foregroundStyle(Color.black.opacity(0.5))
+                }
+            }
+            .frame(width: 12, height: 12)
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -79,6 +122,9 @@ private struct BrowserCard: View {
                     .tint(Theme.accent)
                     .opacity(tab.isLoading ? 1 : 0)
                     .animation(.easeOut(duration: 0.2), value: tab.isLoading)
+                    // Clear of the page's own vertical scrollbar, which draws in this
+                    // same top strip and would otherwise cut into the bar.
+                    .padding(.trailing, 16)
             }
         }
         .background(Color.white)
