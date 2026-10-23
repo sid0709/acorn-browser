@@ -35,8 +35,6 @@ final class AgentRunner: ObservableObject {
         didSet { UserDefaults.standard.set(model, forKey: Self.modelKey) }
     }
     static let defaultModel = "openai/gpt-6-luna"
-    /// The models the sidebar lists by name; any other id can be typed in.
-    static let knownModels = ["openai/gpt-6-luna", "openai/gpt-6-astra"]
     private static let modelKey = "agentModel"
 
     private var process: Process?

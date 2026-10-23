@@ -5,8 +5,8 @@ import SwiftUI
 struct ChatSidebar: View {
     @StateObject private var runner = AgentRunner()
     @State private var draft = ""
-    /// Whether the model is typed in rather than picked from the list.
-    @State private var customModel = false
+    @State private var choosingModel = false
+    @ObservedObject private var catalog = ModelCatalog.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,14 +21,7 @@ struct ChatSidebar: View {
                 }
             }
             .padding(12)
-            if customModel {
-                TextField("Model id, as OpenRouter names it", text: $runner.model)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.caption)
-                    .disabled(runner.isRunning)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
-            }
+            modelSummary
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
@@ -65,34 +58,44 @@ struct ChatSidebar: View {
             .padding(12)
         }
         .background(.background)
-        .onAppear { customModel = !AgentRunner.knownModels.contains(runner.model) }
+        .task { await catalog.refresh() }
         .task { await runTaskFromLaunchArguments() }
     }
 
-    /// Picks the model that drives the next run: the known ones by name, or any id typed in.
-    /// The decision model behind the checks is the runner's own and is not offered here.
+    /// Opens the searchable list of OpenRouter's models. The pick drives the next run; the
+    /// decision model behind the checks is the runner's own and is not offered here.
     private var modelMenu: some View {
-        Menu {
-            ForEach(AgentRunner.knownModels, id: \.self) { id in
-                Button {
-                    runner.model = id
-                    customModel = false
-                } label: {
-                    if id == runner.model {
-                        Label(shortName(id), systemImage: "checkmark")
-                    } else {
-                        Text(shortName(id))
-                    }
-                }
+        Button { choosingModel.toggle() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "cpu")
+                Text(shortName(runner.model)).lineLimit(1)
+                Image(systemName: "chevron.down").font(.caption2)
             }
-            Divider()
-            Button("Other model…") { customModel = true }
-        } label: {
-            Label(shortName(runner.model), systemImage: "cpu").font(.caption)
+            .font(.caption)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+        .buttonStyle(.borderless)
         .help("The model that drives the page. The checks between its batches use the runner's decision model.")
+        .popover(isPresented: $choosingModel, arrowEdge: .bottom) {
+            ModelPicker(selection: $runner.model)
+        }
+    }
+
+    /// One line under the header for the chosen model: what it reads and its token prices.
+    @ViewBuilder
+    private var modelSummary: some View {
+        if let model = catalog.model(runner.model) {
+            HStack(spacing: 6) {
+                ModalityIcons(kinds: model.inputs)
+                Text(model.shortPrice + " per 1M tokens").font(.caption2).foregroundStyle(.secondary)
+                if !model.seesImages {
+                    Image(systemName: "exclamationmark.triangle").font(.caption2).foregroundStyle(.orange)
+                        .help("This model does not read images, and the agent sends it a screenshot every step.")
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+        }
     }
 
     /// "openai/gpt-6-luna" as "gpt-6-luna".

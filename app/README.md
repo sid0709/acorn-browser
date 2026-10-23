@@ -53,9 +53,12 @@ Tests/agent_smoke.py        # drives it over the socket and checks 19 things
 Type a task in the sidebar (or paste a task file with `url:`, `done_when:`, `steps:` lines, like
 the ones in `kit/tasks`). The app writes it to a task file, starts `acorn-runner` (the harness,
 in `../runner`), and shows each step in the chat. The stop button ends a run. A task without a
-`url:` line starts on the page the browser shows. The menu in the sidebar's header picks the
-model that drives the page (`gpt-6-luna` by default, or any OpenRouter id under "Other model…");
-the choice is kept between launches. The checks between batches use the runner's own decision
+`url:` line starts on the page the browser shows. The button in the sidebar's header picks the
+model that drives the page (`gpt-6-luna` by default) from every model OpenRouter lists, with a
+search field. The chosen model's inputs and outputs, context, reasoning efforts and every price
+are shown beneath the list, and a model that cannot read the screenshots is flagged. The list
+comes from OpenRouter's public `/api/v1/models` (no key needed) and is kept in
+`openrouter-models.json` beside the runs for offline use; the choice is kept between launches. The checks between batches use the runner's own decision
 model, which the sidebar does not change.
 
 **One-time setup: the model key.** The runner reads `OPENROUTER_API_KEY` from
