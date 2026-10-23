@@ -91,8 +91,10 @@ run against an app built before this runner: an older app would refuse a kind of
 and look like a page that does not work. Rebuild both with `scripts/build.sh`.
 
 A native dropdown (`<select>`) opens the system's own menu, which waits for the person's mouse:
-a click on one gives it the focus instead, and the model chooses by keys from the options the
-focus information lists. A control inside a frame of another site (a payment form) cannot be
+a click on one gives it the focus instead, and the model picks from the options the focus
+information lists with a `choose` action, which sets the option by its text and tells the page
+(typing into the dropdown would jump to the first option that starts with the letters, and
+"United States" landed on "United Arab Emirates" that way). A control inside a frame of another site (a payment form) cannot be
 described; typing goes to it all the same.
 
 Known limits: Chromium only paints a visible window, so the window is brought on screen when

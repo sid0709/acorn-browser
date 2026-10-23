@@ -26,7 +26,7 @@ final class AgentDriver {
     nonisolated private static let openCap = 30.0
     nonisolated private static let maxWaitMs = 30_000.0
     /// The version of the line protocol this driver speaks; the runner checks it on connecting.
-    nonisolated private static let protocolVersion = 2
+    nonisolated private static let protocolVersion = 3
     nonisolated private static let jpegQuality = 80
     nonisolated private static let evaluateRetries = 5
     nonisolated private static let maxLabel = 80
@@ -649,6 +649,10 @@ final class AgentDriver {
             guard !url.isEmpty else { throw ActionFailure(message: "there is no address to go to") }
             await open(url)
             return [:]
+        case "choose":
+            let detail = try await choose(action["option"] as? String ?? "")
+            await settled()
+            return detail
         case "back":
             view.goBack()
             await settled(cap: Self.openCap)
@@ -679,6 +683,43 @@ final class AgentDriver {
         })()
         """)
         return (value as? Bool) ?? false
+    }
+
+    /// Sets the focused native dropdown to the option with this text, the way a person's pick
+    /// from its menu would, and tells the page: the menu itself is the system's own and no
+    /// screenshot shows it, and typing into the dropdown jumps to the first option that starts
+    /// with the letters, which may be another one. The text is matched whole, then whole but
+    /// for case, then as the start of exactly one option.
+    private func choose(_ option: String) async throws -> [String: Any] {
+        let wanted = option.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !wanted.isEmpty else { throw ActionFailure(message: "there is no option to choose") }
+        let data = try JSONSerialization.data(withJSONObject: [wanted])
+        let encoded = String(data: data, encoding: .utf8) ?? "[\"\"]"
+        let value = try? await evaluate("""
+        (() => {
+          \(Self.deepActive)
+          const { element: a, sealed } = deepActive();
+          if (!a || sealed || a.tagName !== 'SELECT') return { error: 'no dropdown has the focus: click the dropdown first' };
+          if (a.disabled) return { error: 'the dropdown is disabled' };
+          const wanted = \(encoded)[0];
+          const norm = (t) => (t || '').trim().replace(/\\s+/g, ' ');
+          const options = Array.from(a.options);
+          let hit = options.filter((o) => norm(o.text) === wanted);
+          if (hit.length === 0) hit = options.filter((o) => norm(o.text).toLowerCase() === wanted.toLowerCase());
+          if (hit.length === 0) hit = options.filter((o) => norm(o.text).toLowerCase().startsWith(wanted.toLowerCase()));
+          if (hit.length === 0) return { error: 'no option of the dropdown is ' + JSON.stringify(wanted) + '; the options are listed with the focus' };
+          if (hit.length > 1) return { error: JSON.stringify(wanted) + ' fits ' + hit.length + ' options: ' + hit.slice(0, 5).map((o) => JSON.stringify(norm(o.text))).join(', ') + '; write one of them whole' };
+          const chosen = hit[0];
+          if (chosen.disabled) return { error: 'that option is disabled' };
+          if (!a.multiple) a.selectedIndex = chosen.index; else chosen.selected = true;
+          a.dispatchEvent(new Event('input', { bubbles: true }));
+          a.dispatchEvent(new Event('change', { bubbles: true }));
+          return { detail: 'the dropdown now shows ' + JSON.stringify(norm(a.selectedOptions[0] ? a.selectedOptions[0].text : '')) };
+        })()
+        """)
+        guard let result = value as? [String: Any] else { throw ActionFailure(message: "the page did not say whether the option was chosen") }
+        if let error = result["error"] as? String { throw ActionFailure(message: error) }
+        return ["detail": result["detail"] as? String ?? ""]
     }
 
     /// Clicks what opens the file picker, and hands the page the task's file in its place.
