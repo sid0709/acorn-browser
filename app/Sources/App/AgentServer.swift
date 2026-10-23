@@ -77,7 +77,7 @@ final class AgentServer: @unchecked Sendable {
     private func serve(_ connection: Int32) {
         defer {
             close(connection)
-            onMain { driver in await driver.detach() }
+            _ = onMain { driver in await driver.detach() }
         }
         var pending = Data()
         var chunk = [UInt8](repeating: 0, count: 1 << 16)
