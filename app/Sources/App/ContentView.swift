@@ -75,6 +75,11 @@ private struct Shell: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
         }
+        .overlay {
+            if let id = store.draggedTab, let tab = store.tabs.first(where: { $0.id == id }) {
+                TabDragGhost(tab: tab, pointer: store.dragPointer)
+            }
+        }
         .animation(.easeOut(duration: 0.15), value: store.commandBar)
         .environmentObject(runner)
         .sheet(isPresented: $store.showingHistory) { HistoryView(store: store) }
@@ -222,7 +227,7 @@ struct PageCard: View {
     var showsToolbar: Bool
     var focused = false
     @Environment(\.palette) private var palette
-    @State private var splitTargeted = false
+    private var splitTargeted: Bool { store.isDropTargeted(.split(tab.id)) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -284,7 +289,7 @@ struct PageCard: View {
             .frame(width: 220)
             .padding(Theme.Space.s)
             .contentShape(Rectangle())
-            .onDrop(of: [TabDrag.type], delegate: SplitDropDelegate(store: store, host: tab, targeted: $splitTargeted))
+            .tabDropTarget(.split(tab.id), store: store)
             .transition(.opacity)
     }
 }

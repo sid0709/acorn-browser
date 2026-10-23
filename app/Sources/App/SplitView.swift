@@ -78,30 +78,3 @@ struct SplitView: View {
         clickMonitor = nil
     }
 }
-
-/// A tab dropped on the right edge of a page opens beside it.
-struct SplitDropDelegate: DropDelegate {
-    let store: TabStore
-    let host: BrowserModel
-    @Binding var targeted: Bool
-
-    func validateDrop(info: DropInfo) -> Bool {
-        guard let tab = store.dragged else { return false }
-        return tab !== host
-    }
-
-    func dropEntered(info: DropInfo) { targeted = validateDrop(info: info) }
-    func dropExited(info: DropInfo) { targeted = false }
-    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
-
-    func performDrop(info: DropInfo) -> Bool {
-        defer {
-            targeted = false
-            store.draggedTab = nil
-        }
-        guard let tab = store.dragged, tab !== host else { return false }
-        store.select(host)
-        store.openSplit(with: tab)
-        return true
-    }
-}
