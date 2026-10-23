@@ -147,6 +147,19 @@ written to history. The menu bar lists every command; the keys are also held by
 `WindowShortcuts` inside the window, so they work with the page focused. Settings (⌘,) holds
 the theme, the layout, search, translation and clearing data.
 
+The ⋮ menu follows Chromium's: New tab, New window and Incognito as tiles; zoom in place with full
+screen beside it, bookmark, pin, find, translate (through Google's translating address, in the
+language Settings names), print and copy link; then Bookmarks, History, Tab and Extensions,
+which open inside the menu; About and Settings at the foot. The engine runs Chromium's Alloy
+style, which cannot load Web Store extensions, so Extensions holds site boosts instead
+(`Boosts.swift`): styles and a script of the person's own put into a site's pages when they
+load, never into the agent's tab.
+
+⌘N opens another window and ⇧⌘N an incognito one, each with tabs of its own; only the main
+window has the agent. An incognito window's tabs share one in-memory profile
+(`ChromiumBrowserView initWithURL:incognito:`), which goes when the last of them does; it wears
+a fixed dark theme and writes no history.
+
 The first tab is the agent's: it is marked with a sparkle, cannot be closed, and is the page
 `AgentDriver` and the harness work in. While the harness has it (from its first request to the
 end of the connection) its card wears a slowly turning ring in the agent's colors, and, if it is

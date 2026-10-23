@@ -21,7 +21,7 @@ struct Sidebar: View {
             AddressPill(tab: store.active, store: store)
                 .id(store.activeID)
             if !favorites.isEmpty { favoritesGrid }
-            AgentRow(agentTab: BrowserModel.shared, store: store, runner: runner)
+            if store.hasAgent { AgentRow(agentTab: BrowserModel.shared, store: store, runner: runner) }
             Rectangle().fill(palette.hairline).frame(height: 1).padding(.horizontal, Theme.Space.xs)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
@@ -56,6 +56,7 @@ struct Sidebar: View {
             }
             .buttonStyle(.chrome)
             .help("Hide the sidebar (⌘S)")
+            if store.isIncognito { IncognitoBadge(compact: true) }
             Spacer(minLength: 0)
             NavigationButtons(tab: store.active).id(store.activeID)
         }
@@ -77,11 +78,13 @@ struct Sidebar: View {
                 .buttonStyle(.chrome)
                 .help("Theme")
                 .popover(isPresented: $choosingTheme, arrowEdge: .top) { ThemePicker() }
-            Button { withAnimation(Theme.layout) { showAgent.toggle() } } label: {
-                Image(systemName: "sparkles").foregroundStyle(Theme.sparkle)
+            if store.hasAgent {
+                Button { withAnimation(Theme.layout) { showAgent.toggle() } } label: {
+                    Image(systemName: "sparkles").foregroundStyle(Theme.sparkle)
+                }
+                .buttonStyle(.chrome)
+                .help(showAgent ? "Hide the agent (⌘K)" : "Ask the agent (⌘K)")
             }
-            .buttonStyle(.chrome)
-            .help(showAgent ? "Hide the agent (⌘K)" : "Ask the agent (⌘K)")
             Spacer(minLength: 0)
             Button { showingMenu = true } label: { Image(systemName: "ellipsis") }
                 .buttonStyle(.chrome)

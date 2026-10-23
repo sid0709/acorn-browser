@@ -7,7 +7,7 @@ private let libraryQueue = DispatchQueue(label: "com.acorn.browser.library", qos
 /// Reads and writes one JSON file in the app's folder. Writes wait a moment and happen off the
 /// main thread, so a burst of changes (a page that redirects three times) costs one write.
 @MainActor
-private final class JSONFile<Value: Codable & Sendable> {
+final class JSONFile<Value: Codable & Sendable> {
     private let url: URL
     private var pending: DispatchWorkItem?
 

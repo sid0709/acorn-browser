@@ -51,6 +51,24 @@ struct WindowDragArea: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
+/// Marks an incognito window, beside its tabs.
+struct IncognitoBadge: View {
+    var compact = false
+    @Environment(\.palette) private var palette
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "eye.slash.fill").font(.system(size: 10, weight: .semibold))
+            if !compact { Text("Incognito").font(.system(size: 11.5, weight: .semibold)) }
+        }
+        .foregroundStyle(palette.ink)
+        .padding(.horizontal, compact ? 7 : 10)
+        .frame(height: 24)
+        .background(palette.selection, in: Capsule())
+        .help("Incognito: nothing this window visits is kept, and its cookies go when it closes")
+    }
+}
+
 /// Back, forward, and reload (stop while loading).
 struct NavigationButtons: View {
     @ObservedObject var tab: BrowserModel

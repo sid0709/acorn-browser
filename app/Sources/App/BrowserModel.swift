@@ -69,7 +69,7 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
 
     init(url: String, incognito: Bool = false) {
         isIncognito = incognito
-        view = ChromiumBrowserView(url: url)
+        view = ChromiumBrowserView(url: url, incognito: incognito)
         // A page's own drag and drop (a card to another column) is part of using it.
         view.allowsDragAndDrop = true
         address = url
@@ -92,6 +92,8 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
 
     /// The address last written to history, to give it its title when that comes later.
     private var recorded = ""
+    /// Whether the page was loading at the last update: a boost goes in when a load ends.
+    private var wasLoading = false
 
     /// Pages the person opens go to history; those the agent opens while it drives do not.
     private func noteInHistory() {
@@ -115,6 +117,8 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
         progress = browserView.loadingProgress
         favicon = browserView.favicon
         noteInHistory()
+        if wasLoading && !isLoading { BoostStore.shared.apply(to: self) }
+        wasLoading = isLoading
     }
 
     func browserView(_ browserView: ChromiumBrowserView,

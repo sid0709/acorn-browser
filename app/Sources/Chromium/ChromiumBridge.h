@@ -96,11 +96,15 @@ typedef NS_ENUM(NSInteger, ChromiumScreenshotArea) {
 NS_SWIFT_UI_ACTOR
 @interface ChromiumBrowserView : NSView
 
-- (instancetype)initWithURL:(NSString *)url NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithURL:(NSString *)url;
+/// A private view: its cookies, storage and cache are kept in memory, shared by the private
+/// views open at the same time, and gone once the last of them is.
+- (instancetype)initWithURL:(NSString *)url incognito:(BOOL)incognito NS_DESIGNATED_INITIALIZER;
 - (instancetype)initWithFrame:(NSRect)frameRect NS_UNAVAILABLE;
 - (nullable instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
 
 @property (nonatomic, weak, nullable) id<ChromiumBrowserViewDelegate> delegate;
+@property (nonatomic, readonly) BOOL isIncognito;
 
 @property (nonatomic, readonly, copy) NSString *currentURL;
 @property (nonatomic, readonly, copy) NSString *title;

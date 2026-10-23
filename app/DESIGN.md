@@ -1,8 +1,9 @@
 # Interface design
 
 The plan the interface is being rebuilt to, phase by phase. Phases 1 (tokens, palette, theme
-picker, dark mode) , 2 (the shell in both layouts) and 3 (command bar, menu bar,
-history, bookmarks, settings) are in; the rest follow in order, each judged by `bench/run.py` afterwards.
+picker, dark mode) , 2 (the shell in both layouts), 3 (command bar, menu bar,
+history, bookmarks, settings), 4 (the ⋮ menu, boosts) and the windows of 7 (new window,
+incognito) are in; the rest follow in order, each judged by `bench/run.py` afterwards.
 
 ## Context
 

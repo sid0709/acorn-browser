@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// A named, colored cluster of tabs. Membership lives on each `BrowserModel.groupID`; this
 /// just carries the label and color shown for it.
@@ -7,6 +8,19 @@ struct TabGroup: Identifiable, Equatable {
     var name: String
     var color: Color
     var collapsed = false
+}
+
+/// Which window a `TabStore` belongs to. The main window holds the agent's tab; others are
+/// the person's alone, and an incognito one keeps nothing.
+enum WindowKind: String, Codable, Hashable {
+    case main, normal, incognito
+}
+
+/// What opens a window. Each carries its own id: SwiftUI brings forward an open window whose
+/// value is equal rather than opening another, and two windows of one kind are different.
+struct WindowRequest: Codable, Hashable {
+    var kind: WindowKind
+    var id = UUID()
 }
 
 enum CommandBarMode: Hashable {
@@ -31,10 +45,12 @@ enum TabRun: Identifiable {
 /// The open tabs. The first is the one the agent works in; the others are the person's own.
 @MainActor
 final class TabStore: ObservableObject {
-    static let shared = TabStore()
+    /// The main window's tabs, the agent's among them.
+    static let shared = TabStore(kind: .main)
 
-    @Published private(set) var tabs: [BrowserModel] = [BrowserModel.shared]
-    @Published var activeID: UUID = BrowserModel.shared.id
+    let kind: WindowKind
+    @Published private(set) var tabs: [BrowserModel]
+    @Published var activeID: UUID
     @Published private(set) var groups: [TabGroup] = []
 
     /// Tabs in a sidebar on the left (Arc's way) instead of across the top. Kept as a plain
@@ -65,9 +81,26 @@ final class TabStore: ObservableObject {
     /// The history sheet (⌘Y).
     @Published var showingHistory = false
 
+    /// The site whose boost is being written, in a sheet.
+    @Published var boostTarget: BoostTarget?
+
     static let groupColors: [Color] = [.red, .orange, .yellow, .green, .blue, .purple, .pink]
 
-    var active: BrowserModel { tabs.first { $0.id == activeID } ?? BrowserModel.shared }
+    var active: BrowserModel { tabs.first { $0.id == activeID } ?? tabs.first ?? BrowserModel.shared }
+
+    /// Only the main window has the agent, its tab and its panel.
+    var hasAgent: Bool { kind == .main }
+    var isIncognito: Bool { kind == .incognito }
+
+    init(kind: WindowKind) {
+        self.kind = kind
+        let first = kind == .main
+            ? BrowserModel.shared
+            : BrowserModel(url: BrowserSettings.shared.searchEngine.home, incognito: kind == .incognito)
+        tabs = [first]
+        activeID = first.id
+        showAgent = kind == .main
+    }
 
     func isAgentTab(_ tab: BrowserModel) -> Bool { tab === BrowserModel.shared }
 
@@ -81,7 +114,7 @@ final class TabStore: ObservableObject {
 
     /// A tab on `url`, or on the search engine's page.
     func newTab(url: String? = nil) {
-        let tab = BrowserModel(url: url ?? BrowserSettings.shared.searchEngine.home)
+        let tab = BrowserModel(url: url ?? BrowserSettings.shared.searchEngine.home, incognito: isIncognito)
         withAnimation(.snappy) {
             tabs.append(tab)
             activeID = tab.id
@@ -90,7 +123,7 @@ final class TabStore: ObservableObject {
 
     func duplicate(_ tab: BrowserModel) {
         guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
-        let copy = BrowserModel(url: tab.address)
+        let copy = BrowserModel(url: tab.address, incognito: isIncognito)
         copy.groupID = tab.groupID
         copy.isPinned = tab.isPinned
         withAnimation(.snappy) {
@@ -108,6 +141,9 @@ final class TabStore: ObservableObject {
             if activeID == tab.id, !tabs.isEmpty { activeID = tabs[min(index, tabs.count - 1)].id }
         }
         tab.view.destroyBrowser()
+        // A window of the person's own goes with its last tab, as in other browsers. The
+        // person is acting in it, so it is the key window.
+        if tabs.isEmpty { NSApp.keyWindow?.performClose(nil) }
     }
 
     func closeOthers(keeping tab: BrowserModel) {
@@ -213,7 +249,10 @@ final class TabStore: ObservableObject {
 
 /// What the shortcuts, the menu bar, the ⋮ menu and the command bar all do, in one place.
 extension TabStore {
-    func toggleAgent() { withAnimation(Theme.layout) { showAgent.toggle() } }
+    func toggleAgent() {
+        guard hasAgent else { return }
+        withAnimation(Theme.layout) { showAgent.toggle() }
+    }
 
     func toggleSidebar() {
         guard verticalLayout else { return }

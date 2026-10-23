@@ -44,6 +44,10 @@ extension ThemePreset {
             intensity: intensity, grain: 0, appearance: appearance))
     }
 
+    /// Incognito windows wear this whatever the theme, so they are never mistaken for others.
+    static let incognito = ThemeSettings(colors: [ThemeColor(hue: 0.68, saturation: 0.18)],
+                                         intensity: 0.3, grain: 0.25, appearance: .dark)
+
     static let all: [ThemePreset] = [
         // The wash this window always had: peach into pink into lavender.
         make("Sunset", [(14, 0.85), (328, 0.70), (252, 0.65)], intensity: 0.6),
@@ -170,18 +174,23 @@ extension EnvironmentValues {
 /// the root of a window.
 struct Themed: ViewModifier {
     @ObservedObject var store: ThemeStore
+    /// A theme that stands in for the person's (an incognito window's).
+    var fixed: ThemeSettings?
     @Environment(\.colorScheme) private var systemScheme
 
     func body(content: Content) -> some View {
-        let scheme = store.settings.appearance.scheme ?? systemScheme
-        content
-            .environment(\.palette, Palette(store.settings, dark: scheme == .dark))
-            .preferredColorScheme(store.settings.appearance.scheme)
+        let settings = fixed ?? store.settings
+        let scheme = settings.appearance.scheme ?? systemScheme
+        return content
+            .environment(\.palette, Palette(settings, dark: scheme == .dark))
+            .preferredColorScheme(settings.appearance.scheme)
     }
 }
 
 extension View {
-    func themed(_ store: ThemeStore = .shared) -> some View { modifier(Themed(store: store)) }
+    func themed(_ store: ThemeStore = .shared, fixed: ThemeSettings? = nil) -> some View {
+        modifier(Themed(store: store, fixed: fixed))
+    }
 }
 
 // MARK: - Canvas

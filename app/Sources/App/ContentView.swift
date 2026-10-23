@@ -9,12 +9,18 @@ struct BrowserPane: NSViewRepresentable {
 }
 
 struct ContentView: View {
-    @StateObject private var store = TabStore.shared
+    @StateObject private var store: TabStore
     @StateObject private var runner = AgentRunner()
+
+    /// The main window shows the shared tabs, the agent's among them; any other window starts
+    /// with tabs of its own.
+    init(kind: WindowKind = .main) {
+        _store = StateObject(wrappedValue: kind == .main ? TabStore.shared : TabStore(kind: kind))
+    }
 
     var body: some View {
         Shell(store: store, runner: runner, showAgent: $store.showAgent)
-            .themed()
+            .themed(fixed: store.isIncognito ? ThemePreset.incognito : nil)
     }
 }
 
@@ -50,7 +56,8 @@ private struct Shell: View {
             }
         }
         .animation(.easeOut(duration: 0.15), value: store.commandBar)
-        .sheet(isPresented: $store.showingHistory) { HistoryView(store: store).themed() }
+        .sheet(isPresented: $store.showingHistory) { HistoryView(store: store) }
+        .sheet(item: $store.boostTarget) { BoostEditor(host: $0.host) }
         .focusedSceneObject(store)
         .containerBackground(for: .window) { WindowCanvas() }
         .navigationTitle(store.active.title.isEmpty ? "Acorn Browser" : store.active.title)
@@ -122,27 +129,32 @@ private struct Shell: View {
             WindowControls()
             TabStrip(store: store)
             Spacer(minLength: Theme.Space.s)
+            if store.isIncognito { IncognitoBadge() }
             ThemeButton()
-            Button { withAnimation(Theme.layout) { showAgent.toggle() } } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles").foregroundStyle(Theme.sparkle)
-                    Text("Ask").font(.system(size: 13, weight: .semibold))
-                    if runner.isRunning || agentTab.isDriven {
-                        Circle().fill(Theme.sparkle).frame(width: 6, height: 6)
-                    }
-                }
-                .foregroundStyle(palette.ink)
-                .padding(.horizontal, 12)
-                .frame(height: 30)
-                .background(showAgent ? palette.selection : palette.hover,
-                            in: RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .help(showAgent ? "Hide the agent (⌘K)" : "Ask the agent (⌘K)")
+            if store.hasAgent { askButton }
         }
         .padding(.leading, 20)
         .padding(.trailing, Theme.Space.m)
         .frame(height: 46)
+    }
+
+    private var askButton: some View {
+        Button { withAnimation(Theme.layout) { showAgent.toggle() } } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles").foregroundStyle(Theme.sparkle)
+                Text("Ask").font(.system(size: 13, weight: .semibold))
+                if runner.isRunning || agentTab.isDriven {
+                    Circle().fill(Theme.sparkle).frame(width: 6, height: 6)
+                }
+            }
+            .foregroundStyle(palette.ink)
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(showAgent ? palette.selection : palette.hover,
+                        in: RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(showAgent ? "Hide the agent (⌘K)" : "Ask the agent (⌘K)")
     }
 
     // MARK: Shared
@@ -151,7 +163,7 @@ private struct Shell: View {
         HStack(alignment: .top, spacing: Theme.gutter) {
             PageCard(tab: store.active, store: store, showsToolbar: toolbar)
                 .id(store.activeID)
-            if showAgent {
+            if showAgent && store.hasAgent {
                 ChatSidebar(runner: runner, onClose: { withAnimation(Theme.layout) { showAgent = false } })
                     .frame(width: Self.agentPanelWidth)
                     .transition(.move(edge: .trailing).combined(with: .opacity))

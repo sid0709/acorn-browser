@@ -5,12 +5,20 @@ struct AcornBrowserApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        WindowGroup {
+        // The main window: one of it, holding the agent's tab.
+        Window("Acorn Browser", id: "main") {
             ContentView()
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
         .commands { BrowserCommands() }
+
+        // Further windows (⌘N) and incognito ones (⇧⌘N), with tabs of their own.
+        WindowGroup("Window", id: "browser", for: WindowRequest.self) { $request in
+            ContentView(kind: request?.kind ?? .normal)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1180, height: 780)
 
         Settings {
             SettingsView().themed()
@@ -23,11 +31,17 @@ struct AcornBrowserApp: App {
 /// either way one press does one thing. ⌘W is left to the window, where it closes the tab.
 struct BrowserCommands: Commands {
     @FocusedObject private var store: TabStore?
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Tab") { store?.commandBar = .newTab }
                 .keyboardShortcut("t")
+            Button("New Window") { openWindow(id: "browser", value: WindowRequest(kind: .normal)) }
+                .keyboardShortcut("n")
+            Button("New Incognito Window") { openWindow(id: "browser", value: WindowRequest(kind: .incognito)) }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+            Divider()
             Button("Open Location\u{2026}") { if let store { store.commandBar = .tab(store.activeID) } }
                 .keyboardShortcut("l")
             Divider()

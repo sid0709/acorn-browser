@@ -9,6 +9,7 @@
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_jsdialog_handler.h"
 #include "include/cef_parser.h"
+#include "include/cef_request_context.h"
 
 namespace {
 
@@ -584,6 +585,10 @@ class BrowserClient : public CefClient,
 
 #pragma mark - ChromiumBrowserView
 
+// The private views' one profile, made when the first opens and dropped with the last.
+static CefRefPtr<CefRequestContext> gIncognitoContext;
+static NSInteger gIncognitoViews = 0;
+
 @implementation ChromiumBrowserView {
   CefRefPtr<BrowserClient> _client;
   CefRefPtr<CefBrowser> _browser;
@@ -601,8 +606,16 @@ class BrowserClient : public CefClient,
 }
 
 - (instancetype)initWithURL:(NSString *)url {
+  return [self initWithURL:url incognito:NO];
+}
+
+- (instancetype)initWithURL:(NSString *)url incognito:(BOOL)incognito {
   self = [super initWithFrame:NSZeroRect];
   if (self) {
+    _isIncognito = incognito;
+    if (incognito) {
+      gIncognitoViews++;
+    }
     _client = new BrowserClient(self);
     _pendingURL = [url copy];
     _currentURL = [url copy];
@@ -628,6 +641,9 @@ class BrowserClient : public CefClient,
 
 - (void)dealloc {
   [self destroyBrowser];
+  if (_isIncognito && --gIncognitoViews == 0) {
+    gIncognitoContext = nullptr;
+  }
 }
 
 #pragma mark Layout
@@ -679,8 +695,17 @@ class BrowserClient : public CefClient,
   windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
 
   CefBrowserSettings browserSettings;
+  CefRefPtr<CefRequestContext> context;
+  if (_isIncognito) {
+    if (!gIncognitoContext) {
+      // No cache path: cookies, storage and cache stay in memory.
+      CefRequestContextSettings contextSettings;
+      gIncognitoContext = CefRequestContext::CreateContext(contextSettings, nullptr);
+    }
+    context = gIncognitoContext;
+  }
   CefRefPtr<CefBrowser> browser = CefBrowserHost::CreateBrowserSync(
-      windowInfo, _client.get(), ToCefString(_pendingURL), browserSettings, nullptr, nullptr);
+      windowInfo, _client.get(), ToCefString(_pendingURL), browserSettings, nullptr, context);
   if (browser) {
     [self cef_didCreateBrowser:browser];
   }
@@ -860,7 +885,8 @@ class BrowserClient : public CefClient,
 
   // The popup keeps its window.opener link, so sign-in flows (Google, Apple, etc.)
   // can report back to this page.
-  ChromiumBrowserView *popup = [[ChromiumBrowserView alloc] initWithURL:@"about:blank"];
+  ChromiumBrowserView *popup = [[ChromiumBrowserView alloc] initWithURL:@"about:blank"
+                                                              incognito:self.isIncognito];
   popup->_isPopupHost = YES;
   popup.frame = self.bounds;
   popup.allowsPopups = self.allowsPopups;
