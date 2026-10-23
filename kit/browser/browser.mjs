@@ -83,13 +83,14 @@ function clip(text, max) {
   return text.length > max ? text.slice(0, max) : text;
 }
 
-// Runs a page function, waiting out a navigation that destroys the page's context meanwhile.
+// Runs a page function, waiting out a navigation meanwhile: between two documents the context is
+// destroyed, or the new document has no element yet, and either fails the function once.
 async function evaluate(fn, arg) {
   for (let attempt = 0; ; attempt++) {
     try {
       return await page.evaluate(fn, arg);
     } catch (error) {
-      if (attempt >= EVALUATE_RETRIES || !/context was destroyed|navigat/i.test(error.message)) throw error;
+      if (attempt >= EVALUATE_RETRIES) throw error;
       await page.waitForLoadState('load', { timeout: LOAD_MS }).catch(() => {});
       await page.waitForTimeout(SETTLE_MS);
     }
@@ -97,12 +98,11 @@ async function evaluate(fn, arg) {
 }
 
 async function metrics() {
-  return evaluate(() => ({
-    scrollX: window.scrollX,
-    scrollY: window.scrollY,
-    pageWidth: document.documentElement.scrollWidth,
-    pageHeight: document.documentElement.scrollHeight,
-  }));
+  return evaluate(() => {
+    const root = document.documentElement;
+    if (!root) throw new Error('the page has no document yet');
+    return { scrollX: window.scrollX, scrollY: window.scrollY, pageWidth: root.scrollWidth, pageHeight: root.scrollHeight };
+  });
 }
 
 async function shot() {
