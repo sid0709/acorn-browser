@@ -454,7 +454,7 @@ struct FindBar: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 36)
-        .glass(Capsule(), weight: .overlay)
+        .crystal(Capsule())
         .padding(.top, 8)
         .padding(.trailing, 24)
         .onAppear {

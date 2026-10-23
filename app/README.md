@@ -283,13 +283,16 @@ are picked to stay readable in either appearance. Light and dark are set on the 
 AppKit (`NSApp.appearance`), not with SwiftUI's `preferredColorScheme`, which on macOS does not
 go back to the system's once it has forced one; an incognito window sets its own.
 
-The shell is glass, after Apple's Liquid Glass (`GlassPlate` in `Theme.swift`). The window is
-see-through: the canvas is the desktop, blurred, under the theme's gradient (less of it the
-higher Glass is set), with the theme's colors glowing in two corners for the glass to bend. On
-macOS 26 the panes are the system's own Liquid Glass, faintly tinted with the theme; before that
-they are drawn like crystal, a blur with a tinted body, a sheen across the top and a rim lit at
-the top leading corner. The row or tab in use is a drop of glass (`GlassBead`), with no blur of
-its own. Glass is drawn behind what it carries, so the page views are never touched by it. Spacing, radii, type and the shared button styles
+The shell is frosted glass (`FrostedPane` in `Theme.swift`): the top bar, the sidebar and the
+agent panel are soft, milky panes, only a little see-through, the theme's color held in them and
+no edge drawn round them, over a canvas of the theme's gradient with discs of its colors that
+show through as a haze. They have no blur, so they cost what a fill does, and their empty places
+move the window as a title bar would (a double click on the top bar zooms it). What floats over
+the page is crystal (`CrystalGlass`): the command bar, the address's suggestions, the find bar
+and a dragged tab bend and blur the page beneath, with a glint where the light catches the top
+edge; on macOS 26 that is the system's Liquid Glass. The Glass slider sets how clear the panes
+are; Reduce Transparency makes them solid. The page's own card stays solid, and glass is drawn
+behind what it carries, so the page views are never touched by it. Spacing, radii, type and the shared button styles
 are in `Theme.swift`, tab state in `TabStore.swift`, the strip in `TabStrip.swift`, the sidebar
 in `Sidebar.swift`, and the pieces both layouts share (the window's buttons, the address, the page
 toolbar, the agent's ring, the shortcuts) in `WindowChrome.swift`. Where the interface is going
