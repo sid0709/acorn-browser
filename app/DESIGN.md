@@ -1,7 +1,7 @@
 # Interface design
 
-The plan the interface is being rebuilt to, phase by phase. Phase 1 (tokens, palette, theme
-picker, dark mode) is in; the rest follow in order, each judged by `bench/run.py` afterwards.
+The plan the interface is being rebuilt to, phase by phase. Phases 1 (tokens, palette, theme
+picker, dark mode) and 2 (the shell in both layouts) are in; the rest follow in order, each judged by `bench/run.py` afterwards.
 
 ## Context
 

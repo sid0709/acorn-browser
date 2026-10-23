@@ -9,6 +9,20 @@ struct TabGroup: Identifiable, Equatable {
     var collapsed = false
 }
 
+/// A stretch of the tab list as the strip and the sidebar show it: a lone tab, or a group's
+/// consecutive members folded together.
+enum TabRun: Identifiable {
+    case tab(BrowserModel)
+    case group(TabGroup, [BrowserModel])
+
+    var id: String {
+        switch self {
+        case .tab(let tab): "t-\(tab.id)"
+        case .group(let group, _): "g-\(group.id)"
+        }
+    }
+}
+
 /// The open tabs. The first is the one the agent works in; the others are the person's own.
 @MainActor
 final class TabStore: ObservableObject {
@@ -18,8 +32,27 @@ final class TabStore: ObservableObject {
     @Published var activeID: UUID = BrowserModel.shared.id
     @Published private(set) var groups: [TabGroup] = []
 
-    /// Tabs on the side instead of across the top, for windows with many of them open.
-    @AppStorage("verticalTabs") var verticalLayout = false
+    /// Tabs in a sidebar on the left (Arc's way) instead of across the top. Kept as a plain
+    /// default, published by hand: `@AppStorage` does not tell an `ObservableObject`'s views.
+    @Published var verticalLayout = UserDefaults.standard.bool(forKey: "verticalTabs") {
+        didSet { UserDefaults.standard.set(verticalLayout, forKey: "verticalTabs") }
+    }
+
+    /// The sidebar put away (⌘S). It still slides out over the page from the window's left edge.
+    @Published var sidebarHidden = UserDefaults.standard.bool(forKey: "sidebarHidden") {
+        didSet { UserDefaults.standard.set(sidebarHidden, forKey: "sidebarHidden") }
+    }
+
+    static let sidebarWidths: ClosedRange<CGFloat> = 200...360
+    @Published var sidebarWidth: CGFloat = {
+        let saved = CGFloat(UserDefaults.standard.double(forKey: "sidebarWidth"))
+        return saved > 0 ? min(max(saved, TabStore.sidebarWidths.lowerBound), TabStore.sidebarWidths.upperBound) : 248
+    }() {
+        didSet { UserDefaults.standard.set(Double(sidebarWidth), forKey: "sidebarWidth") }
+    }
+
+    /// Set by ⌘L: the active tab's address, wherever it is shown, opens for typing.
+    @Published var editingAddress = false
 
     static let groupColors: [Color] = [.red, .orange, .yellow, .green, .blue, .purple, .pink]
 
@@ -120,6 +153,37 @@ final class TabStore: ObservableObject {
     func toggleCollapse(_ groupID: UUID) {
         guard let index = groups.firstIndex(where: { $0.id == groupID }) else { return }
         withAnimation(.snappy) { groups[index].collapsed.toggle() }
+    }
+
+    /// `tabs` in order, consecutive same-group tabs folded into one run, those `included` only.
+    func runs(where included: (BrowserModel) -> Bool = { _ in true }) -> [TabRun] {
+        var result: [TabRun] = []
+        let shown = tabs.filter(included)
+        var i = 0
+        while i < shown.count {
+            if let groupID = shown[i].groupID, let group = self.group(groupID) {
+                var members: [BrowserModel] = []
+                while i < shown.count, shown[i].groupID == groupID {
+                    members.append(shown[i])
+                    i += 1
+                }
+                result.append(.group(group, members))
+            } else {
+                result.append(.tab(shown[i]))
+                i += 1
+            }
+        }
+        return result
+    }
+
+    /// Lets the group's tabs go free; the group itself goes with its last member.
+    func ungroup(_ groupID: UUID) {
+        for tab in members(of: groupID) { removeFromGroup(tab) }
+    }
+
+    func closeGroup(_ groupID: UUID) {
+        for tab in members(of: groupID) { close(tab) }
+        groups.removeAll { $0.id == groupID }
     }
 
     func rename(_ groupID: UUID, to name: String) {

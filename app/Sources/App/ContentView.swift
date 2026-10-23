@@ -19,146 +19,175 @@ struct ContentView: View {
     }
 }
 
-/// The window's contents, under the theme `ContentView` resolves.
+/// The window's contents, under the theme `ContentView` resolves: the tabs in a sidebar or
+/// across the top, the page in a card, and the agent panel in another.
 private struct Shell: View {
     @ObservedObject var store: TabStore
     @ObservedObject var runner: AgentRunner
     @Binding var showAgent: Bool
+    @ObservedObject private var agentTab = BrowserModel.shared
     @Environment(\.palette) private var palette
-    @State private var choosingTheme = false
+    @State private var peeking = false
+
+    static let agentPanelWidth: CGFloat = 340
+
+    /// While the harness drives the agent's tab and it is the one shown, the sidebar steps
+    /// aside: the page the agent sees stays as wide as it was before there was a sidebar.
+    private var agentHoldsPage: Bool { agentTab.isDriven && store.isAgentTab(store.active) }
+    private var showsSidebar: Bool { store.verticalLayout && !store.sidebarHidden && !agentHoldsPage }
 
     var body: some View {
-        VStack(spacing: Theme.gutter) {
-            topBar
-            HStack(alignment: .top, spacing: Theme.gutter) {
-                if store.verticalLayout {
-                    ScrollView {
-                        TabStrip(store: store, vertical: true).padding(8)
-                    }
-                    .frame(width: 220)
-                    .background(palette.selection.opacity(0.5), in: RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous))
-                }
-                BrowserCard(tab: store.active, store: store)
-                    .id(store.activeID)
-                if showAgent {
-                    ChatSidebar(runner: runner, onClose: { withAnimation(Theme.layout) { showAgent = false } })
-                        .frame(width: 360)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
-            }
-            .padding(.horizontal, Theme.gutter)
-            .padding(.bottom, Theme.gutter)
+        Group {
+            if store.verticalLayout { sidebarLayout } else { topLayout }
         }
         .frame(minWidth: 960, minHeight: 580)
+        .background(WindowDragArea())
+        .background(WindowShortcuts(store: store, showAgent: $showAgent))
         .containerBackground(for: .window) { WindowCanvas() }
         .navigationTitle(store.active.title.isEmpty ? "Acorn Browser" : store.active.title)
         .toolbar(.hidden, for: .windowToolbar)
         .ignoresSafeArea(.container, edges: .top)
+        .animation(Theme.layout, value: showsSidebar)
+        .onChange(of: showsSidebar) { _, shown in if shown { peeking = false } }
     }
 
-    /// Tabs after the window's own close/minimize/zoom, the agent toggle on the right.
-    ///
-    /// The system's own buttons are asked for (`.windowStyle(.hiddenTitleBar)`) but do not
-    /// paint on this build of macOS: the `NSWindow` reports them present, unhidden, fully
-    /// opaque and correctly framed, yet nothing draws and Accessibility finds none — a
-    /// compositor bug outside this app's window code, not something more AppKit calls fix.
-    /// `WindowControls` below draws working stand-ins in their place.
+    // MARK: Sidebar layout
+
+    private var sidebarLayout: some View {
+        HStack(spacing: 0) {
+            if showsSidebar {
+                Sidebar(store: store, runner: runner, showAgent: $showAgent)
+                    .frame(width: store.sidebarWidth)
+                    .overlay(alignment: .trailing) { SidebarResizeHandle(store: store).offset(x: 3) }
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
+            pagesAndAgent(toolbar: false)
+                .padding(Theme.gutter)
+                .padding(.leading, showsSidebar ? -Theme.Space.xs : 0)
+        }
+        .overlay(alignment: .leading) {
+            if !showsSidebar { peekingSidebar }
+        }
+    }
+
+    /// With the sidebar put away, the window's left edge brings it out over the page while the
+    /// pointer stays on it.
+    private var peekingSidebar: some View {
+        ZStack(alignment: .leading) {
+            Color.clear
+                .frame(width: 6)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onHover { if $0 { withAnimation(Theme.layout) { peeking = true } } }
+            if peeking {
+                Sidebar(store: store, runner: runner, showAgent: $showAgent)
+                    .frame(width: store.sidebarWidth)
+                    .padding(.vertical, Theme.Space.xs)
+                    .background {
+                        WindowCanvas()
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous))
+                            .shadow(color: .black.opacity(palette.isDark ? 0.5 : 0.18), radius: 24, y: 8)
+                    }
+                    .overlay(RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous)
+                        .strokeBorder(palette.hairline))
+                    .padding(Theme.gutter)
+                    .onHover { if !$0 { withAnimation(Theme.layout) { peeking = false } } }
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
+        }
+    }
+
+    // MARK: Top layout
+
+    private var topLayout: some View {
+        VStack(spacing: 0) {
+            topBar
+            pagesAndAgent(toolbar: true)
+                .padding([.horizontal, .bottom], Theme.gutter)
+        }
+    }
+
+    /// The window's controls, the tabs, then the theme and the agent toggle on the right.
     private var topBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Theme.Space.m) {
             WindowControls()
-            if !store.verticalLayout { TabStrip(store: store) }
-            Spacer(minLength: 8)
-            Button { choosingTheme.toggle() } label: { Image(systemName: "paintpalette") }
-                .buttonStyle(.chrome)
-                .help("Theme")
-                .popover(isPresented: $choosingTheme, arrowEdge: .bottom) { ThemePicker() }
+            TabStrip(store: store)
+            Spacer(minLength: Theme.Space.s)
+            ThemeButton()
             Button { withAnimation(Theme.layout) { showAgent.toggle() } } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "sparkles").foregroundStyle(Theme.sparkle)
-                    Text("Ask AI").font(.system(size: 13, weight: .semibold))
-                    if runner.isRunning { ProgressView().controlSize(.mini) }
+                    Text("Ask").font(.system(size: 13, weight: .semibold))
+                    if runner.isRunning || agentTab.isDriven {
+                        Circle().fill(Theme.sparkle).frame(width: 6, height: 6)
+                    }
                 }
                 .foregroundStyle(palette.ink)
                 .padding(.horizontal, 12)
                 .frame(height: 30)
-                .background(showAgent ? palette.selection : palette.hover, in: RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous))
+                .background(showAgent ? palette.selection : palette.hover,
+                            in: RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous))
             }
             .buttonStyle(.plain)
-            .keyboardShortcut("k", modifiers: .command)
-            .help("Show or hide the agent (⌘K)")
-            .padding(.trailing, 10)
-
-            // Window-level shortcuts that don't belong to any one tab's own card.
-            Button { store.newTab() } label: { EmptyView() }
-                .keyboardShortcut("t", modifiers: .command)
-                .frame(width: 0, height: 0).opacity(0)
-            Button { store.close(store.active) } label: { EmptyView() }
-                .keyboardShortcut("w", modifiers: .command)
-                .frame(width: 0, height: 0).opacity(0)
+            .help(showAgent ? "Hide the agent (⌘K)" : "Ask the agent (⌘K)")
         }
         .padding(.leading, 20)
-        .frame(height: 44)
-        .background(WindowDragArea())
+        .padding(.trailing, Theme.Space.m)
+        .frame(height: 46)
+    }
+
+    // MARK: Shared
+
+    private func pagesAndAgent(toolbar: Bool) -> some View {
+        HStack(alignment: .top, spacing: Theme.gutter) {
+            PageCard(tab: store.active, store: store, showsToolbar: toolbar)
+                .id(store.activeID)
+            if showAgent {
+                ChatSidebar(runner: runner, onClose: { withAnimation(Theme.layout) { showAgent = false } })
+                    .frame(width: Self.agentPanelWidth)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
     }
 }
 
-/// Close, minimize and zoom, drawn and wired by hand (see the note on `topBar`).
-private struct WindowControls: View {
-    @State private var hovering = false
+/// The palette button and the theme picker it opens.
+private struct ThemeButton: View {
+    @State private var choosing = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            light(color: Color(red: 1.00, green: 0.37, blue: 0.34), glyph: "xmark") {
-                NSApp.keyWindow?.performClose(nil)
-            }
-            light(color: Color(red: 1.00, green: 0.74, blue: 0.18), glyph: "minus") {
-                NSApp.keyWindow?.miniaturize(nil)
-            }
-            light(color: Color(red: 0.16, green: 0.78, blue: 0.25), glyph: "plus") {
-                NSApp.keyWindow?.zoom(nil)
-            }
-        }
-        .onHover { hovering = $0 }
-    }
-
-    private func light(color: Color, glyph: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            ZStack {
-                Circle().fill(color)
-                if hovering {
-                    Image(systemName: glyph)
-                        .font(.system(size: 7, weight: .heavy))
-                        .foregroundStyle(Color.black.opacity(0.5))
-                }
-            }
-            .frame(width: 12, height: 12)
-        }
-        .buttonStyle(.plain)
+        Button { choosing.toggle() } label: { Image(systemName: "paintpalette") }
+            .buttonStyle(.chrome)
+            .help("Theme")
+            .popover(isPresented: $choosing, arrowEdge: .bottom) { ThemePicker() }
     }
 }
 
-/// The page, with its own address row above it in one rounded card.
-private struct BrowserCard: View {
+/// The page in a card: its toolbar on top in the top layout (the sidebar carries navigation in
+/// the other), a hairline of progress while it loads, the find bar over it, and the agent's
+/// ring round it while the agent works in it.
+private struct PageCard: View {
     @ObservedObject var tab: BrowserModel
     @ObservedObject var store: TabStore
-    @State private var addressField = ""
-    @FocusState private var addressFocused: Bool
-    @State private var showingMenu = false
+    var showsToolbar: Bool
     @Environment(\.palette) private var palette
 
     var body: some View {
         VStack(spacing: 0) {
-            addressRow
+            if showsToolbar { PageToolbar(tab: tab, store: store) }
             ZStack(alignment: .top) {
                 BrowserPane(view: tab.view)
-                ProgressView(value: tab.isLoading ? tab.progress : 0)
-                    .progressViewStyle(.linear)
-                    .tint(palette.accent)
+                Rectangle()
+                    .fill(palette.accent)
+                    .frame(height: 2)
+                    .scaleEffect(x: max(tab.progress, 0.08), y: 1, anchor: .leading)
                     .opacity(tab.isLoading ? 1 : 0)
-                    .animation(.easeOut(duration: 0.2), value: tab.isLoading)
+                    .animation(.easeOut(duration: 0.2), value: tab.progress)
+                    .animation(.easeOut(duration: 0.25), value: tab.isLoading)
                     // Clear of the page's own vertical scrollbar, which draws in this
                     // same top strip and would otherwise cut into the bar.
                     .padding(.trailing, 16)
+                    .allowsHitTesting(false)
                 if tab.isFinding {
                     FindBar(tab: tab)
                         .frame(maxWidth: .infinity, alignment: .trailing)
@@ -167,96 +196,9 @@ private struct BrowserCard: View {
             }
         }
         .card()
-        .onChange(of: tab.address) { _, new in
-            if !addressFocused { addressField = new }
+        .overlay {
+            if tab.isDriven { AgentGlow().transition(.opacity) }
         }
-        .onAppear { addressField = tab.address }
+        .animation(Theme.layout, value: tab.isDriven)
     }
-
-    private var addressRow: some View {
-        HStack(spacing: 4) {
-            Button { tab.view.goBack() } label: { Image(systemName: "chevron.left") }
-                .buttonStyle(.chrome).disabled(!tab.canGoBack)
-            Button { tab.view.goForward() } label: { Image(systemName: "chevron.right") }
-                .buttonStyle(.chrome).disabled(!tab.canGoForward)
-            Button {
-                tab.isLoading ? tab.view.stopLoading() : tab.view.reload()
-            } label: {
-                Image(systemName: tab.isLoading ? "xmark" : "arrow.clockwise")
-            }
-            .buttonStyle(.chrome)
-            .keyboardShortcut("r", modifiers: .command)
-
-            HStack(spacing: 8) {
-                Image(systemName: isSecure ? "lock.fill" : "magnifyingglass")
-                    .font(.system(size: 11))
-                    .foregroundStyle(palette.inkTertiary)
-                TextField("Search or enter address", text: $addressField)
-                    .textFieldStyle(.plain)
-                    .font(Theme.Text.body)
-                    .foregroundStyle(palette.ink)
-                    .focused($addressFocused)
-                    .onSubmit {
-                        tab.go(to: addressField)
-                        addressFocused = false
-                        tab.view.focusBrowser()
-                    }
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 30)
-            .background(addressFocused ? palette.pressed.opacity(0.5) : palette.hover, in: Capsule())
-            .overlay(Capsule().strokeBorder(palette.accent.opacity(addressFocused ? 0.45 : 0), lineWidth: 1.5))
-
-            Button { store.newTab() } label: { Image(systemName: "plus.square.on.square") }
-                .buttonStyle(.chrome)
-                .help("New tab (⌘T)")
-            Button { showingMenu = true } label: { Image(systemName: "ellipsis.circle") }
-                .buttonStyle(.chrome)
-                .help("More")
-                .popover(isPresented: $showingMenu, arrowEdge: .bottom) {
-                    BrowserMenu(tab: tab, store: store, isPresented: $showingMenu)
-                }
-
-            Button { addressFocused = true } label: { EmptyView() }
-                .keyboardShortcut("l", modifiers: .command)
-                .frame(width: 0, height: 0)
-                .opacity(0)
-            Button { tab.startFinding() } label: { EmptyView() }
-                .keyboardShortcut("f", modifiers: .command)
-                .frame(width: 0, height: 0)
-                .opacity(0)
-            Button { tab.printPage() } label: { EmptyView() }
-                .keyboardShortcut("p", modifiers: .command)
-                .frame(width: 0, height: 0)
-                .opacity(0)
-            Button { tab.zoomIn() } label: { EmptyView() }
-                .keyboardShortcut("=", modifiers: .command)
-                .frame(width: 0, height: 0)
-                .opacity(0)
-            Button { tab.zoomOut() } label: { EmptyView() }
-                .keyboardShortcut("-", modifiers: .command)
-                .frame(width: 0, height: 0)
-                .opacity(0)
-            Button { tab.zoomReset() } label: { EmptyView() }
-                .keyboardShortcut("0", modifiers: .command)
-                .frame(width: 0, height: 0)
-                .opacity(0)
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 44)
-        .background(palette.card)
-        .overlay(alignment: .bottom) { Rectangle().fill(palette.hairline).frame(height: 1) }
-    }
-
-    private var isSecure: Bool { tab.address.hasPrefix("https://") }
-}
-
-/// Lets the empty part of the top bar move the window, as a title bar would.
-private struct WindowDragArea: NSViewRepresentable {
-    final class DragView: NSView {
-        override var mouseDownCanMoveWindow: Bool { true }
-    }
-
-    func makeNSView(context: Context) -> NSView { DragView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
 }

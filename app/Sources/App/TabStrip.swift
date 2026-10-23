@@ -10,88 +10,34 @@ private struct TabFrameKey: PreferenceKey {
     }
 }
 
-/// The row of tabs along the top of the window, with the new-tab button after them. Pinned
-/// tabs lead as icon-only squares; grouped tabs cluster inside a labeled, colored bracket.
+/// The row of tabs across the top of the window, on the canvas, with the new-tab button after
+/// them. Pinned tabs lead as icon-only squares; a group's tabs follow its colored label, with a
+/// line of its color beneath them.
 struct TabStrip: View {
     @ObservedObject var store: TabStore
-    /// Across the top (the default) or down the side, for windows with many tabs open.
-    var vertical = false
     @State private var frames: [UUID: CGRect] = [:]
     @State private var middleClickMonitor: Any?
 
-    private enum Run: Identifiable {
-        case tab(BrowserModel)
-        case group(TabGroup, [BrowserModel])
-        var id: String {
-            switch self {
-            case .tab(let tab): "t-\(tab.id)"
-            case .group(let group, _): "g-\(group.id)"
-            }
-        }
-    }
-
-    /// `store.tabs` in order, with consecutive same-group tabs folded into one `.group` run.
-    private var runs: [Run] {
-        var result: [Run] = []
-        var i = 0
-        let tabs = store.tabs
-        while i < tabs.count {
-            if let groupID = tabs[i].groupID, let group = store.group(groupID) {
-                var members: [BrowserModel] = []
-                while i < tabs.count, tabs[i].groupID == groupID {
-                    members.append(tabs[i])
-                    i += 1
-                }
-                result.append(.group(group, members))
-            } else {
-                result.append(.tab(tabs[i]))
-                i += 1
-            }
-        }
-        return result
-    }
-
     var body: some View {
-        Group {
-            if vertical {
-                VStack(alignment: .leading, spacing: 4) { tabRuns; newTabButton }
-            } else {
-                HStack(spacing: 4) { tabRuns; newTabButton }
+        HStack(spacing: 2) {
+            ForEach(store.runs()) { run in
+                Group {
+                    switch run {
+                    case .tab(let tab):
+                        TabPill(tab: tab, store: store)
+                    case .group(let group, let members):
+                        GroupCluster(group: group, members: members, store: store)
+                    }
+                }
+                .transition(.scale(scale: 0.85).combined(with: .opacity))
             }
+            Button { store.newTab() } label: { Image(systemName: "plus") }
+                .buttonStyle(.chrome)
+                .help("New tab (⌘T)")
         }
+        .onPreferenceChange(TabFrameKey.self) { frames = $0 }
         .onAppear { installMiddleClickMonitor() }
         .onDisappear { removeMiddleClickMonitor() }
-    }
-
-    @ViewBuilder
-    private var tabRuns: some View {
-        ForEach(runs) { run in
-            Group {
-                switch run {
-                case .tab(let tab):
-                    TabPill(tab: tab, store: store, frames: $frames, vertical: vertical)
-                case .group(let group, let members):
-                    GroupCluster(group: group, members: members, store: store, frames: $frames, vertical: vertical)
-                }
-            }
-            .transition(.asymmetric(
-                insertion: .scale(scale: 0.85).combined(with: .opacity),
-                removal: .scale(scale: 0.85).combined(with: .opacity)))
-        }
-    }
-
-    private var newTabButton: some View {
-        Button {
-            store.newTab()
-        } label: {
-            if vertical {
-                Label("New Tab", systemImage: "plus").font(.system(size: 12.5)).frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Image(systemName: "plus")
-            }
-        }
-        .buttonStyle(.chrome)
-        .help("New tab (⌘T)")
     }
 
     private func installMiddleClickMonitor() {
@@ -114,51 +60,37 @@ struct TabStrip: View {
     }
 }
 
-/// A group's tabs inside a colored bracket, with a label that collapses them to a count.
+/// A group's label, which collapses its tabs to a count, then the tabs over a line of its color.
 private struct GroupCluster: View {
     let group: TabGroup
     let members: [BrowserModel]
     @ObservedObject var store: TabStore
-    @Binding var frames: [UUID: CGRect]
-    var vertical = false
 
     var body: some View {
-        Group {
-            if vertical {
-                VStack(alignment: .leading, spacing: 4) { label; memberList }
-            } else {
-                HStack(spacing: 4) { label; memberList }
-            }
-        }
-        .padding(4)
-        .background(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(group.color.opacity(0.3)))
-    }
-
-    private var label: some View {
-        Button { store.toggleCollapse(group.id) } label: {
-            HStack(spacing: 4) {
-                Circle().fill(group.color).frame(width: 7, height: 7)
-                Text(group.name).font(.system(size: 11, weight: .semibold)).lineLimit(1)
-                if group.collapsed {
-                    Text("\(members.count)").font(.system(size: 10)).foregroundStyle(.secondary)
+        HStack(spacing: 2) {
+            Button { store.toggleCollapse(group.id) } label: {
+                HStack(spacing: 4) {
+                    Text(group.name).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+                    if group.collapsed {
+                        Text("\(members.count)").font(.system(size: 10.5, weight: .medium)).opacity(0.75)
+                    }
                 }
-                if vertical { Spacer(minLength: 0) }
+                .foregroundStyle(group.color)
+                .padding(.horizontal, 9)
+                .frame(height: 22)
+                .background(group.color.opacity(0.16), in: Capsule())
             }
-            .foregroundStyle(group.color)
-            .padding(.horizontal, 8)
-            .frame(height: 22)
-            .frame(maxWidth: vertical ? .infinity : nil)
-            .background(group.color.opacity(0.16), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .help(group.collapsed ? "Show \u{201C}\(group.name)\u{201D}" : "Collapse \u{201C}\(group.name)\u{201D}")
-    }
+            .buttonStyle(.plain)
+            .help(group.collapsed ? "Show \u{201C}\(group.name)\u{201D}" : "Collapse \u{201C}\(group.name)\u{201D}")
+            .contextMenu { GroupContextMenu(group: group, store: store) }
 
-    @ViewBuilder
-    private var memberList: some View {
-        if !group.collapsed {
-            ForEach(members, id: \.id) { tab in
-                TabPill(tab: tab, store: store, frames: $frames, vertical: vertical)
+            if !group.collapsed {
+                HStack(spacing: 2) {
+                    ForEach(members, id: \.id) { tab in TabPill(tab: tab, store: store) }
+                }
+                .overlay(alignment: .bottom) {
+                    Capsule().fill(group.color.opacity(0.7)).frame(height: 2).padding(.horizontal, 6).offset(y: 3)
+                }
             }
         }
     }
@@ -167,66 +99,99 @@ private struct GroupCluster: View {
 private struct TabPill: View {
     @ObservedObject var tab: BrowserModel
     @ObservedObject var store: TabStore
-    @Binding var frames: [UUID: CGRect]
-    var vertical = false
-    @State private var hovering = false
     @Environment(\.palette) private var palette
+    @State private var hovering = false
 
     private var isActive: Bool { store.activeID == tab.id }
     private var isAgent: Bool { store.isAgentTab(tab) }
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous) }
 
     var body: some View {
         content
             .background(
                 ZStack {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    shape
                         .fill(isActive ? palette.selection : hovering ? palette.hover : .clear)
-                        .shadow(color: .black.opacity(isActive && !palette.isDark ? 0.08 : 0), radius: 4, y: 1)
+                        .shadow(color: .black.opacity(isActive && !palette.isDark ? 0.07 : 0), radius: 3, y: 1)
                     GeometryReader { geo in
                         Color.clear.preference(key: TabFrameKey.self, value: [tab.id: geo.frame(in: .global)])
                     }
                 }
             )
-            .contentShape(Rectangle())
+            .contentShape(shape)
             .onTapGesture { store.select(tab) }
             .onHover { hovering = $0 }
             .help(isAgent ? "The agent's tab" : tab.title)
             .animation(Theme.hover, value: isActive)
-            .contextMenu { if !isAgent { contextMenuItems } }
+            .animation(Theme.hover, value: hovering)
+            .contextMenu { if !isAgent { TabContextMenu(tab: tab, store: store) } }
     }
 
     @ViewBuilder
     private var content: some View {
-        if tab.isPinned && !vertical {
-            icon.frame(width: 30, height: 30)
+        if tab.isPinned {
+            TabIcon(tab: tab, isAgent: isAgent).frame(width: 32, height: 32)
         } else {
             HStack(spacing: 7) {
-                icon
+                TabIcon(tab: tab, isAgent: isAgent)
                 Text(tab.title.isEmpty ? "New Tab" : tab.title)
-                    .font(.system(size: 12.5, weight: isActive ? .semibold : .regular))
+                    .font(isActive ? Theme.Text.bodyStrong : Theme.Text.body)
                     .foregroundStyle(isActive ? palette.ink : palette.inkSecondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                if tab.isPinned {
-                    Image(systemName: "pin.fill").font(.system(size: 8)).foregroundStyle(palette.inkTertiary)
-                }
                 if !isAgent && (hovering || isActive) {
                     Button { store.close(tab) } label: {
                         Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(palette.inkSecondary)
-                    .help("Close tab")
+                    .buttonStyle(ChromeButtonStyle(size: 18))
+                    .help("Close tab (⌘W)")
                 }
             }
-            .padding(.horizontal, 10)
-            .frame(minWidth: vertical ? nil : 90, idealWidth: vertical ? nil : 170, maxWidth: vertical ? .infinity : 200)
-            .frame(height: 30)
+            .padding(.leading, 10)
+            .padding(.trailing, 6)
+            .frame(minWidth: 96, idealWidth: 180, maxWidth: 210)
+            .frame(height: 32)
         }
     }
+}
 
-    @ViewBuilder
-    private var contextMenuItems: some View {
+/// A tab's favicon (a globe until the page has one), with the agent's sparkle on the agent's
+/// tab and a spinner while the page loads.
+struct TabIcon: View {
+    @ObservedObject var tab: BrowserModel
+    var isAgent = false
+    var size: CGFloat = 16
+    @Environment(\.palette) private var palette
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            if let image = tab.favicon {
+                Image(nsImage: image).resizable().scaledToFit().frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+            } else {
+                Image(systemName: "globe").font(.system(size: size * 0.8)).foregroundStyle(palette.inkTertiary)
+                    .frame(width: size, height: size)
+            }
+            if isAgent {
+                Image(systemName: "sparkle")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(Theme.sparkle)
+                    .offset(x: 4, y: 3)
+            }
+            if tab.isLoading {
+                ProgressView().controlSize(.mini).scaleEffect(0.6).frame(width: size, height: size)
+                    .background(palette.card.opacity(0.7), in: Circle())
+            }
+        }
+    }
+}
+
+/// What a right click on one of the person's tabs offers, in the strip and in the sidebar.
+struct TabContextMenu: View {
+    @ObservedObject var tab: BrowserModel
+    @ObservedObject var store: TabStore
+
+    var body: some View {
         Button("Duplicate Tab") { store.duplicate(tab) }
         Button(tab.isPinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab) }
         Divider()
@@ -248,27 +213,24 @@ private struct TabPill: View {
         Button("Close Other Tabs") { store.closeOthers(keeping: tab) }
         Button("Close Tabs to the Right") { store.closeToTheRight(of: tab) }
     }
+}
 
-    @ViewBuilder
-    private var icon: some View {
-        ZStack(alignment: .bottomTrailing) {
-            if let image = tab.favicon {
-                Image(nsImage: image).resizable().scaledToFit().frame(width: 15, height: 15)
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
-            } else {
-                Image(systemName: "globe").font(.system(size: 12)).foregroundStyle(palette.inkTertiary)
-                    .frame(width: 15, height: 15)
-            }
-            if isAgent {
-                Image(systemName: "sparkle")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundStyle(Theme.sparkle)
-                    .offset(x: 4, y: 3)
-            }
-            if tab.isLoading {
-                ProgressView().controlSize(.mini).scaleEffect(0.6).frame(width: 15, height: 15)
-                    .background(palette.card.opacity(0.7), in: Circle())
+/// What a right click on a group's label or folder offers.
+struct GroupContextMenu: View {
+    let group: TabGroup
+    @ObservedObject var store: TabStore
+
+    var body: some View {
+        Button(group.collapsed ? "Expand" : "Collapse") { store.toggleCollapse(group.id) }
+        Menu("Color") {
+            ForEach(Array(TabStore.groupColors.enumerated()), id: \.offset) { _, color in
+                Button { store.recolor(group.id, to: color) } label: {
+                    Label(color.description.capitalized, systemImage: color == group.color ? "checkmark.circle.fill" : "circle.fill")
+                }
             }
         }
+        Divider()
+        Button("Ungroup") { store.ungroup(group.id) }
+        Button("Close Group") { store.closeGroup(group.id) }
     }
 }

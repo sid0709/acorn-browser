@@ -17,6 +17,10 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
     @Published var canGoForward = false
     @Published var progress = 0.0
 
+    /// The harness has this tab (between `AgentDriver`'s attach and detach). The page's card
+    /// glows while it does, and the sidebar steps aside so the page keeps its width.
+    @Published var isDriven = false
+
     /// Tab organization: not the page's own state, but kept here since every tab already
     /// carries one of these and `TabStrip` already observes it per tab.
     @Published var isPinned = false
