@@ -27,6 +27,7 @@ struct AcornBrowserApp: App {
 /// either way one press does one thing. ⌘W is left to the window, where it closes the tab.
 struct BrowserCommands: Commands {
     @FocusedObject private var store: TabStore?
+    @ObservedObject private var settings = BrowserSettings.shared
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
@@ -94,6 +95,8 @@ struct BrowserCommands: Commands {
         CommandMenu("Bookmarks") {
             Button("Bookmark This Page") { store?.toggleBookmark() }
                 .keyboardShortcut("d")
+            Toggle("Always Show Bookmarks Bar", isOn: $settings.showBookmarksBar)
+                .keyboardShortcut("b", modifiers: [.command, .shift])
         }
         CommandMenu("History") {
             Button("Show All History") { store?.showingHistory = true }

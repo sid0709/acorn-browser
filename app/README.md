@@ -187,7 +187,10 @@ on the address for the tab shown. It ranks, from what the browser already knows,
 search, open tabs, bookmarks, history and the window's commands, and offers the words to the
 agent as a task. History (⌘Y), bookmarks (⌘D) and the search engine and translate language are
 in `Library.swift`, kept as JSON beside the runs; pages the agent opens while it drives are not
-written to history. The menu bar lists every command; the keys are also held by
+written to history. Bookmarks show on a bar under the toolbar (`BookmarksBar.swift`, ⇧⌘B to
+show or hide it): a click opens one in the tab, ⌘-click in a new one, a right click offers a new
+tab, the link and removal, and what does not fit is under » at the end. The bar steps aside while
+the agent drives its tab, so the agent's page keeps its height. The menu bar lists every command; the keys are also held by
 `WindowShortcuts` inside the window, so they work with the page focused.
 
 Settings and Extensions are pages in a tab, as in Chrome: `acorn://settings` and
@@ -221,11 +224,15 @@ with its switch, a search, and a page of details (what it may reach, its id and 
 also holds site boosts (`Boosts.swift`): styles and a script of the person's own put into a
 site's pages when they load, never into the agent's tab.
 
-Tabs are dragged (`TabDrag.swift`): onto either end of another tab to move there, taking its
-group and pin; onto its middle to make a group of the two (the new folder's name opens for
-typing); onto a group's label or folder to join it; onto the open space below the sidebar's tabs
-to leave a group or a pin; among the pinned tiles to pin. The agent's tab neither moves nor
-takes a drop.
+Tabs are dragged (`TabDrag.swift`), in both layouts: onto either end of another tab to move
+there, taking its group and pin; onto its middle to make a group of the two, or to join the
+group that tab is in (a new folder's name opens for typing); onto a group's label or folder to
+join it; onto the open space below the sidebar's tabs or at the end of the tab row to leave a
+group or a pin; among the pinned tiles to pin; onto the page's right side to open it in a split.
+The agent's tab neither moves nor takes a drop. The drag is the app's own (a drag gesture, and
+the targets' frames looked up under the pointer) rather than AppKit's drag and drop, which went
+through the pasteboard with a type the system did not know, and lost the drop over the page to
+the Chromium view.
 
 ⌘\ (or the ⋮ menu, or a tab dropped on a page's right edge) puts two tabs side by side
 (`SplitView.swift`), each with its own toolbar and a handle between them; the pane clicked last

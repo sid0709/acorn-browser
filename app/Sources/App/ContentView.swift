@@ -75,6 +75,11 @@ private struct Shell: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
         }
+        .overlay {
+            if let id = store.draggedTab, let tab = store.tabs.first(where: { $0.id == id }) {
+                TabDragGhost(tab: tab, pointer: store.dragPointer)
+            }
+        }
         .animation(.easeOut(duration: 0.15), value: store.commandBar)
         .environmentObject(runner)
         .sheet(isPresented: $store.showingHistory) { HistoryView(store: store) }
@@ -216,7 +221,7 @@ private struct ThemeButton: View {
 }
 
 /// The page in a card: its toolbar on top in the top layout and in a split (the sidebar
-/// carries navigation otherwise), a hairline of progress while it loads, the find bar over it,
+/// carries navigation otherwise), the bookmarks bar under it, a hairline of progress while it loads, the find bar over it,
 /// the agent's ring round it while the agent works in it, and the accent's edge on the pane in
 /// use of a split. While a tab is dragged, its right edge takes it to open a split.
 struct PageCard: View {
@@ -224,13 +229,18 @@ struct PageCard: View {
     @ObservedObject var store: TabStore
     var showsToolbar: Bool
     var focused = false
+    @ObservedObject private var settings = BrowserSettings.shared
     @Environment(\.palette) private var palette
-    @State private var splitTargeted = false
+    private var splitTargeted: Bool { store.isDropTargeted(.split(tab.id)) }
 
     var body: some View {
         VStack(spacing: 0) {
             // In the sidebar layout the window's top row carries navigation and the address.
             if showsToolbar { PageToolbar(tab: tab, store: store) }
+            if settings.showBookmarksBar && !tab.isDriven {
+                BookmarksBar(tab: tab, store: store)
+                    .transition(.opacity)
+            }
             ZStack(alignment: .top) {
                 BrowserPane(view: tab.view)
                 // The page stays underneath, so the agent can take the tab at any moment;
@@ -273,6 +283,7 @@ struct PageCard: View {
             if store.draggedTab != nil && store.shownSplit == nil { splitDropZone }
         }
         .animation(Theme.layout, value: tab.isDriven)
+        .animation(Theme.layout, value: settings.showBookmarksBar)
     }
 
     private var splitDropZone: some View {
@@ -287,7 +298,7 @@ struct PageCard: View {
             .frame(width: 220)
             .padding(Theme.Space.s)
             .contentShape(Rectangle())
-            .onDrop(of: [TabDrag.type], delegate: SplitDropDelegate(store: store, host: tab, targeted: $splitTargeted))
+            .tabDropTarget(.split(tab.id), store: store)
             .transition(.opacity)
     }
 }

@@ -15,6 +15,7 @@ private struct TabFrameKey: PreferenceKey {
 /// line of its color beneath them.
 struct TabStrip: View {
     @ObservedObject var store: TabStore
+    @Environment(\.palette) private var palette
     @State private var frames = TabFrames()
     @State private var middleClickMonitor: Any?
 
@@ -34,10 +35,22 @@ struct TabStrip: View {
             Button { store.commandBar = .newTab } label: { Image(systemName: "plus") }
                 .buttonStyle(.chrome)
                 .help("New tab (⌘T)")
+            releaseSpace
         }
         .onPreferenceChange(TabFrameKey.self) { frames.value = $0 }
         .onAppear { installMiddleClickMonitor() }
         .onDisappear { removeMiddleClickMonitor() }
+    }
+
+    /// The strip's open end: a tab dropped here leaves its group or pin, to the end of the row.
+    private var releaseSpace: some View {
+        RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous)
+            .fill(store.isDropTargeted(.release) ? palette.accent.opacity(0.12) : .clear)
+            .frame(minWidth: 48, maxWidth: .infinity)
+            .frame(height: 32)
+            // Found by its frame, not by hit testing: a click here still moves the window.
+            .allowsHitTesting(false)
+            .tabDropTarget(.release, store: store)
     }
 
     private func installMiddleClickMonitor() {
@@ -72,7 +85,6 @@ private struct GroupCluster: View {
     let group: TabGroup
     let members: [BrowserModel]
     @ObservedObject var store: TabStore
-    @State private var targeted = false
 
     var body: some View {
         HStack(spacing: 2) {
@@ -91,8 +103,8 @@ private struct GroupCluster: View {
             .buttonStyle(.plain)
             .help(group.collapsed ? "Show \u{201C}\(group.name)\u{201D}" : "Collapse \u{201C}\(group.name)\u{201D}")
             .contextMenu { GroupContextMenu(group: group, store: store) }
-            .onDrop(of: [TabDrag.type], delegate: GroupDropDelegate(groupID: group.id, store: store, targeted: $targeted))
-            .dropIndicator(targeted ? .into : nil, axis: .horizontal, color: group.color, radius: 11)
+            .tabDropTarget(.group(group.id), store: store)
+            .dropIndicator(store.isDropTargeted(.group(group.id)) ? .into : nil, axis: .horizontal, color: group.color, radius: 11)
 
             if !group.collapsed {
                 HStack(spacing: 2) {
@@ -111,8 +123,6 @@ private struct TabPill: View {
     @ObservedObject var store: TabStore
     @Environment(\.palette) private var palette
     @State private var hovering = false
-    @State private var zone: DropZone?
-    @State private var width: CGFloat = 0
 
     private var isActive: Bool { store.activeID == tab.id }
     private var isAgent: Bool { store.isAgentTab(tab) }
@@ -138,11 +148,9 @@ private struct TabPill: View {
             .animation(Theme.hover, value: isActive)
             .animation(Theme.hover, value: hovering)
             .contextMenu { if !isAgent { TabContextMenu(tab: tab, store: store) } }
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .tabDraggable(tab, store: store)
-            .onDrop(of: [TabDrag.type], delegate: TabDropDelegate(target: tab, store: store, axis: .horizontal,
-                                                                 extent: width, groups: !tab.isPinned, zone: $zone))
-            .dropIndicator(zone, axis: .horizontal, color: palette.accent)
+            .tabDropTarget(.tab(tab.id), store: store, groups: !tab.isPinned)
+            .dropIndicator(store.dropZone(on: tab), axis: .horizontal, color: palette.accent)
     }
 
     @ViewBuilder
