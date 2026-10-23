@@ -148,6 +148,10 @@ pub enum Kind {
         file_name: String,
     },
     Wait { ms: u64 },
+    /// Go to an address: another site, or another page of this one, when no link leads there.
+    Navigate { url: String },
+    /// Go back to the page before this one.
+    Back,
     /// Not sent to the browser: the model asks for the next look to be a survey of the whole page.
     Survey,
 }
