@@ -454,9 +454,7 @@ struct FindBar: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 36)
-        .background(palette.raised, in: Capsule())
-        .overlay(Capsule().strokeBorder(palette.hairline))
-        .shadow(color: .black.opacity(palette.isDark ? 0.4 : 0.12), radius: 10, y: 3)
+        .glass(Capsule(), weight: .overlay)
         .padding(.top, 8)
         .padding(.trailing, 24)
         .onAppear {

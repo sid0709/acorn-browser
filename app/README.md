@@ -171,8 +171,8 @@ follow the line, each frame with its library, symbol and offset in the image.
 
 ## Interface
 
-The window is a tinted canvas behind rounded cards: the page in one, the agent panel in another
-(⌘K). The tabs go either across the top, where the page's card carries navigation and the
+The window is a tinted canvas behind panes of glass: the page in one, the sidebar in another,
+the agent panel in a third (⌘K). The tabs go either across the top, where the page's card carries navigation and the
 address, or down a sidebar on the left, Arc's way (the layout is chosen in the ⋮ menu): pinned
 tabs as tiles, the agent's tab, then groups as folders and the open tabs. In that layout one row
 runs along the window's top whether the sidebar shows or not (`SidebarTopBar`): the window's
@@ -269,9 +269,19 @@ the tab shown, the sidebar steps aside so the page the agent sees is no narrower
 before there was a sidebar.
 
 The tint is the person's: the palette button opens the theme picker (presets, a pad where one
-to three colors are set, intensity, grain, light or dark). No view draws with a fixed color;
-each reads a `Palette` derived from the theme (`ThemeStore.swift`), whose text and accent are
-picked to stay readable in either appearance. Spacing, radii, type and the shared button styles
+to three colors are set, intensity, grain, glass, light or dark). No view draws with a fixed
+color; each reads a `Palette` derived from the theme (`ThemeStore.swift`), whose text and accent
+are picked to stay readable in either appearance. Light and dark are set on the app through
+AppKit (`NSApp.appearance`), not with SwiftUI's `preferredColorScheme`, which on macOS does not
+go back to the system's once it has forced one; an incognito window sets its own.
+
+The shell is glass, after Apple's Liquid Glass (`GlassPlate` in `Theme.swift`). The window is
+see-through: the canvas is the desktop, blurred, under the theme's gradient (less of it the
+higher Glass is set), with the theme's colors glowing in two corners for the glass to bend. On
+macOS 26 the panes are the system's own Liquid Glass, faintly tinted with the theme; before that
+they are drawn like crystal, a blur with a tinted body, a sheen across the top and a rim lit at
+the top leading corner. The row or tab in use is a drop of glass (`GlassBead`), with no blur of
+its own. Glass is drawn behind what it carries, so the page views are never touched by it. Spacing, radii, type and the shared button styles
 are in `Theme.swift`, tab state in `TabStore.swift`, the strip in `TabStrip.swift`, the sidebar
 in `Sidebar.swift`, and the pieces both layouts share (the window's buttons, the address, the page
 toolbar, the agent's ring, the shortcuts) in `WindowChrome.swift`. Where the interface is going

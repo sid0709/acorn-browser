@@ -85,7 +85,7 @@ private struct Shell: View {
         .sheet(isPresented: $store.showingHistory) { HistoryView(store: store) }
         .sheet(item: $store.boostTarget) { BoostEditor(host: $0.host) }
         .focusedSceneObject(store)
-        .containerBackground(for: .window) { WindowCanvas() }
+        .containerBackground(for: .window) { WindowCanvas(palette: palette) }
         .navigationTitle(store.active.title.isEmpty ? "Acorn Browser" : store.active.title)
         .ignoresSafeArea(.container, edges: .top)
         .animation(Theme.layout, value: showsSidebar)
@@ -106,14 +106,15 @@ private struct Shell: View {
                           trailingInset: showAgent && store.hasAgent ? Self.agentPanelWidth + Theme.gutter : 0)
             HStack(spacing: 0) {
                 if showsSidebar {
-                    Sidebar(store: store, runner: runner, showAgent: $showAgent)
+                    sidebarPane()
+                        .padding(.leading, Theme.gutter)
+                        .padding(.bottom, Theme.gutter)
                         .frame(width: store.sidebarWidth)
-                        .overlay(alignment: .trailing) { SidebarResizeHandle(store: store).offset(x: 3) }
+                        .overlay(alignment: .trailing) { SidebarResizeHandle(store: store).offset(x: 7) }
                         .transition(.move(edge: .leading).combined(with: .opacity))
                 }
                 pagesAndAgent(toolbar: false)
                     .padding([.horizontal, .bottom], Theme.gutter)
-                    .padding(.leading, showsSidebar ? -Theme.Space.xs : 0)
             }
             .overlay(alignment: .leading) {
                 if !showsSidebar { peekingSidebar }
@@ -121,24 +122,24 @@ private struct Shell: View {
         }
     }
 
+    /// The tabs on their own pane of glass, floating on the canvas like the page beside them.
+    private func sidebarPane(weight: GlassWeight = .bar) -> some View {
+        Sidebar(store: store, runner: runner, showAgent: $showAgent)
+            .card(radius: Theme.Radius.popover, weight: weight)
+    }
+
     /// The sidebar out over the page, below the top row: in the very place it sits when shown,
-    /// flush with the window's left edge and bottom, rounded and shadowed only on its open side.
+    /// on denser glass, since a page lies beneath it now, and with a deeper shadow.
     @ViewBuilder
     private var peekingSidebar: some View {
         if peeking {
-            let shape = UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 0,
-                                               bottomTrailingRadius: Theme.Radius.popover,
-                                               topTrailingRadius: Theme.Radius.popover, style: .continuous)
-            Sidebar(store: store, runner: runner, showAgent: $showAgent)
+            sidebarPane(weight: .overlay)
+                .shadow(color: .black.opacity(palette.isDark ? 0.45 : 0.16), radius: 24, x: 4)
+                .padding(.leading, Theme.gutter)
+                .padding(.bottom, Theme.gutter)
                 .frame(width: store.sidebarWidth)
                 .frame(maxHeight: .infinity)
-                .background {
-                    WindowCanvas()
-                        .clipShape(shape)
-                        .shadow(color: .black.opacity(palette.isDark ? 0.5 : 0.2), radius: 22, x: 4)
-                }
-                .overlay(shape.strokeBorder(palette.hairline))
-                .transition(.move(edge: .leading))
+                .transition(.move(edge: .leading).combined(with: .opacity))
         }
     }
 
@@ -178,8 +179,10 @@ private struct Shell: View {
             .foregroundStyle(palette.ink)
             .padding(.horizontal, 12)
             .frame(height: 30)
-            .background(showAgent ? palette.selection : palette.hover,
-                        in: RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous))
+            .background {
+                let shape = Capsule()
+                if showAgent { GlassBead(shape: shape) } else { GlassPlate(shape: shape, lifted: false) }
+            }
         }
         .buttonStyle(.plain)
         .help(showAgent ? "Hide the agent (⌘K)" : "Ask the agent (⌘K)")
@@ -236,7 +239,6 @@ struct PageCard: View {
             if showsToolbar { PageToolbar(tab: tab, store: store) }
             if settings.showBookmarksBar && !tab.isDriven {
                 BookmarksBar(tab: tab, store: store)
-                    .background(palette.card)
                     .transition(.opacity)
             }
             ZStack(alignment: .top) {

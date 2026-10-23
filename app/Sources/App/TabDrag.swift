@@ -256,9 +256,8 @@ struct TabDragGhost: View {
             }
             .padding(.horizontal, 10)
             .frame(width: 200, height: 30, alignment: .leading)
-            .background(palette.raised, in: RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous).strokeBorder(palette.hairline))
-            .shadow(color: .black.opacity(palette.isDark ? 0.45 : 0.18), radius: 12, y: 5)
+            .glass(RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous), weight: .overlay)
+            .shadow(color: .black.opacity(palette.isDark ? 0.4 : 0.14), radius: 12, y: 5)
             .rotationEffect(.degrees(-2))
             .position(x: pointer.location.x - origin.x + 24, y: pointer.location.y - origin.y + 14)
         }

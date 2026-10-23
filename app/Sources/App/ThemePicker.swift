@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Picks the window's colors: presets along the top, a pad where one to three knobs set the
-/// tint's hues, then how strong the tint is, how much grain, and light or dark. Every change
+/// tint's hues, then how strong the tint is, how much grain, how clear the glass, and light or
+/// dark. Every change
 /// shows on the window at once.
 struct ThemePicker: View {
     @ObservedObject var store: ThemeStore = .shared
@@ -20,6 +21,8 @@ struct ThemePicker: View {
                 slider("Intensity", value: $store.settings.intensity)
                 slider("Grain", value: $store.settings.grain)
             }
+            slider("Glass", value: $store.settings.glass)
+                .help("How much of the desktop shows through the window")
             Picker("", selection: $store.settings.appearance) {
                 ForEach(ThemeAppearance.allCases) { Text($0.title).tag($0) }
             }
