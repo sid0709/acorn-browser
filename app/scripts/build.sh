@@ -62,6 +62,14 @@ cp "$OBJ/$PRODUCT" "$APP/Contents/MacOS/$PRODUCT"
 cp Config/Info.plist "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+# The agent runner (the harness), built on its own in ../runner and carried inside the app.
+RUNNER_DIR="$ROOT/../runner"
+if [ -d "$RUNNER_DIR" ]; then
+  echo "Building the agent runner"
+  (cd "$RUNNER_DIR" && { cargo build --release --offline >/dev/null 2>&1 || cargo build --release; })
+  cp "$RUNNER_DIR/target/release/acorn-runner" "$APP/Contents/Resources/acorn-runner"
+fi
+
 # CEF ships a flat bundle; install it with the versioned macOS layout codesign expects.
 FRAMEWORK="$APP/Contents/Frameworks/$FRAMEWORK_NAME"
 mkdir -p "$FRAMEWORK/Versions/A"
@@ -95,6 +103,7 @@ for dylib in "$FRAMEWORK/Versions/A/Libraries/"*.dylib; do "${SIGN[@]}" "$dylib"
 for bundle in "${HELPERS[@]}"; do
   "${SIGN[@]}" --options runtime --entitlements Helper/Helper.entitlements "$bundle"
 done
+[ -f "$APP/Contents/Resources/acorn-runner" ] && "${SIGN[@]}" "$APP/Contents/Resources/acorn-runner"
 "${SIGN[@]}" --options runtime --entitlements Config/App.entitlements "$APP"
 
 echo "Built $APP"

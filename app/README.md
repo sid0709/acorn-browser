@@ -8,7 +8,7 @@ the harness is the brain, and this app is meant to become the browser it drives.
 A window with one Chromium page, a toolbar, and an empty chat sidebar. The sidebar takes input
 but no agent is connected yet.
 
-## Stage 2 (this): the browser can be driven
+## Stage 2: the browser can be driven
 
 The app listens on a Unix socket (`~/Library/Application Support/com.acorn.browser/agent.sock`,
 mode 0600, or `ACORN_AGENT_SOCKET`) and speaks the same one-JSON-object-per-line protocol as
@@ -25,6 +25,27 @@ the harness cannot tell this browser from the Playwright one.
 scripts/build.sh run        # start the app
 Tests/agent_smoke.py        # drives it over the socket and checks 19 things
 ```
+
+## Stage 3 (this): type a task, and it is done in the page
+
+Type a task in the sidebar (or paste a task file with `url:`, `done_when:`, `steps:` lines, like
+the ones in `kit/tasks`). The app writes it to a task file, starts `acorn-runner` (the harness,
+in `../runner`), and shows each step in the chat. The stop button ends a run. A task without a
+`url:` line starts on the page the browser shows.
+
+**One-time setup: the model key.** The runner reads `OPENROUTER_API_KEY` from
+`~/Library/Application Support/com.acorn.browser/.env`, which is outside the repo:
+
+```bash
+mkdir -p ~/Library/Application\ Support/com.acorn.browser
+cp ../kit/.env ~/Library/Application\ Support/com.acorn.browser/.env
+chmod 600 ~/Library/Application\ Support/com.acorn.browser/.env
+```
+
+Each run keeps a folder under `~/Library/Application Support/com.acorn.browser/runs/`: the task,
+`events.jsonl` (what the agent said and did), and the harness's trace (every screenshot).
+
+`AcornBrowser --run-task <file>` submits a task file at launch, for trying it without typing.
 
 Known limits: Chromium only paints a visible window, so the window must be on screen; JavaScript
 dialogs and downloads are not reported in `notes` yet; popups are blocked (one tab).
@@ -51,6 +72,5 @@ Needs Xcode (for `swiftc` and `clang++`), no CMake.
 
 ## Next
 
-3. Run the harness from the sidebar: a typed task becomes a task file for the runner.
-4. Several live tabs with frame-rate tiers.
-5. Interface polish.
+3. Several live tabs with frame-rate tiers.
+4. Interface polish.
