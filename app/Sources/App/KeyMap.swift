@@ -113,6 +113,12 @@ struct KeyPress {
         return press
     }
 
+    init(flags: CGEventFlags, keyCode: CGKeyCode, text: String?) {
+        self.flags = flags
+        self.keyCode = keyCode
+        self.text = text
+    }
+
     /// The press that types one character of the US layout, with the flags held meanwhile.
     init(character: Character, flags: CGEventFlags = []) throws {
         var flags = flags
