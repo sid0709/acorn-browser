@@ -84,6 +84,12 @@ final class TabStore: ObservableObject {
     /// The site whose boost is being written, in a sheet.
     @Published var boostTarget: BoostTarget?
 
+    /// The tab being dragged, while it is: drop targets read it instead of the drag's payload,
+    /// which only says "a tab of this app".
+    @Published var draggedTab: UUID?
+    /// A group just made by a drag, whose name is waiting to be typed.
+    @Published var renamingGroup: UUID?
+
     static let groupColors: [Color] = [.red, .orange, .yellow, .green, .blue, .purple, .pink]
 
     var active: BrowserModel { tabs.first { $0.id == activeID } ?? tabs.first ?? BrowserModel.shared }
@@ -232,6 +238,80 @@ final class TabStore: ObservableObject {
     func closeGroup(_ groupID: UUID) {
         for tab in members(of: groupID) { close(tab) }
         groups.removeAll { $0.id == groupID }
+    }
+
+    // MARK: Dragging
+
+    var dragged: BrowserModel? { tabs.first { $0.id == draggedTab } }
+
+    /// Puts `tab` just before or after `target`, in `target`'s group and pinned or not as it
+    /// is, so groups stay together and pinned tabs stay first.
+    func move(_ tab: BrowserModel, to target: BrowserModel, after: Bool) {
+        guard tab !== target, !isAgentTab(tab), tabs.contains(where: { $0 === target }),
+              let from = tabs.firstIndex(where: { $0 === tab }) else { return }
+        let oldGroup = tab.groupID
+        withAnimation(.snappy) {
+            tabs.remove(at: from)
+            let at = tabs.firstIndex(where: { $0 === target })!
+            tabs.insert(tab, at: after ? at + 1 : at)
+            tab.isPinned = target.isPinned && !isAgentTab(target)
+            tab.groupID = tab.isPinned ? nil : target.groupID
+        }
+        dissolveIfEmpty(oldGroup)
+    }
+
+    /// `tab` dropped onto `target`: into `target`'s group, or a new group of the two.
+    func group(_ tab: BrowserModel, with target: BrowserModel) {
+        guard tab !== target, !isAgentTab(tab), !isAgentTab(target), !target.isPinned else { return }
+        if tab.isPinned { togglePin(tab) }
+        let oldGroup = tab.groupID
+        if let groupID = target.groupID {
+            addToGroup(tab, groupID: groupID)
+        } else {
+            newGroup(with: target)
+            if let groupID = target.groupID {
+                addToGroup(tab, groupID: groupID)
+                renamingGroup = groupID
+            }
+        }
+        if oldGroup != tab.groupID { dissolveIfEmpty(oldGroup) }
+    }
+
+    /// `tab` dropped on a group's label or folder.
+    func join(_ tab: BrowserModel, groupID: UUID) {
+        guard !isAgentTab(tab), tab.groupID != groupID else { return }
+        if tab.isPinned { togglePin(tab) }
+        let oldGroup = tab.groupID
+        addToGroup(tab, groupID: groupID)
+        dissolveIfEmpty(oldGroup)
+    }
+
+    /// `tab` dropped in open space: out of its group and its pin, to the end of the list.
+    func release(_ tab: BrowserModel) {
+        guard !isAgentTab(tab), let from = tabs.firstIndex(where: { $0 === tab }) else { return }
+        let oldGroup = tab.groupID
+        withAnimation(.snappy) {
+            tabs.remove(at: from)
+            tab.isPinned = false
+            tab.groupID = nil
+            tabs.append(tab)
+        }
+        dissolveIfEmpty(oldGroup)
+    }
+
+    /// `tab` dropped among the pinned tiles.
+    func pin(_ tab: BrowserModel) {
+        guard !isAgentTab(tab), !tab.isPinned else { return }
+        let oldGroup = tab.groupID
+        tab.groupID = nil
+        togglePin(tab)
+        dissolveIfEmpty(oldGroup)
+    }
+
+    /// A group with nobody left in it is gone.
+    private func dissolveIfEmpty(_ groupID: UUID?) {
+        guard let groupID, members(of: groupID).isEmpty else { return }
+        withAnimation(.snappy) { groups.removeAll { $0.id == groupID } }
     }
 
     func rename(_ groupID: UUID, to name: String) {

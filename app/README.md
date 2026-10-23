@@ -155,6 +155,12 @@ style, which cannot load Web Store extensions, so Extensions holds site boosts i
 (`Boosts.swift`): styles and a script of the person's own put into a site's pages when they
 load, never into the agent's tab.
 
+Tabs are dragged (`TabDrag.swift`): onto either end of another tab to move there, taking its
+group and pin; onto its middle to make a group of the two (the new folder's name opens for
+typing); onto a group's label or folder to join it; onto the open space below the sidebar's tabs
+to leave a group or a pin; among the pinned tiles to pin. The agent's tab neither moves nor
+takes a drop.
+
 ⌘N opens another window and ⇧⌘N an incognito one, each with tabs of its own; only the main
 window has the agent. An incognito window's tabs share one in-memory profile
 (`ChromiumBrowserView initWithURL:incognito:`), which goes when the last of them does; it wears

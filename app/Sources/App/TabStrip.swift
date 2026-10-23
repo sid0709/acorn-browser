@@ -65,6 +65,7 @@ private struct GroupCluster: View {
     let group: TabGroup
     let members: [BrowserModel]
     @ObservedObject var store: TabStore
+    @State private var targeted = false
 
     var body: some View {
         HStack(spacing: 2) {
@@ -83,6 +84,8 @@ private struct GroupCluster: View {
             .buttonStyle(.plain)
             .help(group.collapsed ? "Show \u{201C}\(group.name)\u{201D}" : "Collapse \u{201C}\(group.name)\u{201D}")
             .contextMenu { GroupContextMenu(group: group, store: store) }
+            .onDrop(of: [TabDrag.type], delegate: GroupDropDelegate(groupID: group.id, store: store, targeted: $targeted))
+            .dropIndicator(targeted ? .into : nil, axis: .horizontal, color: group.color, radius: 11)
 
             if !group.collapsed {
                 HStack(spacing: 2) {
@@ -101,6 +104,8 @@ private struct TabPill: View {
     @ObservedObject var store: TabStore
     @Environment(\.palette) private var palette
     @State private var hovering = false
+    @State private var zone: DropZone?
+    @State private var width: CGFloat = 0
 
     private var isActive: Bool { store.activeID == tab.id }
     private var isAgent: Bool { store.isAgentTab(tab) }
@@ -125,6 +130,11 @@ private struct TabPill: View {
             .animation(Theme.hover, value: isActive)
             .animation(Theme.hover, value: hovering)
             .contextMenu { if !isAgent { TabContextMenu(tab: tab, store: store) } }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            .tabDraggable(tab, store: store)
+            .onDrop(of: [TabDrag.type], delegate: TabDropDelegate(target: tab, store: store, axis: .horizontal,
+                                                                 extent: width, groups: !tab.isPinned, zone: $zone))
+            .dropIndicator(zone, axis: .horizontal, color: palette.accent)
     }
 
     @ViewBuilder

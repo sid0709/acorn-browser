@@ -12,6 +12,8 @@ struct Sidebar: View {
     @Environment(\.palette) private var palette
     @State private var choosingTheme = false
     @State private var showingMenu = false
+    @State private var pinTargeted = false
+    @State private var releaseTargeted = false
 
     private var favorites: [BrowserModel] { store.tabs.filter { $0.isPinned && !store.isAgentTab($0) } }
 
@@ -20,7 +22,7 @@ struct Sidebar: View {
             topRow
             AddressPill(tab: store.active, store: store)
                 .id(store.activeID)
-            if !favorites.isEmpty { favoritesGrid }
+            if !favorites.isEmpty { favoritesGrid } else if store.draggedTab != nil { pinPlaceholder }
             if store.hasAgent { AgentRow(agentTab: BrowserModel.shared, store: store, runner: runner) }
             Rectangle().fill(palette.hairline).frame(height: 1).padding(.horizontal, Theme.Space.xs)
             ScrollView {
@@ -37,6 +39,13 @@ struct Sidebar: View {
                             SidebarFolder(group: group, members: members, store: store)
                         }
                     }
+                    // Open space below the tabs: a tab dropped here leaves its group or pin.
+                    RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous)
+                        .fill(releaseTargeted ? palette.accent.opacity(0.1) : .clear)
+                        .frame(height: 64)
+                        .contentShape(Rectangle())
+                        .onDrop(of: [TabDrag.type],
+                                delegate: SpaceDropDelegate(kind: .release, store: store, targeted: $releaseTargeted))
                 }
             }
             .scrollIndicators(.never)
@@ -70,6 +79,24 @@ struct Sidebar: View {
         return LazyVGrid(columns: columns, spacing: Theme.Space.s) {
             ForEach(favorites, id: \.id) { tab in FavoriteTile(tab: tab, store: store) }
         }
+        .onDrop(of: [TabDrag.type], delegate: SpaceDropDelegate(kind: .pin, store: store, targeted: $pinTargeted))
+    }
+
+    /// Where a tab is dropped to pin it, while there are no pinned tabs to drop it among.
+    private var pinPlaceholder: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "pin")
+            Text("Drop here to pin")
+        }
+        .font(Theme.Text.secondary)
+        .foregroundStyle(pinTargeted ? palette.accent : palette.inkTertiary)
+        .frame(maxWidth: .infinity)
+        .frame(height: 44)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous)
+            .strokeBorder(pinTargeted ? palette.accent : palette.inkTertiary, style: StrokeStyle(lineWidth: 1.2, dash: [4, 3])))
+        .contentShape(Rectangle())
+        .onDrop(of: [TabDrag.type], delegate: SpaceDropDelegate(kind: .pin, store: store, targeted: $pinTargeted))
+        .transition(.opacity)
     }
 
     private var footer: some View {
@@ -105,6 +132,8 @@ private struct FavoriteTile: View {
     @ObservedObject var store: TabStore
     @Environment(\.palette) private var palette
     @State private var hovering = false
+    @State private var zone: DropZone?
+    @State private var width: CGFloat = 0
 
     private var isActive: Bool { store.activeID == tab.id }
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous) }
@@ -121,6 +150,11 @@ private struct FavoriteTile: View {
             .animation(Theme.hover, value: hovering)
             .help(tab.title)
             .contextMenu { TabContextMenu(tab: tab, store: store) }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            .tabDraggable(tab, store: store)
+            .onDrop(of: [TabDrag.type], delegate: TabDropDelegate(target: tab, store: store, axis: .horizontal,
+                                                                 extent: width, groups: false, zone: $zone))
+            .dropIndicator(zone, axis: .horizontal, color: palette.accent, radius: Theme.Radius.tile)
     }
 }
 
@@ -173,7 +207,9 @@ private struct SidebarTabRow: View {
     @ObservedObject var store: TabStore
     @Environment(\.palette) private var palette
     @State private var hovering = false
+    @State private var zone: DropZone?
 
+    private static let height: CGFloat = 34
     private var isActive: Bool { store.activeID == tab.id }
 
     var body: some View {
@@ -194,13 +230,17 @@ private struct SidebarTabRow: View {
         }
         .padding(.leading, Theme.Space.s + 1)
         .padding(.trailing, Theme.Space.xs)
-        .frame(height: 34)
+        .frame(height: Self.height)
         .background(SidebarRowBackground(active: isActive, hovering: hovering))
         .contentShape(Rectangle())
         .onTapGesture { store.select(tab) }
         .onHover { hovering = $0 }
         .help(tab.title)
         .contextMenu { TabContextMenu(tab: tab, store: store) }
+        .tabDraggable(tab, store: store)
+        .onDrop(of: [TabDrag.type], delegate: TabDropDelegate(target: tab, store: store, axis: .vertical,
+                                                             extent: Self.height, zone: $zone))
+        .dropIndicator(zone, axis: .vertical, color: palette.accent)
     }
 }
 
@@ -214,6 +254,7 @@ private struct SidebarFolder: View {
     @State private var hovering = false
     @State private var renaming = false
     @State private var name = ""
+    @State private var targeted = false
     @FocusState private var nameFocused: Bool
 
     var body: some View {
@@ -266,6 +307,17 @@ private struct SidebarFolder: View {
             Button("Rename\u{2026}") { startRenaming() }
             GroupContextMenu(group: group, store: store)
         }
+        .onDrop(of: [TabDrag.type], delegate: GroupDropDelegate(groupID: group.id, store: store, targeted: $targeted))
+        .dropIndicator(targeted ? .into : nil, axis: .vertical, color: group.color)
+        .onAppear { renameIfJustMade() }
+        .onChange(of: store.renamingGroup) { _, _ in renameIfJustMade() }
+    }
+
+    /// A group a drag just made opens its name for typing.
+    private func renameIfJustMade() {
+        guard store.renamingGroup == group.id else { return }
+        store.renamingGroup = nil
+        startRenaming()
     }
 
     private func startRenaming() {
