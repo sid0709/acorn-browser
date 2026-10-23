@@ -317,7 +317,7 @@ struct AddressField: View {
             .help("Copy link (⇧⌘C)")
             .transition(.opacity)
         }
-        if let id = ExtensionStore.webStoreID(in: tab.address), !tab.isIncognito {
+        if let id = ExtensionStore.webStoreID(in: tab.address), !tab.isIncognito, !ChromiumBrowserView.chromeStyleRefused {
             AddExtensionButton(id: id)
         }
         if offersTranslation {

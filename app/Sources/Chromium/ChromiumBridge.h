@@ -129,6 +129,9 @@ NS_SWIFT_UI_ACTOR
 /// The style the browser actually got, which may differ from the one asked for: YES only for a
 /// live Chrome-style browser.
 @property (nonatomic, readonly) BOOL isChromeStyle;
+/// YES once the engine has refused a Chrome-style browser in one of these views; they are all
+/// made Alloy from then on, and run no extensions.
+@property (class, nonatomic, readonly) BOOL chromeStyleRefused;
 @property (nonatomic) BOOL allowsPopups;
 @property (nonatomic) BOOL allowsDragAndDrop;
 @property (nonatomic) BOOL allowsTooltips;

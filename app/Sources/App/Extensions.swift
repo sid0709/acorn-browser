@@ -77,6 +77,7 @@ final class ExtensionStore: ObservableObject {
     enum Support { case unknown, on, off }
 
     static func support(in store: TabStore) -> Support {
+        if ChromiumBrowserView.chromeStyleRefused { return .off }
         let live = store.tabs.filter { !store.isAgentTab($0) && $0.view.hasBrowser }
         if live.isEmpty { return .unknown }
         return live.contains { $0.view.isChromeStyle } ? .on : .off
@@ -416,7 +417,7 @@ struct ExtensionsList: View {
                     .font(Theme.Text.caption).foregroundStyle(palette.inkTertiary)
             }
             Spacer(minLength: Theme.Space.s)
-            if info.popup != nil && extensions.isEnabled(info) {
+            if info.popup != nil && extensions.isEnabled(info) && !ChromiumBrowserView.chromeStyleRefused {
                 Button { open = info } label: { Image(systemName: "arrow.up.forward.square") }
                     .buttonStyle(ChromeButtonStyle(size: 24))
                     .help("Open \(info.name)")
@@ -451,7 +452,7 @@ struct SupportLine: View {
     private var text: String {
         switch support {
         case .on: "On: your tabs run Chrome's extension system."
-        case .off: "Off: the engine made your tabs plain (Alloy) views, which run no extensions."
+        case .off: "Off: on this Mac the engine can't run extensions inside Acorn's tabs, so they are plain views. Site boosts still work."
         case .unknown: "Open a tab of your own to see whether extensions can run."
         }
     }

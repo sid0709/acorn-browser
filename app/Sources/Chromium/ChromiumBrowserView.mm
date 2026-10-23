@@ -589,6 +589,9 @@ class BrowserClient : public CefClient,
 // The private views' one profile, made when the first opens and dropped with the last.
 static CefRefPtr<CefRequestContext> gIncognitoContext;
 static NSInteger gIncognitoViews = 0;
+// Set when the engine refused a Chrome-style browser in a view of ours: later views go
+// straight to Alloy instead of asking again.
+static BOOL gChromeStyleRefused = NO;
 
 @implementation ChromiumBrowserView {
   CefRefPtr<BrowserClient> _client;
@@ -693,7 +696,8 @@ static NSInteger gIncognitoViews = 0;
   CefWindowInfo windowInfo;
   windowInfo.SetAsChild((__bridge void *)self,
                         CefRect(0, 0, (int)bounds.size.width, (int)bounds.size.height));
-  windowInfo.runtime_style = _usesChromeStyle ? CEF_RUNTIME_STYLE_CHROME : CEF_RUNTIME_STYLE_ALLOY;
+  const BOOL wantsChrome = _usesChromeStyle && !gChromeStyleRefused;
+  windowInfo.runtime_style = wantsChrome ? CEF_RUNTIME_STYLE_CHROME : CEF_RUNTIME_STYLE_ALLOY;
 
   CefBrowserSettings browserSettings;
   CefRefPtr<CefRequestContext> context;
@@ -707,14 +711,26 @@ static NSInteger gIncognitoViews = 0;
   }
   CefRefPtr<CefBrowser> browser = CefBrowserHost::CreateBrowserSync(
       windowInfo, _client.get(), ToCefString(_pendingURL), browserSettings, nullptr, context);
+  if (!browser && wantsChrome) {
+    // This engine would not make a Chrome-style browser inside one of our views (CEF on
+    // macOS): make the page a plain one rather than leave it blank, and stop asking.
+    gChromeStyleRefused = YES;
+    NSLog(@"ChromiumBrowserView: the engine refused a Chrome-style browser here; using Alloy.");
+    windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+    browser = CefBrowserHost::CreateBrowserSync(
+        windowInfo, _client.get(), ToCefString(_pendingURL), browserSettings, nullptr, context);
+  }
   if (browser) {
     [self cef_didCreateBrowser:browser];
     NSLog(@"ChromiumBrowserView: asked for %@ style, got %@.", _usesChromeStyle ? @"Chrome" : @"Alloy",
           self.isChromeStyle ? @"Chrome" : @"Alloy");
   } else {
-    NSLog(@"ChromiumBrowserView: no browser was made (asked for %@ style).",
-          _usesChromeStyle ? @"Chrome" : @"Alloy");
+    NSLog(@"ChromiumBrowserView: no browser was made.");
   }
+}
+
++ (BOOL)chromeStyleRefused {
+  return gChromeStyleRefused;
 }
 
 - (BOOL)hasBrowser {
@@ -903,7 +919,7 @@ static NSInteger gIncognitoViews = 0;
                                                               incognito:self.isIncognito];
   popup->_isPopupHost = YES;
   popup.frame = self.bounds;
-  popup.usesChromeStyle = self.usesChromeStyle;
+  popup.usesChromeStyle = self.isChromeStyle;
   popup.allowsPopups = self.allowsPopups;
   popup.allowsDragAndDrop = self.allowsDragAndDrop;
   popup.allowsTooltips = self.allowsTooltips;
@@ -917,7 +933,8 @@ static NSInteger gIncognitoViews = 0;
   const NSRect bounds = popup.bounds;
   windowInfo.SetAsChild((__bridge void *)popup,
                         CefRect(0, 0, (int)bounds.size.width, (int)bounds.size.height));
-  windowInfo.runtime_style = self.usesChromeStyle ? CEF_RUNTIME_STYLE_CHROME : CEF_RUNTIME_STYLE_ALLOY;
+  // A popup must have its opener's style: the one the opener actually got.
+  windowInfo.runtime_style = self.isChromeStyle ? CEF_RUNTIME_STYLE_CHROME : CEF_RUNTIME_STYLE_ALLOY;
   client = popup->_client.get();
   [_pendingPopups setObject:popup forKey:@(popupID)];
   return NO;
