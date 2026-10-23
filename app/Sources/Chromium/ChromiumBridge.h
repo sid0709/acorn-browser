@@ -170,19 +170,22 @@ NS_SWIFT_UI_ACTOR
 /// pointer really moves, and the page gets them the way it gets any click. Points are CSS pixels
 /// of the page, from its top left. `flags` are the modifier keys held meanwhile. Each returns
 /// NO when the view is not on screen.
-- (BOOL)pointerMoveToX:(double)x y:(double)y flags:(CGEventFlags)flags;
+- (BOOL)pointerMoveToX:(double)x y:(double)y flags:(CGEventFlags)flags
+    NS_SWIFT_NAME(pointerMove(toX:y:flags:));
 - (BOOL)pointerButton:(ChromiumMouseButton)button
                  down:(BOOL)down
                     x:(double)x
                     y:(double)y
            clickCount:(NSInteger)clickCount
-                flags:(CGEventFlags)flags;
+                flags:(CGEventFlags)flags NS_SWIFT_NAME(pointerButton(_:down:x:y:clickCount:flags:));
 /// One turn of the wheel at the pointer: positive deltas scroll right and down, in pixels.
-- (BOOL)wheelAtX:(double)x y:(double)y deltaX:(double)deltaX deltaY:(double)deltaY flags:(CGEventFlags)flags;
+- (BOOL)wheelAtX:(double)x y:(double)y deltaX:(double)deltaX deltaY:(double)deltaY flags:(CGEventFlags)flags
+    NS_SWIFT_NAME(wheel(atX:y:deltaX:deltaY:flags:));
 
 /// A key going down or up, by its macOS virtual key code, with the characters it types (nil
 /// for a key that types none) and the modifier keys held.
-- (BOOL)keyCode:(CGKeyCode)keyCode down:(BOOL)down flags:(CGEventFlags)flags characters:(nullable NSString *)characters;
+- (BOOL)keyCode:(CGKeyCode)keyCode down:(BOOL)down flags:(CGEventFlags)flags characters:(nullable NSString *)characters
+    NS_SWIFT_NAME(keyCode(_:down:flags:characters:));
 
 /// Hands the focused control text as an input method would when it commits a composition: how
 /// characters a keyboard cannot type (Chinese, say) arrive. NO when nothing takes text.
