@@ -135,10 +135,9 @@ struct ChatSidebar: View {
             }
         }
         .padding(12)
-        .background(palette.raised, in: RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous))
+        .background(GlassBead(shape: RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous)))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous)
-            .strokeBorder(composerFocused ? palette.accent.opacity(0.45) : palette.hairline, lineWidth: composerFocused ? 1.5 : 1))
-        .shadow(color: .black.opacity(palette.isDark ? 0.3 : 0.05), radius: 8, y: 2)
+            .strokeBorder(palette.accent.opacity(composerFocused ? 0.45 : 0), lineWidth: 1.5))
         .padding(10)
     }
 

@@ -4,7 +4,7 @@ import AppKit
 /// The tabs down the left of the window, Arc's way, below the window's top row (which holds the
 /// window's buttons, navigation and the address): pinned tabs as tiles, the agent's tab, then
 /// groups as folders and the open tabs, with the theme, the agent toggle, extensions, the menu
-/// and a new tab along the bottom. It sits on the canvas itself rather than in a card.
+/// and a new tab along the bottom. It floats on its own pane of glass (`Shell`).
 struct Sidebar: View {
     @ObservedObject var store: TabStore
     @ObservedObject var runner: AgentRunner
@@ -72,10 +72,7 @@ struct Sidebar: View {
             .scrollIndicators(.never)
             footer
         }
-        .padding(.leading, Theme.Space.s + 2)
-        .padding(.trailing, Theme.Space.xs)
-        .padding(.top, Theme.Space.xs)
-        .padding(.bottom, Theme.Space.s)
+        .padding(Theme.Space.s - 2)
     }
 
     private var favoritesGrid: some View {
@@ -148,7 +145,9 @@ private struct FavoriteTile: View {
         TabIcon(tab: tab, size: 18)
             .frame(maxWidth: .infinity)
             .frame(height: 44)
-            .background(shape.fill(isActive ? palette.selection : palette.selection.opacity(hovering ? 0.75 : 0.45)))
+            .background {
+                if isActive { GlassBead(shape: shape) } else { shape.fill(palette.selection.opacity(hovering ? 0.6 : 0.32)) }
+            }
             .overlay(shape.strokeBorder(palette.accent.opacity(isActive ? 0.9 : 0), lineWidth: 1.5))
             .contentShape(shape)
             .onTapGesture { store.select(tab) }
@@ -387,18 +386,19 @@ private struct SidebarFolder: View {
     }
 }
 
-/// The fill under a sidebar row: a raised white (or, in dark, a lighter) pill while it is the
-/// one shown, a faint one under the pointer.
+/// The fill under a sidebar row: a drop of glass while it is the one shown, a faint wash under
+/// the pointer.
 private struct SidebarRowBackground: View {
     let active: Bool
     let hovering: Bool
     @Environment(\.palette) private var palette
 
     var body: some View {
-        RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous)
-            .fill(active ? palette.selection : hovering ? palette.hover : .clear)
-            .shadow(color: .black.opacity(active && !palette.isDark ? 0.06 : 0), radius: 2, y: 1)
-            .animation(Theme.hover, value: hovering)
+        let shape = RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous)
+        ZStack {
+            if active { GlassBead(shape: shape) } else { shape.fill(hovering ? palette.hover : .clear) }
+        }
+        .animation(Theme.hover, value: hovering)
     }
 }
 

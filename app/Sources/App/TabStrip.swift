@@ -122,9 +122,7 @@ private struct TabPill: View {
         content
             .background(
                 ZStack {
-                    shape
-                        .fill(isActive ? palette.selection : hovering ? palette.hover : .clear)
-                        .shadow(color: .black.opacity(isActive && !palette.isDark ? 0.07 : 0), radius: 3, y: 1)
+                    if isActive { GlassBead(shape: shape) } else { shape.fill(hovering ? palette.hover : .clear) }
                     GeometryReader { geo in
                         Color.clear.preference(key: TabFrameKey.self, value: [tab.id: geo.frame(in: .global)])
                     }

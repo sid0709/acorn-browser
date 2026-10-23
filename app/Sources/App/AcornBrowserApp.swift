@@ -108,6 +108,8 @@ struct BrowserCommands: Commands {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // Light or dark as the person chose, before the first window opens in the other.
+        ThemeStore.shared.applyAppearance()
         // Notes every moment the window stops answering, and what held it (perf.log).
         ChromiumPerf.startWatching()
         // The Keychain check delays the first page by several seconds, and this browser
