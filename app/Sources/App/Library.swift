@@ -96,6 +96,12 @@ final class HistoryStore: ObservableObject {
         file.save(stored, after: 0)
     }
 
+    /// Forgets the pages last visited since `date`.
+    func clear(since date: Date) {
+        stored.removeAll { $0.lastVisit >= date }
+        file.save(stored, after: 0)
+    }
+
     /// The entries whose title or address holds every word, best first.
     func matches(_ words: [String], limit: Int) -> [HistoryEntry] {
         ChromiumPerf.enter("history ranking")
@@ -294,7 +300,7 @@ final class ShortcutStore: ObservableObject {
 // MARK: - Settings
 
 enum SearchEngine: String, CaseIterable, Identifiable {
-    case google, duckDuckGo, bing, kagi
+    case google, duckDuckGo, bing, kagi, custom
     var id: String { rawValue }
 
     var title: String {
@@ -303,29 +309,25 @@ enum SearchEngine: String, CaseIterable, Identifiable {
         case .duckDuckGo: "DuckDuckGo"
         case .bing: "Bing"
         case .kagi: "Kagi"
+        case .custom: "Your own"
         }
     }
 
-    var queryURL: String {
+    /// The address a query is put into, where `%s` stands for it. The person's own engine
+    /// keeps its address in `BrowserSettings`.
+    var template: String {
         switch self {
-        case .google: "https://www.google.com/search?q="
-        case .duckDuckGo: "https://duckduckgo.com/?q="
-        case .bing: "https://www.bing.com/search?q="
-        case .kagi: "https://kagi.com/search?q="
-        }
-    }
-
-    var home: String {
-        switch self {
-        case .google: "https://www.google.com"
-        case .duckDuckGo: "https://duckduckgo.com"
-        case .bing: "https://www.bing.com"
-        case .kagi: "https://kagi.com"
+        case .google: "https://www.google.com/search?q=%s"
+        case .duckDuckGo: "https://duckduckgo.com/?q=%s"
+        case .bing: "https://www.bing.com/search?q=%s"
+        case .kagi: "https://kagi.com/search?q=%s"
+        case .custom: ""
         }
     }
 }
 
-/// The browser's own preferences (the look is `ThemeStore`'s).
+/// The browser's own preferences (the look is `ThemeStore`'s). Some are read by the Chromium
+/// bridge from the same defaults keys: `downloadFolder` and `askWhereToSave`.
 @MainActor
 final class BrowserSettings: ObservableObject {
     static let shared = BrowserSettings()
@@ -333,6 +335,14 @@ final class BrowserSettings: ObservableObject {
     @Published var searchEngine: SearchEngine {
         didSet { UserDefaults.standard.set(searchEngine.rawValue, forKey: "searchEngine") }
     }
+    /// The person's own engine: its name, and its address with `%s` where the query goes.
+    @Published var customSearchName: String {
+        didSet { UserDefaults.standard.set(customSearchName, forKey: "customSearchName") }
+    }
+    @Published var customSearchTemplate: String {
+        didSet { UserDefaults.standard.set(customSearchTemplate, forKey: "customSearchTemplate") }
+    }
+
     /// The language Translate turns pages into, as a language code ("en", "ja").
     @Published var translateLanguage: String {
         didSet { UserDefaults.standard.set(translateLanguage, forKey: "translateLanguage") }
@@ -352,20 +362,92 @@ final class BrowserSettings: ObservableObject {
         didSet { UserDefaults.standard.set(neverTranslate, forKey: "neverTranslate") }
     }
 
+    /// Where downloads go (a folder's path), or nil for Downloads. The bridge reads it.
+    @Published var downloadFolder: String? {
+        didSet { UserDefaults.standard.set(downloadFolder, forKey: "downloadFolder") }
+    }
+    /// Ask where to save each download. Never while the harness drives: a run is not stopped
+    /// by a save panel. The bridge reads it.
+    @Published var askWhereToSave: Bool {
+        didSet { UserDefaults.standard.set(askWhereToSave, forKey: "askWhereToSave") }
+    }
+
+    /// Pages' font sizes in CSS pixels, as Chrome offers them; 0 leaves Chromium's own. New
+    /// tabs of the person's take them; the agent's never does.
+    @Published var defaultFontSize: Int {
+        didSet { UserDefaults.standard.set(defaultFontSize, forKey: "defaultFontSize") }
+    }
+    @Published var minimumFontSize: Int {
+        didSet { UserDefaults.standard.set(minimumFontSize, forKey: "minimumFontSize") }
+    }
+
     static let languages: [(code: String, name: String)] = [
         ("en", "English"), ("zh-CN", "Chinese (Simplified)"), ("zh-TW", "Chinese (Traditional)"),
         ("ja", "Japanese"), ("ko", "Korean"), ("es", "Spanish"), ("fr", "French"), ("de", "German"),
         ("it", "Italian"), ("pt", "Portuguese"), ("ru", "Russian"), ("ar", "Arabic"), ("hi", "Hindi"),
     ]
 
+    /// Chrome's font sizes, by name.
+    static let fontSizes: [(size: Int, name: String)] = [
+        (9, "Very small"), (12, "Small"), (16, "Medium (recommended)"), (20, "Large"), (24, "Very large"),
+    ]
+    static let minimumFontSizes = [0, 6, 9, 12, 14, 16, 20, 24]
+
     private init() {
-        searchEngine = SearchEngine(rawValue: UserDefaults.standard.string(forKey: "searchEngine") ?? "") ?? .google
+        let defaults = UserDefaults.standard
+        searchEngine = SearchEngine(rawValue: defaults.string(forKey: "searchEngine") ?? "") ?? .google
+        customSearchName = defaults.string(forKey: "customSearchName") ?? ""
+        customSearchTemplate = defaults.string(forKey: "customSearchTemplate") ?? ""
+        translateLanguage = defaults.string(forKey: "translateLanguage") ?? Self.systemLanguage
+        chromeTabs = defaults.object(forKey: "chromeTabs") as? Bool ?? true
+        alwaysTranslate = defaults.stringArray(forKey: "alwaysTranslate") ?? []
+        neverTranslate = defaults.stringArray(forKey: "neverTranslate") ?? []
+        downloadFolder = defaults.string(forKey: "downloadFolder")
+        askWhereToSave = defaults.bool(forKey: "askWhereToSave")
+        defaultFontSize = defaults.object(forKey: "defaultFontSize") as? Int ?? 16
+        minimumFontSize = defaults.integer(forKey: "minimumFontSize")
+    }
+
+    private static var systemLanguage: String {
         let system = Locale.current.language.languageCode?.identifier ?? "en"
-        translateLanguage = UserDefaults.standard.string(forKey: "translateLanguage")
-            ?? (Self.languages.contains { $0.code == system } ? system : "en")
-        chromeTabs = UserDefaults.standard.object(forKey: "chromeTabs") as? Bool ?? true
-        alwaysTranslate = UserDefaults.standard.stringArray(forKey: "alwaysTranslate") ?? []
-        neverTranslate = UserDefaults.standard.stringArray(forKey: "neverTranslate") ?? []
+        return languages.contains { $0.code == system } ? system : "en"
+    }
+
+    /// Puts every preference here back as it was when Acorn was new.
+    func reset() {
+        searchEngine = .google
+        customSearchName = ""
+        customSearchTemplate = ""
+        translateLanguage = Self.systemLanguage
+        chromeTabs = true
+        alwaysTranslate = []
+        neverTranslate = []
+        downloadFolder = nil
+        askWhereToSave = false
+        defaultFontSize = 16
+        minimumFontSize = 0
+    }
+
+    /// The engine searches go to: the person's own only once it has an address with `%s`.
+    private var engineTemplate: String {
+        if searchEngine == .custom, customSearchTemplate.contains("%s") { return customSearchTemplate }
+        return searchEngine == .custom ? SearchEngine.google.template : searchEngine.template
+    }
+
+    /// The engine's name, as "Search Google" says it.
+    var searchEngineName: String {
+        guard searchEngine == .custom else { return searchEngine.title }
+        if !customSearchTemplate.contains("%s") { return SearchEngine.google.title }
+        if !customSearchName.isEmpty { return customSearchName }
+        return URL(string: customSearchTemplate)?.host() ?? searchEngine.title
+    }
+
+    /// The engine's own page, where a new tab with no address opens.
+    var searchHome: String {
+        guard let url = URL(string: engineTemplate), let scheme = url.scheme, let host = url.host() else {
+            return "https://www.google.com"
+        }
+        return "\(scheme)://\(host)"
     }
 
     /// What the person typed as an address: a web address as it is, anything else a search.
@@ -378,7 +460,7 @@ final class BrowserSettings: ObservableObject {
 
     func searchURL(_ query: String) -> String {
         let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&+="))) ?? query
-        return searchEngine.queryURL + encoded
+        return engineTemplate.replacingOccurrences(of: "%s", with: encoded)
     }
 
     var translateLanguageName: String {
@@ -388,12 +470,18 @@ final class BrowserSettings: ObservableObject {
 
 // MARK: - Clearing
 
-/// Forgets history, and the cookies and cache of every tab (they share one profile).
+/// Forgets history, and the cookies and cache of every tab (they share one profile; an
+/// incognito window's are its own, so `view` should be a tab of the profile to clear).
 @MainActor
-func clearBrowsingData(history: Bool, cookies: Bool, using view: ChromiumBrowserView) {
-    if history { HistoryStore.shared.clear() }
+func clearBrowsingData(history: Bool, cookies: Bool, cache: Bool? = nil, since: Date? = nil,
+                       using view: ChromiumBrowserView) {
+    if history {
+        if let since { HistoryStore.shared.clear(since: since) } else { HistoryStore.shared.clear() }
+    }
     if cookies {
         view.sendDevToolsMethod("Network.clearBrowserCookies", params: nil) { _, _ in }
+    }
+    if cache ?? cookies {
         view.sendDevToolsMethod("Network.clearBrowserCache", params: nil) { _, _ in }
     }
 }

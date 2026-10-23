@@ -12,7 +12,6 @@ struct BrowserMenu: View {
     @ObservedObject private var settings = BrowserSettings.shared
     @Environment(\.palette) private var palette
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.openSettings) private var openSettings
     @State private var page: Page = .main
 
     private enum Page { case main, bookmarks, history, tab, extensions }
@@ -47,7 +46,7 @@ struct BrowserMenu: View {
             section("This page") {
                 zoomRow
                 if !tab.isIncognito {
-                    let marked = bookmarks.isBookmarked(tab.address)
+                    let marked = bookmarks.isBookmarked(tab.shownAddress)
                     row(marked ? "Remove Bookmark" : "Bookmark This Page", marked ? "star.fill" : "star", shortcut: "⌘D") {
                         store.toggleBookmark()
                     }
@@ -63,7 +62,7 @@ struct BrowserMenu: View {
                     "character.bubble") { tab.translate() }
                     .disabled(!isWeb)
                 row("Print\u{2026}", "printer", shortcut: "⌘P") { tab.printPage() }
-                row("Copy Link", "link", shortcut: "⇧⌘C") { copyToPasteboard(tab.address) }
+                row("Copy Link", "link", shortcut: "⇧⌘C") { copyToPasteboard(tab.shownAddress) }
                     .disabled(tab.address.isEmpty)
             }
 
@@ -77,11 +76,11 @@ struct BrowserMenu: View {
             }
 
             HStack {
-                Button { NSApp.orderFrontStandardAboutPanel(nil); isPresented = false } label: {
+                Button { store.openPage(.settings, part: "help"); isPresented = false } label: {
                     Label("About Acorn", systemImage: "info.circle")
                 }
                 Spacer()
-                Button { openSettings(); isPresented = false } label: {
+                Button { store.openPage(.settings); isPresented = false } label: {
                     Label("Settings", systemImage: "gearshape")
                 }
             }
@@ -368,15 +367,13 @@ private struct ExtensionsPage: View {
                 store.newTab(url: "https://chromewebstore.google.com")
             } label: { Label("Chrome Web Store", systemImage: "bag") }
                 .buttonStyle(.row)
+            Button {
+                isPresented = false
+                store.openPage(.extensions)
+            } label: { Label("Manage Extensions", systemImage: "puzzlepiece.extension") }
+                .buttonStyle(.row)
             SupportLine(support: ExtensionStore.support(in: store))
                 .padding(.horizontal, Theme.Space.s)
-            if ExtensionStore.support(in: store) == .on {
-                Button {
-                    isPresented = false
-                    store.newTab(url: "chrome://extensions")
-                } label: { Label("Chromium's Extensions Page", systemImage: "gearshape") }
-                    .buttonStyle(.row)
-            }
 
             Rectangle().fill(palette.hairline).frame(height: 1).padding(.vertical, Theme.Space.xs)
             Text("Site Boosts").font(Theme.Text.section).foregroundStyle(palette.inkSecondary)

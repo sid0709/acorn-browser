@@ -187,8 +187,8 @@ private struct TabPill: View {
     }
 }
 
-/// A tab's favicon (a globe until the page has one), with the agent's sparkle on the agent's
-/// tab and a spinner while the page loads.
+/// A tab's favicon (a globe until the page has one, the page's symbol on Acorn's own pages),
+/// with the agent's sparkle on the agent's tab and a spinner while the page loads.
 struct TabIcon: View {
     @ObservedObject var tab: BrowserModel
     var isAgent = false
@@ -197,7 +197,10 @@ struct TabIcon: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            if let image = tab.favicon {
+            if let location = tab.acornLocation {
+                Image(systemName: location.page.icon).font(.system(size: size * 0.8)).foregroundStyle(palette.accent)
+                    .frame(width: size, height: size)
+            } else if let image = tab.favicon {
                 Image(nsImage: image).resizable().scaledToFit().frame(width: size, height: size)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             } else {

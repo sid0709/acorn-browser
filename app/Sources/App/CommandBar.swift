@@ -9,7 +9,6 @@ struct CommandBar: View {
     @ObservedObject var runner: AgentRunner
     let mode: CommandBarMode
     @Environment(\.palette) private var palette
-    @Environment(\.openSettings) private var openSettings
     @State private var query = ""
     @State private var selection = 0
     @State private var keys = SuggestionKeys()
@@ -23,7 +22,7 @@ struct CommandBar: View {
     }
 
     private var items: [CommandItem] {
-        Suggestions(store: store, runner: runner, mode: mode, openSettings: { openSettings() }).items(for: query)
+        Suggestions(store: store, runner: runner, mode: mode).items(for: query)
     }
 
     var body: some View {

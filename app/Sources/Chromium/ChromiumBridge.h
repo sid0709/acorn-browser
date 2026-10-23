@@ -162,6 +162,10 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic) BOOL allowsDragAndDrop;
 @property (nonatomic) BOOL allowsTooltips;
 @property (nonatomic) BOOL audioMuted;
+/// The page's font sizes in CSS pixels; 0 leaves Chromium's own (16, and no minimum). Read when
+/// the browser is made, so a change reaches tabs made after it.
+@property (nonatomic) NSInteger defaultFontSize;
+@property (nonatomic) NSInteger minimumFontSize;
 
 - (void)loadURL:(NSString *)url;
 - (void)goBack;

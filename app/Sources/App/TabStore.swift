@@ -145,7 +145,7 @@ final class TabStore: ObservableObject {
         ChromiumPerf.note("new tab, \(tabs.count + 1) open")
         ChromiumPerf.enter("new tab")
         defer { ChromiumPerf.leave() }
-        let tab = BrowserModel(url: url ?? BrowserSettings.shared.searchEngine.home, incognito: isIncognito)
+        let tab = BrowserModel(url: url ?? BrowserSettings.shared.searchHome, incognito: isIncognito)
         withAnimation(.snappy) {
             tabs.append(tab)
             activeID = tab.id
@@ -370,10 +370,10 @@ extension TabStore {
 
     func toggleBookmark() {
         guard !active.isIncognito else { return }
-        BookmarkStore.shared.toggle(url: active.address, title: active.title)
+        BookmarkStore.shared.toggle(url: active.shownAddress, title: active.acornLocation == nil ? active.title : active.displayTitle)
     }
 
-    func copyLink() { copyToPasteboard(active.address) }
+    func copyLink() { copyToPasteboard(active.shownAddress) }
 
     /// Opens what the command bar was given: in the tab it was opened for, or a new one.
     func open(_ url: String, in mode: CommandBarMode) {
@@ -382,7 +382,7 @@ extension TabStore {
             newTab(url: url)
         case .tab(let id):
             let tab = tabs.first { $0.id == id } ?? active
-            tab.view.loadURL(url)
+            tab.load(url)
             select(tab)
             tab.view.focusBrowser()
         }
