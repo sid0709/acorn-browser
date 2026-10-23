@@ -5,6 +5,8 @@ import SwiftUI
 struct ChatSidebar: View {
     @StateObject private var runner = AgentRunner()
     @State private var draft = ""
+    /// Whether the model is typed in rather than picked from the list.
+    @State private var customModel = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -14,9 +16,19 @@ struct ChatSidebar: View {
                 if runner.isRunning {
                     ProgressView().controlSize(.small)
                     Text("Working").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    modelMenu
                 }
             }
             .padding(12)
+            if customModel {
+                TextField("Model id, as OpenRouter names it", text: $runner.model)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.caption)
+                    .disabled(runner.isRunning)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+            }
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
@@ -53,7 +65,39 @@ struct ChatSidebar: View {
             .padding(12)
         }
         .background(.background)
+        .onAppear { customModel = !AgentRunner.knownModels.contains(runner.model) }
         .task { await runTaskFromLaunchArguments() }
+    }
+
+    /// Picks the model that drives the next run: the known ones by name, or any id typed in.
+    /// The decision model behind the checks is the runner's own and is not offered here.
+    private var modelMenu: some View {
+        Menu {
+            ForEach(AgentRunner.knownModels, id: \.self) { id in
+                Button {
+                    runner.model = id
+                    customModel = false
+                } label: {
+                    if id == runner.model {
+                        Label(shortName(id), systemImage: "checkmark")
+                    } else {
+                        Text(shortName(id))
+                    }
+                }
+            }
+            Divider()
+            Button("Other model…") { customModel = true }
+        } label: {
+            Label(shortName(runner.model), systemImage: "cpu").font(.caption)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("The model that drives the page. The checks between its batches use the runner's decision model.")
+    }
+
+    /// "openai/gpt-6-luna" as "gpt-6-luna".
+    private func shortName(_ id: String) -> String {
+        id.split(separator: "/").last.map(String.init) ?? id
     }
 
     /// `AcornBrowser --run-task <file>` submits that task file once the first page is up, so a

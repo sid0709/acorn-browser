@@ -53,7 +53,10 @@ Tests/agent_smoke.py        # drives it over the socket and checks 19 things
 Type a task in the sidebar (or paste a task file with `url:`, `done_when:`, `steps:` lines, like
 the ones in `kit/tasks`). The app writes it to a task file, starts `acorn-runner` (the harness,
 in `../runner`), and shows each step in the chat. The stop button ends a run. A task without a
-`url:` line starts on the page the browser shows.
+`url:` line starts on the page the browser shows. The menu in the sidebar's header picks the
+model that drives the page (`gpt-6-luna` by default, or any OpenRouter id under "Other model…");
+the choice is kept between launches. The checks between batches use the runner's own decision
+model, which the sidebar does not change.
 
 **One-time setup: the model key.** The runner reads `OPENROUTER_API_KEY` from
 `~/Library/Application Support/com.acorn.browser/.env`, which is outside the repo:
