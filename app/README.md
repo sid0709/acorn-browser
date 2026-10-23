@@ -150,8 +150,7 @@ written to history. The menu bar lists every command; the keys are also held by
 the theme, the layout, search, translation and clearing data.
 
 The ⋮ menu follows Chromium's: New tab, New window and Incognito as tiles; zoom in place with full
-screen beside it, bookmark, pin, find, translate (through Google's translating address, in the
-language Settings names), print and copy link; then Bookmarks, History, Tab and Extensions,
+screen beside it, bookmark, pin, find, translate, print and copy link; then Bookmarks, History, Tab and Extensions,
 which open inside the menu; About and Settings at the foot. The engine runs Chromium's Alloy
 style, which cannot load Web Store extensions, so Extensions holds site boosts instead
 (`Boosts.swift`): styles and a script of the person's own put into a site's pages when they
@@ -169,6 +168,15 @@ is the active tab. When the harness takes the agent's tab while the person is on
 agent's page docks beside theirs (watch mode), so Chromium keeps painting it and they can watch
 it work; it keeps the width it had before there was a split as far as the window allows, and
 undocks when the harness lets go.
+
+Translation works as Chrome's does, in place (`Translator.swift`). When a load ends in one of
+the person's tabs, the page's language is told from its text (`NLLanguageRecognizer`); if it is
+not the one Settings names, the address offers a translation. Translating hands the page's text
+nodes out in batches, the visible ones first, has them translated by Google's translator (the
+app makes the request, so no site's security policy stops it), and swaps each node's text where
+it stands, keeping the original for Show Original. Text that appears later is translated as it
+comes (the page calls back through a DevTools binding). Always and never are kept per language.
+The agent's tab is never translated.
 
 ⌘N opens another window and ⇧⌘N an incognito one, each with tabs of its own; only the main
 window has the agent. An incognito window's tabs share one in-memory profile

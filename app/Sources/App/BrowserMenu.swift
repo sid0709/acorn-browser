@@ -58,7 +58,9 @@ struct BrowserMenu: View {
                 row(store.shownSplit == nil ? "Open in Split View" : "Close Split View", "rectangle.split.2x1",
                     shortcut: "⌘\\") { store.toggleSplit() }
                 row("Find in Page\u{2026}", "doc.text.magnifyingglass", shortcut: "⌘F") { tab.startFinding() }
-                row("Translate to \(settings.translateLanguageName)", "character.bubble") { tab.translate() }
+                row(tab.translation == .done || tab.translation == .working
+                        ? "Show Original" : "Translate to \(settings.translateLanguageName)",
+                    "character.bubble") { tab.translate() }
                     .disabled(!isWeb)
                 row("Print\u{2026}", "printer", shortcut: "⌘P") { tab.printPage() }
                 row("Copy Link", "link", shortcut: "⇧⌘C") { copyToPasteboard(tab.address) }

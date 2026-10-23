@@ -151,8 +151,13 @@ struct AddressPill: View {
     @Environment(\.palette) private var palette
     @State private var hovering = false
     @State private var copied = false
+    @State private var showingTranslate = false
 
     private var isBookmarked: Bool { bookmarks.isBookmarked(tab.address) }
+    /// Chrome's translate offer: shown while the page is in another language, or translated.
+    private var offersTranslation: Bool {
+        !tab.isStart && (tab.translation != .idle || Translator.shared.offers(tab))
+    }
 
     var body: some View {
         HStack(spacing: 7) {
@@ -173,6 +178,16 @@ struct AddressPill: View {
                 .buttonStyle(ChromeButtonStyle(size: 22))
                 .help("Copy link (⇧⌘C)")
                 .transition(.opacity)
+            }
+            if offersTranslation {
+                Button { showingTranslate.toggle() } label: {
+                    Image(systemName: "character.bubble")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(tab.translation == .done ? palette.accent : palette.inkSecondary)
+                }
+                .buttonStyle(ChromeButtonStyle(size: 22))
+                .help(tab.translation == .done ? "Translated: show the original" : "Translate this page")
+                .popover(isPresented: $showingTranslate, arrowEdge: .bottom) { TranslatePopover(tab: tab) }
             }
             if (hovering || isBookmarked) && !tab.isStart && !tab.isIncognito {
                 Button { bookmarks.toggle(url: tab.address, title: tab.title) } label: {

@@ -88,7 +88,7 @@ struct BrowserCommands: Commands {
                 .disabled(store.map { $0.isAgentTab($0.active) } ?? true)
             Button("Copy Link") { store?.copyLink() }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
-            Button("Translate Page") { store?.active.translate() }
+            Button(store?.active.translation == .done ? "Show Original" : "Translate Page") { store?.active.translate() }
         }
         CommandMenu("Bookmarks") {
             Button("Bookmark This Page") { store?.toggleBookmark() }

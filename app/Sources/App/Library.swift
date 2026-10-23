@@ -328,6 +328,14 @@ final class BrowserSettings: ObservableObject {
         didSet { UserDefaults.standard.set(translateLanguage, forKey: "translateLanguage") }
     }
 
+    /// Languages to translate without asking, and never to offer for (base codes: "ja", "zh-CN").
+    @Published var alwaysTranslate: [String] {
+        didSet { UserDefaults.standard.set(alwaysTranslate, forKey: "alwaysTranslate") }
+    }
+    @Published var neverTranslate: [String] {
+        didSet { UserDefaults.standard.set(neverTranslate, forKey: "neverTranslate") }
+    }
+
     static let languages: [(code: String, name: String)] = [
         ("en", "English"), ("zh-CN", "Chinese (Simplified)"), ("zh-TW", "Chinese (Traditional)"),
         ("ja", "Japanese"), ("ko", "Korean"), ("es", "Spanish"), ("fr", "French"), ("de", "German"),
@@ -339,6 +347,8 @@ final class BrowserSettings: ObservableObject {
         let system = Locale.current.language.languageCode?.identifier ?? "en"
         translateLanguage = UserDefaults.standard.string(forKey: "translateLanguage")
             ?? (Self.languages.contains { $0.code == system } ? system : "en")
+        alwaysTranslate = UserDefaults.standard.stringArray(forKey: "alwaysTranslate") ?? []
+        neverTranslate = UserDefaults.standard.stringArray(forKey: "neverTranslate") ?? []
     }
 
     /// What the person typed as an address: a web address as it is, anything else a search.
@@ -352,13 +362,6 @@ final class BrowserSettings: ObservableObject {
     func searchURL(_ query: String) -> String {
         let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&+="))) ?? query
         return searchEngine.queryURL + encoded
-    }
-
-    /// The page through Google's translating proxy, in the chosen language.
-    func translated(_ url: String) -> String? {
-        guard url.hasPrefix("http://") || url.hasPrefix("https://"),
-              let encoded = url.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return nil }
-        return "https://translate.google.com/translate?sl=auto&tl=\(translateLanguage)&u=\(encoded)"
     }
 
     var translateLanguageName: String {

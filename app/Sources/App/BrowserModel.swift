@@ -96,9 +96,18 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
         view.loadURL(BrowserSettings.shared.resolve(trimmed))
     }
 
-    /// The page as Google's translator shows it, in the language chosen in Settings.
+    /// The page's language, once told from its text, and how far translating it has got.
+    @Published var pageLanguage: String?
+    @Published var translation: TranslationState = .idle
+
+    /// Translates the page in place, into the language chosen in Settings; again shows the
+    /// original.
     func translate() {
-        if let url = BrowserSettings.shared.translated(address) { view.loadURL(url) }
+        if translation == .done || translation == .working {
+            Translator.shared.showOriginal(self)
+        } else {
+            Translator.shared.translate(self)
+        }
     }
 
     /// The address last written to history, to give it its title when that comes later.
@@ -130,7 +139,15 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
         // Once the load is done, so the icon is this page's and not the last one's.
         if let favicon, !isLoading, !isIncognito { FaviconCache.shared.remember(favicon, forURL: address) }
         noteInHistory()
-        if wasLoading && !isLoading { BoostStore.shared.apply(to: self) }
+        if isLoading && !wasLoading {
+            // A new document: what was told or translated about the last one no longer holds.
+            pageLanguage = nil
+            translation = .idle
+        }
+        if wasLoading && !isLoading {
+            BoostStore.shared.apply(to: self)
+            Translator.shared.pageLoaded(self)
+        }
         wasLoading = isLoading
     }
 
