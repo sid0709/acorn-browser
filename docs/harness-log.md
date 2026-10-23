@@ -7,6 +7,70 @@ and why that rather than a patch; and what the bench said afterwards. A commit m
 the what; this log keeps the why, so that a rule in the code can be traced to the run that
 asked for it. Newest first.
 
+## 2026-10-23 — Stage 0 of the agent plan: the answer in words, and the clock that counts everything
+
+Branch `feat/answer-in-words`. The first stage of `docs/agent-plan.md` changes the measure
+before the loop: a run now ends with an answer in words, the bench grades that answer beside
+the screen, and the bench's clock runs from the runner's start. The baseline runs for the
+stage found three more faults, fixed here with it.
+
+**Observed.** The runs of 2026-10-23 ended with "Qatar Airways' Economy limits are visible":
+the figures the person asked for were in the model's memo and on the screen, never in what
+the person was told. The bench's time per mission left out the 25–30 s before the first step
+(`intake::understand`, connecting, opening the site), so L1 read 63 s where a person waited
+about 95. Then, in the baseline run with the new columns (`bench/results/20261023-142331.md`):
+L4 ended `stuck` after six `read` actions in a row, with the GOV.UK checker's options shown as
+`clickable[16] class=gem-c-label govuk-label` and no names, so the model read the labels one
+by one and the stale count ended the run; L5 ended with "the browser could not run
+Page.captureScreenshot" after a navigation to the archived page, which the runner treated as
+fatal; and one driving-model call in L2 took 258 s (two 120 s timeouts and a retry).
+
+**Causes.**
+1. The reply had `proof` (what on the page shows the task done, for the checker) and `message`
+   (a status line), and nothing meant for the person who asked.
+2. The runner started its clock after the intake and the opening of the site.
+3. GOV.UK's radios are `<input class="govuk-radios__input">` with `opacity: 0`, laid over a
+   circle the label draws; both builders dropped any node with `opacity: 0` as hidden, and the
+   label's text is `ignored` in the accessibility tree (it names the input), so neither carried
+   the option's name. The fixture copy of the page had native radios and never showed it.
+4. The stale count compared one look's picture with the last; `read` leaves the page as it
+   was, so six reads counted as a page that stopped responding.
+5. `observe` threw when `Page.captureScreenshot` failed (CEF answers a DevTools call that takes
+   longer than 8 s with a failure), and the runner ends the run on a failed look.
+
+**Changed.**
+1. `answer` in the reply and the schema, on the step that ends the run, in the trace
+   (`ANSWER:` on the timeline), in the runner's end event, in the sidebar, and in the bench
+   table with the judge's verdict on it; a `done` without one is sent back once with a note.
+   The prompts say what it is: the figures, names or conclusion read from the page.
+2. The runner's clock starts before the intake; the bench says so.
+3. A control that is only transparent keeps its line (both builders); a fixture page with the
+   pattern (`pages/transparent.html`) and a test that the radio keeps its name.
+4. A look after actions that only read the page does not count toward the stale limit.
+5. A look whose picture fails is sent without one and with a note; in DOM mode the harness
+   takes the map's text as the page's signature and goes on, in image mode it is refused as
+   before.
+
+**Bench after.** `bench/results/20261023-145326.md`, DOM mode, the clock from the runner's
+start: L1 done, 6 steps, 275 s (203 s of it waiting on the model, one call of 93 s), the
+judge's call lost to a dropped connection, the answer right; L2 pass, answer pass, 4 steps,
+277 s (about 215 s before the first step: the intake call and a site that stayed "still being
+parsed" for 71 s); L3 pass, answer pass, 21 steps, 204 s, the agent itself `stuck` after
+dithering between the list and the thread for a reply count the thread page does not show;
+L4 pass, answer pass, 17 steps, 91 s, where the transparent radios now carry their names
+(from 144–306 s and one `stuck`); L5 need_person, 14 steps, 105 s: the agent opened the
+Wayback capture of 31 December 2005 by asking for `web/2005/` and said so. 3 of 5 on the
+screen, 3 of 5 answers right, 951 s, of which most was the provider's: the same model that
+answered in 3–6 s in the morning took 20–93 s a call in the afternoon. The table now shows the
+model's share apart (`model s`), so a change to the harness is judged by the rest.
+
+**Left open.** The provider's latency: the client waits 120 s before retrying, and a call of
+93 s is let be; a shorter wait with a retry is a question for the model tier of stage 4. The
+"most of something" rule asked the model to leave the number in view on the item's page,
+which Discourse does not show; the rule now says the number goes in the answer and the sorted
+list was the proof. The intake's `done_when` can add such a detail of its own; stage 1 reworks
+the intake.
+
 ## 2026-10-23 — DOM mode's first bench run: the page map moved with the scroll
 
 Branch `fix/dom-harness`. The first `bench/run.py --mode dom` on the five levels: L1 (the Qatar

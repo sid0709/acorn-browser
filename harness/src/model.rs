@@ -47,6 +47,11 @@ pub struct Reply {
     /// checker to look for. `None` when the model gave none.
     #[serde(default)]
     pub proof: Option<String>,
+    /// With "done" (or with a stop, for what was found so far): the answer to what the task
+    /// asks, in words read from the page: the figure, the name, the count, the conclusion. For
+    /// a task that asks for a state rather than a fact, what was done and what the page shows.
+    #[serde(default)]
+    pub answer: Option<String>,
     /// Why the run ends for the person, when it does.
     #[serde(default)]
     pub stop: Option<StopInfo>,
@@ -533,6 +538,7 @@ pub fn reply_schema(survey: bool, checks: bool, dom: bool) -> Value {
         ("status", json!({"type": "string", "enum": ["working", "done", "need_person", "stuck"]})),
         ("message", string.clone()),
         ("proof", null_string.clone()),
+        ("answer", null_string.clone()),
         ("stop", stop),
         ("question", null_string.clone()),
         ("assumed", json!({"type": ["array", "null"], "items": {"type": "string"}})),
@@ -668,11 +674,13 @@ mod tests {
         assert_eq!(reply.status, Status::Working);
         assert_eq!(reply.actions[0].kind, "wait");
         assert!(parse_reply("").is_err());
-        let reply = parse_reply("{\"status\":\"done\",\"message\":\"\",\"proof\":\"the row shows 25 kg\",\"actions\":[]}").unwrap();
+        let reply = parse_reply("{\"status\":\"done\",\"message\":\"\",\"proof\":\"the row shows 25 kg\",\"answer\":\"Economy Classic: 25 kg\",\"actions\":[]}").unwrap();
         assert_eq!(reply.proof.as_deref(), Some("the row shows 25 kg"));
+        assert_eq!(reply.answer.as_deref(), Some("Economy Classic: 25 kg"));
         let schema = reply_schema(true, true, false).to_string();
         assert!(schema.find("\"observation\"").unwrap() < schema.find("\"actions\"").unwrap());
         assert!(schema.contains("\"proof\""));
+        assert!(schema.contains("\"answer\""));
         assert!(schema.contains("\"choose\""));
         assert!(schema.contains("\"survey\""));
         assert!(schema.contains("\"needs_person\""));

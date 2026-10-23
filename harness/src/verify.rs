@@ -337,6 +337,7 @@ impl Agent {
                 let plan = std::mem::take(&mut s.plan);
                 let (actions, dropped) = self.send_batch(s, plan, Vec::new());
                 let survey = self.survey_next(s, false);
+                s.last_plan_read_only = !actions.is_empty() && actions.iter().all(|a| matches!(a.kind, Kind::Read));
                 Some(Step { status: Status::Working, message: s.message.clone(), actions, number: s.step, usage: s.usage, dropped, survey, ..Default::default() })
             }
             Outcome::Wait => {
@@ -345,6 +346,7 @@ impl Agent {
                 s.last_signature = Some(sig.clone());
                 s.carried = results.to_vec();
                 let wait = Action::new(format!("s{}w{}", s.step, s.load_waits), Kind::Wait { ms: self.config.load_wait.as_millis() as u64 });
+                s.last_plan_read_only = false;
                 Some(Step { status: Status::Working, message: s.message.clone(), actions: vec![wait], number: s.step, usage: s.usage, ..Default::default() })
             }
             Outcome::Look(reason) => {

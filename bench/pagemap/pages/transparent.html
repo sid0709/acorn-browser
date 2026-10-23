@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Transparent controls</title>
+<style>
+  body { margin: 0; font-family: sans-serif; }
+  main { padding: 30px; }
+  .item { position: relative; min-height: 40px; margin-bottom: 10px; padding-left: 40px; }
+  .item input { position: absolute; z-index: 1; top: -2px; left: -2px; width: 44px; height: 44px; margin: 0; opacity: 0; cursor: pointer; }
+  .item label { display: inline-block; padding: 8px 15px; cursor: pointer; }
+  .item label::before { content: ""; position: absolute; top: 0; left: 0; width: 40px; height: 40px; box-sizing: border-box; border: 2px solid #0b0c0c; border-radius: 50%; background: #fff; }
+  .item.box label::before { border-radius: 0; }
+  button { padding: 8px 10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>What is your reason for coming to the UK?</h1>
+  <div class="item"><input type="radio" name="response" id="response-0" value="tourism"><label for="response-0" class="gem-c-label govuk-label">Tourism or visiting family and friends</label></div>
+  <div class="item"><input type="radio" name="response" id="response-1" value="work"><label for="response-1" class="gem-c-label govuk-label">Work, academic visit or business</label></div>
+  <div class="item box"><input type="checkbox" id="agree"><label for="agree" class="gem-c-label govuk-label">I agree to the terms</label></div>
+  <button>Continue</button>
+</main>
+</body>
+</html>

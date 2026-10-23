@@ -571,11 +571,23 @@ final class AgentDriver {
         await settledAfterNavigation(past: mark)
     }
 
+    /// The page's picture for a look, or none, with a note, when the browser could not take one
+    /// (a page mid-navigation, a renderer busy for longer than a DevTools call waits): in DOM
+    /// mode the map carries the look, and a run is not lost for a missing picture.
+    private func picture(_ m: [String: Any]) async -> String {
+        for attempt in 0..<2 {
+            if let taken = try? await shot(m) { return taken }
+            if attempt == 0 { try? await Task.sleep(for: .seconds(1)) }
+        }
+        notes.append("The page could not be photographed for this look.")
+        return ""
+    }
+
     private func observe(survey: Bool, focusYs: [Double], settledSpans: [[String: Any]]) async throws -> [String: Any] {
         await settled()
         let m = try await metrics()
         var observation: [String: Any] = [
-            "screenshot": try await shot(m),
+            "screenshot": await picture(m),
             "url": view.currentURL,
             "title": view.title,
             "viewport": [

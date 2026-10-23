@@ -61,8 +61,7 @@ struct CommandBar: View {
             }
         }
         .frame(width: Self.width)
-        .card(radius: Theme.Radius.popover + 2, weight: .overlay)
-        .shadow(color: .black.opacity(palette.isDark ? 0.45 : 0.16), radius: 30, y: 12)
+        .crystal(RoundedRectangle(cornerRadius: Theme.Radius.popover + 2, style: .continuous))
     }
 
     private func run(_ items: [CommandItem], at index: Int) {

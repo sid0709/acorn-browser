@@ -509,6 +509,17 @@ mod tests {
         assert_eq!(map.nodes[3].frame, 1);
     }
 
+    /// GOV.UK's radios and checkboxes are transparent inputs over drawn circles, named by their
+    /// labels. A run that dropped them for their opacity saw nameless labels and read them one
+    /// by one until the stale count ended it.
+    #[test]
+    fn a_transparent_control_styled_through_its_label_keeps_its_line_and_name() {
+        let map: PageMap = serde_json::from_str(include_str!("fixtures/transparent.page.json")).unwrap();
+        let text = map.text(&Viewport { width: 1280, height: 800, page_height: 800.0, ..Default::default() });
+        assert!(text.contains("radio[5] \"Work, academic visit or business\" value=\"work\" @28,158 44x44"), "{text}");
+        assert!(text.contains("checkbox[7] \"I agree to the terms\" value=\"on\" @28,208 44x44"), "{text}");
+    }
+
     #[test]
     fn a_run_of_cards_alike_is_folded_after_the_first_two() {
         let map: PageMap = serde_json::from_str(include_str!("fixtures/shop.page.json")).unwrap();

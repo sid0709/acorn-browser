@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// The measures every view shares: a 4-point grid, a few radii, the type sizes and the motion.
 /// Color is not here: it comes from the person's theme as a `Palette` (ThemeStore.swift), read
@@ -43,80 +44,110 @@ enum Theme {
 
 // MARK: - Glass
 
-/// How much a pane of glass carries, and so how much it holds back of what is behind it: a bar
-/// of buttons stays clear, a panel of text is denser, and what floats over a page (the command
-/// bar, a peeking sidebar, suggestions) is densest.
+/// What a pane carries, and so how much of what is behind it its glass holds back.
 enum GlassWeight {
-    case bar, panel, overlay
+    /// A bar of buttons: the top bar, the sidebar.
+    case bar
+    /// A panel of text: the agent panel.
+    case panel
+    /// What floats over the page: the command bar, suggestions, the find bar.
+    case overlay
 }
 
-/// The window's shell is glass, after Liquid Glass. On macOS 26 it is the real thing: the
-/// system's glass bends and lights what lies beneath it (the canvas's glows, the desktop),
-/// tinted faintly with the theme. Before that it is built the way crystal catches light: a
-/// blur of what is behind, a tinted body, a soft sheen across the upper part, a rim lit along
-/// the top and leading edges and fainter along the far ones, and a lift of shadow.
+/// The shell's glass: soft, milky and only a little see-through, the theme's color held in it,
+/// and no edge drawn round it. The canvas's colors show through it as a haze. There is no blur:
+/// what is behind the shell is the canvas, whose blur would look the same as the canvas itself,
+/// so the haze is a tinted body lighter towards the top, which costs nothing.
 ///
-/// It is drawn behind what it carries, never applied to it, so text keeps the palette's ink and
-/// the Chromium view inside a card is not touched.
-struct GlassPlate<S: InsettableShape>: View {
+/// A pane of it can move the window, as a title bar does, wherever nothing on it takes the
+/// click.
+struct FrostedPane<S: InsettableShape>: View {
     let shape: S
     var weight: GlassWeight = .bar
-    /// A pane that floats (a panel, a card) casts a shadow; a bar within one does not.
-    var lifted = true
+    var movesWindow = false
+    /// A double click zooms the window, as on a title bar.
+    var zooms = false
     @Environment(\.palette) private var palette
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
+        ZStack {
+            shape.fill(reduceTransparency ? palette.glassSolid : palette.glassBody(weight))
+            shape.fill(LinearGradient(colors: [palette.sheen, palette.sheen.opacity(0)],
+                                      startPoint: .top, endPoint: .bottom))
+            if !palette.isDark { shape.strokeBorder(palette.hairline.opacity(0.6), lineWidth: 0.5) }
+            if movesWindow { WindowMover(shape: shape, zooms: zooms) }
+        }
+    }
+}
+
+/// The glass of what floats over the page: true crystal. On macOS 26 it is the system's Liquid
+/// Glass, which bends and lights the page beneath. Before that it is a frosted blur of the page,
+/// faintly tinted, lit across the top, with a short glint along the top leading edge where the
+/// light falls, and the shadow of something lifted off the page. Its content is clipped to it.
+struct CrystalGlass<S: InsettableShape>: ViewModifier {
+    let shape: S
+    @Environment(\.palette) private var palette
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
         #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
-            Color.clear
-                .glassEffect(.regular.tint(palette.glassTint(weight)), in: shape)
-                .overlay(GlassRim(shape: shape, strength: 0.5))
+            if reduceTransparency {
+                drawn(content)
+            } else {
+                content
+                    .clipShape(shape)
+                    .glassEffect(.regular.tint(palette.glassTint(.overlay)), in: shape)
+            }
         } else {
-            crystal
+            drawn(content)
         }
         #else
-        crystal
+        drawn(content)
         #endif
     }
 
-    private var crystal: some View {
-        ZStack {
-            shape.fill(weight == .bar ? Material.ultraThinMaterial : Material.thinMaterial)
-            shape.fill(palette.glassFill(weight))
-            shape.fill(LinearGradient(colors: [palette.sheen, palette.sheen.opacity(0)],
-                                      startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.45)))
-            GlassRim(shape: shape)
-        }
-        .compositingGroup()
-        .shadow(color: .black.opacity(lifted ? (palette.isDark ? 0.28 : 0.05) : 0), radius: 1, y: 1)
-        .shadow(color: .black.opacity(lifted ? (palette.isDark ? 0.34 : 0.09) : 0), radius: 14, y: 6)
+    private func drawn(_ content: Content) -> some View {
+        content
+            .clipShape(shape)
+            .background {
+                ZStack {
+                    if reduceTransparency {
+                        shape.fill(palette.raised)
+                    } else {
+                        shape.fill(.ultraThinMaterial)
+                        shape.fill(palette.glassBody(.overlay))
+                        shape.fill(LinearGradient(colors: [palette.sheen, palette.sheen.opacity(0)],
+                                                  startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.4)))
+                    }
+                    CrystalGlint(shape: shape)
+                }
+                .shadow(color: .black.opacity(palette.isDark ? 0.4 : 0.14), radius: 22, y: 10)
+            }
     }
 }
 
-/// The lit edge of a pane of glass: brightest at the top leading corner, where the light falls,
-/// fading along the sides, and picking up again faintly at the bottom trailing one, as light
-/// does through the far side of a crystal.
-struct GlassRim<S: InsettableShape>: View {
+/// Where light catches crystal: a short, fading glint along the top leading edge, and a fainter
+/// one at the bottom trailing corner. Not a border: most of the edge is not drawn at all.
+struct CrystalGlint<S: InsettableShape>: View {
     let shape: S
-    var strength: Double = 1
     @Environment(\.palette) private var palette
 
     var body: some View {
         shape
             .strokeBorder(LinearGradient(stops: [
                 .init(color: palette.rimLight, location: 0),
-                .init(color: palette.rimShade, location: 0.4),
-                .init(color: palette.rimShade, location: 0.7),
-                .init(color: palette.rimLight.opacity(0.55), location: 1),
-            ], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
-            .overlay(shape.strokeBorder(palette.hairline, lineWidth: 0.5))
-            .opacity(strength)
+                .init(color: palette.rimLight.opacity(0), location: 0.28),
+                .init(color: palette.rimLight.opacity(0), location: 0.8),
+                .init(color: palette.rimLight.opacity(0.35), location: 1),
+            ], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.75)
             .allowsHitTesting(false)
     }
 }
 
-/// A drop of glass under the row or tab in use: the selection's fill with a lit rim and a
-/// close shadow. No blur, so a list of rows costs no more than before.
+/// A drop of the shell's glass under the row or tab in use: the selection's fill, lighter at
+/// the top, with a close shadow. No edge.
 struct GlassBead<S: InsettableShape>: View {
     let shape: S
     @Environment(\.palette) private var palette
@@ -126,35 +157,65 @@ struct GlassBead<S: InsettableShape>: View {
             .fill(palette.selection)
             .overlay(shape.fill(LinearGradient(colors: [palette.sheen, palette.sheen.opacity(0)],
                                                startPoint: .top, endPoint: .center)))
-            .overlay(GlassRim(shape: shape, strength: 0.8))
-            .shadow(color: .black.opacity(palette.isDark ? 0.25 : 0.07), radius: 3, y: 1)
+            .shadow(color: .black.opacity(palette.isDark ? 0.22 : 0.06), radius: 3, y: 1)
     }
 }
 
-/// A card: content on a pane of glass, clipped to it, with the rim drawn over the content too,
-/// so the edge reads as glass even where a page fills the card to its border.
+/// Moves the window when dragged, and (if asked) zooms it on a double click, as a title bar
+/// does. It lies under everything else on its pane, so it only gets what nothing else takes.
+struct WindowMover<S: Shape>: View {
+    let shape: S
+    var zooms = false
+
+    var body: some View {
+        shape.fill(Color.clear)
+            .contentShape(shape)
+            .gesture(WindowDragGesture())
+            .allowsWindowActivationEvents(true)
+            .onTapGesture(count: 2) { if zooms { Self.titleBarDoubleClick() } }
+    }
+
+    /// What the person chose in System Settings for a double click on a title bar.
+    @MainActor
+    static func titleBarDoubleClick() {
+        guard let window = NSApp.keyWindow else { return }
+        switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+        case "Minimize": window.miniaturize(nil)
+        case "None": break
+        default: window.zoom(nil)
+        }
+    }
+}
+
+/// A card in a page (Settings, Extensions) and the page's own card: solid, with a hairline edge
+/// and a two-layer shadow (a close one for the edge, a wide soft one for the lift).
 struct CardStyle: ViewModifier {
     var radius: CGFloat = Theme.Radius.card
-    var weight: GlassWeight = .panel
+    @Environment(\.palette) private var palette
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         content
+            .background(palette.card, in: shape)
             .clipShape(shape)
-            .background(GlassPlate(shape: shape, weight: weight))
-            .overlay(GlassRim(shape: shape, strength: 0.7))
+            .overlay(shape.strokeBorder(palette.hairline))
+            .shadow(color: .black.opacity(palette.isDark ? 0.3 : 0.06), radius: 1, y: 1)
+            .shadow(color: .black.opacity(palette.isDark ? 0.35 : 0.08), radius: 12, y: 6)
     }
 }
 
 extension View {
-    func card(radius: CGFloat = Theme.Radius.card, weight: GlassWeight = .panel) -> some View {
-        modifier(CardStyle(radius: radius, weight: weight))
+    func card(radius: CGFloat = Theme.Radius.card) -> some View { modifier(CardStyle(radius: radius)) }
+
+    /// Sets the view on the shell's frosted glass, clipped to it.
+    func frosted<S: InsettableShape>(_ shape: S, weight: GlassWeight = .bar, movesWindow: Bool = false,
+                                     zooms: Bool = false) -> some View {
+        clipShape(shape)
+            .background(FrostedPane(shape: shape, weight: weight, movesWindow: movesWindow, zooms: zooms))
     }
 
-    /// Sets the view on a pane of glass of the given shape, without clipping it.
-    func glass<S: InsettableShape>(_ shape: S, weight: GlassWeight = .bar, lifted: Bool = true) -> some View {
-        background(GlassPlate(shape: shape, weight: weight, lifted: lifted))
-    }
+    /// Sets the view on crystal glass, for what floats over the page.
+    func crystal<S: InsettableShape>(_ shape: S) -> some View { modifier(CrystalGlass(shape: shape)) }
 }
 
 /// A borderless toolbar button that lights up under the pointer.

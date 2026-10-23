@@ -315,10 +315,10 @@ Browser
   processes.
 - When idle, no animation runs and no timer ticks. The agent glow runs only while the agent
   drives, and pauses when the window is not key.
-- The canvas is one gradient over one behind-window blur, and its glows are static gradients.
-  The glass panes (sidebar, page card, agent panel, and what floats: the command bar, the find
-  bar, suggestions) are the only blurs, a handful per window; rows and tabs get no blur (the one
-  in use is a `GlassBead`, a fill with a lit rim). Grain is one cached tile.
+- The window is opaque, and the canvas is drawn once (one gradient and a few discs). The shell's
+  frosted panes have no blur. Only what floats over the page (the command bar, suggestions, the
+  find bar, a dragged tab, the peeking sidebar) blurs, and only while it shows. Grain is one
+  cached tile.
 - Long lists (history, the command bar, many tabs) use `LazyVStack`. Favicons stay per tab.
 - Stores write JSON debounced and off the main thread. Nothing loads at launch beyond the theme,
   and history loads lazily on the first command bar or History open.

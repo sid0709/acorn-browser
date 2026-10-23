@@ -38,8 +38,15 @@ with no sites or key points; run it with `--no-judge`.
 
 For each run the table shows the mode the model saw the page in (`image`: a screenshot each
 step; `dom`: the page map and no picture, see `docs/dom-mode-plan.md`), the agent's own verdict
-(`done`, `need_person`, `stuck`), the judge's verdict (`pass` or `fail`, with its reason), the
-steps, the time and the cost. `--mode both` runs every mission both ways, one after the other,
+(`done`, `need_person`, `stuck`), the judge's verdict on the screen (`pass` or `fail`, with its
+reason), the judge's verdict on the agent's answer in words (`pass`, `fail`, or `none` when it
+gave none: the same call grades it against what the screenshots show), the steps, the time and
+the cost. The time is everything the person waited for, from the runner's start: the reading of
+the request and the opening of the site included, not only the steps. Beside it, the part of
+that time spent waiting on the models (`model s`): the rest is the browser's and the harness's
+own, which a change to them is judged by, since a provider's latency varies from one run to the
+next by a factor of five. The answers themselves are listed under the table, since they are
+what the person gets. `--mode both` runs every mission both ways, one after the other,
 so the two columns of the comparison come from the same sites on the same day. The
 judge is given the request, the key points, up to eight screenshots (the last one always, the
 ones where a focused field had just changed its value, since a wrong pick in a dropdown and its
