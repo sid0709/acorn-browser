@@ -170,6 +170,7 @@ private struct TabPill: View {
     @Binding var frames: [UUID: CGRect]
     var vertical = false
     @State private var hovering = false
+    @Environment(\.palette) private var palette
 
     private var isActive: Bool { store.activeID == tab.id }
     private var isAgent: Bool { store.isAgentTab(tab) }
@@ -179,8 +180,8 @@ private struct TabPill: View {
             .background(
                 ZStack {
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(isActive ? Color.white.opacity(0.9) : Color.white.opacity(hovering ? 0.35 : 0))
-                        .shadow(color: .black.opacity(isActive ? 0.08 : 0), radius: 4, y: 1)
+                        .fill(isActive ? palette.selection : hovering ? palette.hover : .clear)
+                        .shadow(color: .black.opacity(isActive && !palette.isDark ? 0.08 : 0), radius: 4, y: 1)
                     GeometryReader { geo in
                         Color.clear.preference(key: TabFrameKey.self, value: [tab.id: geo.frame(in: .global)])
                     }
@@ -190,7 +191,7 @@ private struct TabPill: View {
             .onTapGesture { store.select(tab) }
             .onHover { hovering = $0 }
             .help(isAgent ? "The agent's tab" : tab.title)
-            .animation(.easeOut(duration: 0.12), value: isActive)
+            .animation(Theme.hover, value: isActive)
             .contextMenu { if !isAgent { contextMenuItems } }
     }
 
@@ -203,18 +204,18 @@ private struct TabPill: View {
                 icon
                 Text(tab.title.isEmpty ? "New Tab" : tab.title)
                     .font(.system(size: 12.5, weight: isActive ? .semibold : .regular))
-                    .foregroundStyle(Theme.ink.opacity(isActive ? 0.95 : 0.65))
+                    .foregroundStyle(isActive ? palette.ink : palette.inkSecondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 if tab.isPinned {
-                    Image(systemName: "pin.fill").font(.system(size: 8)).foregroundStyle(Theme.ink.opacity(0.35))
+                    Image(systemName: "pin.fill").font(.system(size: 8)).foregroundStyle(palette.inkTertiary)
                 }
                 if !isAgent && (hovering || isActive) {
                     Button { store.close(tab) } label: {
                         Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(Theme.ink.opacity(0.5))
+                    .foregroundStyle(palette.inkSecondary)
                     .help("Close tab")
                 }
             }
@@ -255,7 +256,7 @@ private struct TabPill: View {
                 Image(nsImage: image).resizable().scaledToFit().frame(width: 15, height: 15)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             } else {
-                Image(systemName: "globe").font(.system(size: 12)).foregroundStyle(Theme.ink.opacity(0.45))
+                Image(systemName: "globe").font(.system(size: 12)).foregroundStyle(palette.inkTertiary)
                     .frame(width: 15, height: 15)
             }
             if isAgent {
@@ -266,7 +267,7 @@ private struct TabPill: View {
             }
             if tab.isLoading {
                 ProgressView().controlSize(.mini).scaleEffect(0.6).frame(width: 15, height: 15)
-                    .background(Color.white.opacity(0.7), in: Circle())
+                    .background(palette.card.opacity(0.7), in: Circle())
             }
         }
     }

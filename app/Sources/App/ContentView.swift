@@ -14,30 +14,43 @@ struct ContentView: View {
     @State private var showAgent = true
 
     var body: some View {
-        VStack(spacing: 8) {
+        Shell(store: store, runner: runner, showAgent: $showAgent)
+            .themed()
+    }
+}
+
+/// The window's contents, under the theme `ContentView` resolves.
+private struct Shell: View {
+    @ObservedObject var store: TabStore
+    @ObservedObject var runner: AgentRunner
+    @Binding var showAgent: Bool
+    @Environment(\.palette) private var palette
+    @State private var choosingTheme = false
+
+    var body: some View {
+        VStack(spacing: Theme.gutter) {
             topBar
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: Theme.gutter) {
                 if store.verticalLayout {
                     ScrollView {
                         TabStrip(store: store, vertical: true).padding(8)
                     }
                     .frame(width: 220)
-                    .background(Color.white.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(palette.selection.opacity(0.5), in: RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous))
                 }
                 BrowserCard(tab: store.active, store: store)
                     .id(store.activeID)
                 if showAgent {
-                    ChatSidebar(runner: runner, onClose: { withAnimation(.snappy) { showAgent = false } })
+                    ChatSidebar(runner: runner, onClose: { withAnimation(Theme.layout) { showAgent = false } })
                         .frame(width: 360)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.bottom, 8)
+            .padding(.horizontal, Theme.gutter)
+            .padding(.bottom, Theme.gutter)
         }
         .frame(minWidth: 960, minHeight: 580)
-        .background(Theme.wash.opacity(0.75))
-        .containerBackground(.regularMaterial, for: .window)
+        .containerBackground(for: .window) { WindowCanvas() }
         .navigationTitle(store.active.title.isEmpty ? "Acorn Browser" : store.active.title)
         .toolbar(.hidden, for: .windowToolbar)
         .ignoresSafeArea(.container, edges: .top)
@@ -55,16 +68,20 @@ struct ContentView: View {
             WindowControls()
             if !store.verticalLayout { TabStrip(store: store) }
             Spacer(minLength: 8)
-            Button { withAnimation(.snappy) { showAgent.toggle() } } label: {
+            Button { choosingTheme.toggle() } label: { Image(systemName: "paintpalette") }
+                .buttonStyle(.chrome)
+                .help("Theme")
+                .popover(isPresented: $choosingTheme, arrowEdge: .bottom) { ThemePicker() }
+            Button { withAnimation(Theme.layout) { showAgent.toggle() } } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "sparkles").foregroundStyle(Theme.sparkle)
                     Text("Ask AI").font(.system(size: 13, weight: .semibold))
                     if runner.isRunning { ProgressView().controlSize(.mini) }
                 }
-                .foregroundStyle(Theme.ink)
+                .foregroundStyle(palette.ink)
                 .padding(.horizontal, 12)
                 .frame(height: 30)
-                .background(Color.white.opacity(showAgent ? 0.9 : 0.5), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .background(showAgent ? palette.selection : palette.hover, in: RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous))
             }
             .buttonStyle(.plain)
             .keyboardShortcut("k", modifiers: .command)
@@ -127,6 +144,7 @@ private struct BrowserCard: View {
     @State private var addressField = ""
     @FocusState private var addressFocused: Bool
     @State private var showingMenu = false
+    @Environment(\.palette) private var palette
 
     var body: some View {
         VStack(spacing: 0) {
@@ -135,7 +153,7 @@ private struct BrowserCard: View {
                 BrowserPane(view: tab.view)
                 ProgressView(value: tab.isLoading ? tab.progress : 0)
                     .progressViewStyle(.linear)
-                    .tint(Theme.accent)
+                    .tint(palette.accent)
                     .opacity(tab.isLoading ? 1 : 0)
                     .animation(.easeOut(duration: 0.2), value: tab.isLoading)
                     // Clear of the page's own vertical scrollbar, which draws in this
@@ -148,10 +166,7 @@ private struct BrowserCard: View {
                 }
             }
         }
-        .background(Color.white)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.hairline))
-        .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+        .card()
         .onChange(of: tab.address) { _, new in
             if !addressFocused { addressField = new }
         }
@@ -175,10 +190,11 @@ private struct BrowserCard: View {
             HStack(spacing: 8) {
                 Image(systemName: isSecure ? "lock.fill" : "magnifyingglass")
                     .font(.system(size: 11))
-                    .foregroundStyle(Theme.ink.opacity(0.4))
+                    .foregroundStyle(palette.inkTertiary)
                 TextField("Search or enter address", text: $addressField)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 13))
+                    .font(Theme.Text.body)
+                    .foregroundStyle(palette.ink)
                     .focused($addressFocused)
                     .onSubmit {
                         tab.go(to: addressField)
@@ -188,8 +204,8 @@ private struct BrowserCard: View {
             }
             .padding(.horizontal, 12)
             .frame(height: 30)
-            .background(Color.black.opacity(addressFocused ? 0.05 : 0.04), in: Capsule())
-            .overlay(Capsule().strokeBorder(Theme.accent.opacity(addressFocused ? 0.35 : 0), lineWidth: 1.5))
+            .background(addressFocused ? palette.pressed.opacity(0.5) : palette.hover, in: Capsule())
+            .overlay(Capsule().strokeBorder(palette.accent.opacity(addressFocused ? 0.45 : 0), lineWidth: 1.5))
 
             Button { store.newTab() } label: { Image(systemName: "plus.square.on.square") }
                 .buttonStyle(.chrome)
@@ -228,8 +244,8 @@ private struct BrowserCard: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 44)
-        .background(Color.white)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
+        .background(palette.card)
+        .overlay(alignment: .bottom) { Rectangle().fill(palette.hairline).frame(height: 1) }
     }
 
     private var isSecure: Bool { tab.address.hasPrefix("https://") }

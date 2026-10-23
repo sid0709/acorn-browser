@@ -5,6 +5,7 @@ struct BrowserMenu: View {
     @ObservedObject var tab: BrowserModel
     @ObservedObject var store: TabStore
     @Binding var isPresented: Bool
+    @Environment(\.palette) private var palette
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -38,14 +39,11 @@ struct BrowserMenu: View {
                 Label(title, systemImage: systemImage)
                 Spacer(minLength: 8)
                 if let shortcut {
-                    Text(shortcut).font(.caption).foregroundStyle(.secondary)
+                    Text(shortcut).font(Theme.Text.caption).foregroundStyle(palette.inkSecondary)
                 }
             }
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 8)
-        .frame(height: 26)
+        .buttonStyle(.row)
     }
 
     private var zoomRow: some View {
@@ -55,6 +53,7 @@ struct BrowserMenu: View {
                 .disabled(tab.zoomLevel <= -7)
             Text("\(tab.zoomPercent)%")
                 .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(palette.ink)
                 .frame(minWidth: 40)
                 .onTapGesture { tab.zoomReset() }
                 .help("Reset zoom")
@@ -68,7 +67,7 @@ struct BrowserMenu: View {
 
     private var layoutRow: some View {
         HStack {
-            Text("Tabs").font(.system(size: 12.5))
+            Text("Tabs").font(Theme.Text.body).foregroundStyle(palette.ink)
             Spacer()
             Picker("", selection: $store.verticalLayout) {
                 Image(systemName: "menubar.rectangle").tag(false)
@@ -86,18 +85,20 @@ struct BrowserMenu: View {
 struct FindBar: View {
     @ObservedObject var tab: BrowserModel
     @FocusState private var focused: Bool
+    @Environment(\.palette) private var palette
 
     var body: some View {
         HStack(spacing: 8) {
             TextField("Find in page", text: $tab.findText)
                 .textFieldStyle(.plain)
+                .foregroundStyle(palette.ink)
                 .focused($focused)
                 .frame(width: 160)
                 .onSubmit { tab.search(next: true, backward: NSEvent.modifierFlags.contains(.shift)) }
             if !tab.findText.isEmpty {
                 Text(tab.findMatchCount == 0 ? "No results" : "\(tab.findActiveMatch)/\(tab.findMatchCount)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(Theme.Text.caption)
+                    .foregroundStyle(palette.inkSecondary)
                     .fixedSize()
             }
             Button { tab.search(next: true, backward: true) } label: { Image(systemName: "chevron.up") }
@@ -114,9 +115,9 @@ struct FindBar: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 36)
-        .background(Color.white, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.hairline))
-        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+        .background(palette.raised, in: Capsule())
+        .overlay(Capsule().strokeBorder(palette.hairline))
+        .shadow(color: .black.opacity(palette.isDark ? 0.4 : 0.12), radius: 10, y: 3)
         .padding(.top, 8)
         .padding(.trailing, 24)
         .onAppear {

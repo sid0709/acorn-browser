@@ -130,8 +130,14 @@ Needs Xcode (for `swiftc` and `clang++`), no CMake.
 
 ## Interface
 
-The window is a pastel wash behind rounded cards: a tab strip on top, the page with its address
+The window is a tinted canvas behind rounded cards: a tab strip on top, the page with its address
 row in one card, and the agent panel in another (toggled with the Ask AI button or ⌘K). Tabs are
 real, `⌘T` opens one. The first tab is the agent's: it is marked with a sparkle, cannot be
-closed, and is the page `AgentDriver` and the harness work in. Theme and shared styles are in
-`Theme.swift`, tab state in `TabStore.swift`, the strip in `TabStrip.swift`.
+closed, and is the page `AgentDriver` and the harness work in.
+
+The tint is the person's: the palette button opens the theme picker (presets, a pad where one
+to three colors are set, intensity, grain, light or dark). No view draws with a fixed color;
+each reads a `Palette` derived from the theme (`ThemeStore.swift`), whose text and accent are
+picked to stay readable in either appearance. Spacing, radii, type and the shared button styles
+are in `Theme.swift`, tab state in `TabStore.swift`, the strip in `TabStrip.swift`. Where the
+interface is going next is in `DESIGN.md`.
