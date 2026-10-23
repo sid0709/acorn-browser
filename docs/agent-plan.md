@@ -12,6 +12,12 @@ Each stage ends with `cargo test` in `harness/` and `runner/`, `scripts/build.sh
 a `bench/run.py --mode dom` run whose numbers go into `docs/harness-log.md`. A stage that lowers
 the pass rate is not done.
 
+Status: stage 0 is done (`feat/answer-in-words`, #17) and stage 1 is in progress
+(`feat/intake-overlap`): the reading of the request runs while the site opens, and the intake
+may go to a faster model; folding the reading into the router's first call and loading the
+first guess in a background tab wait for the router of stage 2. `docs/harness-log.md` has each
+stage's numbers.
+
 ## Why: where the time goes
 
 The best DOM-mode run of L1 (the Qatar Airways baggage weight: 4 steps, judge pass) took about

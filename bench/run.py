@@ -108,9 +108,11 @@ def run_mission(runner, task_file, trace_dir, extra):
         if kind == "start":
             row["run"] = event.get("run", "")
             row["mode"] = event.get("mode", "")
+            row["first_look"] = float(event.get("seconds", 0))
+            print(f"  first look after {row['first_look']:.0f} s")
         elif kind == "understood":
             row["understood"] = event.get("summary", "")
-            print(f"  understood: {row['understood']}  [{event.get('startUrl') or '(current page)'}]")
+            print(f"  understood after {float(event.get('seconds', 0)):.0f} s: {row['understood']}  [{event.get('startUrl') or '(current page)'}]")
             print(f"  done when: {event.get('doneWhen', '')}")
             for n, line in enumerate(event.get('approach') or [], 1):
                 print(f"  approach {n}: {line}")
@@ -283,6 +285,7 @@ def main():
     parser.add_argument("--only", nargs="*", default=[], help="mission names to run (file names without .md)")
     parser.add_argument("--repeat", type=int, default=1, help="how many times to run each mission")
     parser.add_argument("--model", help="the driving model (passed to the runner)")
+    parser.add_argument("--intake-model", help="the model that reads the request before the run (passed to the runner)")
     parser.add_argument("--decider", help="the decision model, or none (passed to the runner)")
     parser.add_argument("--mode", choices=["image", "dom", "both"], default="image", help="how the model sees the page: a screenshot (image), the page map and no picture (dom), or each mission in both, one after the other")
     parser.add_argument("--no-site", action="store_true", help="do not give the runner the mission's site: it must find it from the request")
@@ -298,6 +301,8 @@ def main():
     extra = []
     if args.model:
         extra += ["--model", args.model]
+    if args.intake_model:
+        extra += ["--intake-model", args.intake_model]
     if args.decider:
         extra += ["--decider", args.decider]
     modes = ["image", "dom"] if args.mode == "both" else [args.mode]
