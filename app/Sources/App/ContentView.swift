@@ -213,7 +213,7 @@ private struct ThemeButton: View {
 }
 
 /// The page in a card: its toolbar on top in the top layout and in a split (the sidebar
-/// carries navigation otherwise), a hairline of progress while it loads, the find bar over it,
+/// carries navigation otherwise), the bookmarks bar under it, a hairline of progress while it loads, the find bar over it,
 /// the agent's ring round it while the agent works in it, and the accent's edge on the pane in
 /// use of a split. While a tab is dragged, its right edge takes it to open a split.
 struct PageCard: View {
@@ -221,6 +221,7 @@ struct PageCard: View {
     @ObservedObject var store: TabStore
     var showsToolbar: Bool
     var focused = false
+    @ObservedObject private var settings = BrowserSettings.shared
     @Environment(\.palette) private var palette
     @State private var splitTargeted = false
 
@@ -228,6 +229,11 @@ struct PageCard: View {
         VStack(spacing: 0) {
             // In the sidebar layout the window's top row carries navigation and the address.
             if showsToolbar { PageToolbar(tab: tab, store: store) }
+            if settings.showBookmarksBar && !tab.isDriven {
+                BookmarksBar(tab: tab, store: store)
+                    .background(palette.card)
+                    .transition(.opacity)
+            }
             ZStack(alignment: .top) {
                 BrowserPane(view: tab.view)
                 // The page stays underneath, so the agent can take the tab at any moment;
@@ -270,6 +276,7 @@ struct PageCard: View {
             if store.draggedTab != nil && store.shownSplit == nil { splitDropZone }
         }
         .animation(Theme.layout, value: tab.isDriven)
+        .animation(Theme.layout, value: settings.showBookmarksBar)
     }
 
     private var splitDropZone: some View {

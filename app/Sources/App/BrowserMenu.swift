@@ -170,6 +170,8 @@ struct BrowserMenu: View {
 
     private var bookmarksPage: some View {
         VStack(alignment: .leading, spacing: 2) {
+            row(settings.showBookmarksBar ? "Hide Bookmarks Bar" : "Show Bookmarks Bar", "menubar.rectangle",
+                shortcut: "⇧⌘B", closes: false) { settings.showBookmarksBar.toggle() }
             if bookmarks.bookmarks.isEmpty {
                 empty("No bookmarks yet. ⌘D or the star in the address saves a page.")
             } else {

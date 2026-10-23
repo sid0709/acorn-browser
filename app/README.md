@@ -187,7 +187,10 @@ on the address for the tab shown. It ranks, from what the browser already knows,
 search, open tabs, bookmarks, history and the window's commands, and offers the words to the
 agent as a task. History (⌘Y), bookmarks (⌘D) and the search engine and translate language are
 in `Library.swift`, kept as JSON beside the runs; pages the agent opens while it drives are not
-written to history. The menu bar lists every command; the keys are also held by
+written to history. Bookmarks show on a bar under the toolbar (`BookmarksBar.swift`, ⇧⌘B to
+show or hide it): a click opens one in the tab, ⌘-click in a new one, a right click offers a new
+tab, the link and removal, and what does not fit is under » at the end. The bar steps aside while
+the agent drives its tab, so the agent's page keeps its height. The menu bar lists every command; the keys are also held by
 `WindowShortcuts` inside the window, so they work with the page focused.
 
 Settings and Extensions are pages in a tab, as in Chrome: `acorn://settings` and
