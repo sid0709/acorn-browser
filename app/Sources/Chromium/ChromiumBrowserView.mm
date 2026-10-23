@@ -205,6 +205,7 @@ NSHashTable<ChromiumBrowserView *> *LiveViews() {
                 callback:(CefRefPtr<CefJSDialogCallback>)callback;
 - (void)cef_download:(NSString *)fileName finished:(BOOL)finished;
 - (void)cef_blockedPopup:(NSString *)url;
+- (void)cef_findResult:(int)count activeMatch:(int)activeMatch;
 @end
 
 #pragma mark - CEF client
@@ -273,7 +274,8 @@ class BrowserClient : public CefClient,
                       public CefDownloadHandler,
                       public CefPermissionHandler,
                       public CefRequestHandler,
-                      public CefJSDialogHandler {
+                      public CefJSDialogHandler,
+                      public CefFindHandler {
  public:
   explicit BrowserClient(ChromiumBrowserView *view) : view_(view) {}
 
@@ -285,6 +287,18 @@ class BrowserClient : public CefClient,
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
   CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
+  CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
+
+  // CefFindHandler
+
+  void OnFindResult(CefRefPtr<CefBrowser> browser,
+                    int identifier,
+                    int count,
+                    const CefRect &selectionRect,
+                    int activeMatchOrdinal,
+                    bool finalUpdate) override {
+    [view_ cef_findResult:count activeMatch:activeMatchOrdinal];
+  }
 
   // CefJSDialogHandler
 
@@ -583,6 +597,7 @@ class BrowserClient : public CefClient,
   CefRefPtr<CefRegistration> _devToolsRegistration;
   NSMutableDictionary<NSNumber *, void (^)(BOOL, NSDictionary *)> *_devToolsCallbacks;
   int _nextDevToolsMessageID;
+  double _zoomLevel;
 }
 
 - (instancetype)initWithURL:(NSString *)url {
@@ -748,6 +763,39 @@ class BrowserClient : public CefClient,
   }
 }
 
+- (double)zoomLevel {
+  return _zoomLevel;
+}
+
+- (void)setZoomLevel:(double)zoomLevel {
+  _zoomLevel = zoomLevel;
+  if (_browser) {
+    _browser->GetHost()->SetZoomLevel(zoomLevel);
+  }
+}
+
+- (void)printPage {
+  if (_browser) {
+    _browser->GetHost()->Print();
+  }
+}
+
+- (void)find:(NSString *)text forward:(BOOL)forward matchCase:(BOOL)matchCase findNext:(BOOL)findNext {
+  if (_browser) {
+    _browser->GetHost()->Find(ToCefString(text), forward, matchCase, findNext);
+  }
+}
+
+- (void)stopFinding:(BOOL)clearSelection {
+  if (_browser) {
+    _browser->GetHost()->StopFinding(clearSelection);
+  }
+}
+
+- (void)cef_findResult:(int)count activeMatch:(int)activeMatch {
+  [self.delegate browserView:self didUpdateFindCount:count activeMatch:activeMatch];
+}
+
 - (void)focusBrowser {
   if (!_browser || _destroyed) {
     return;
@@ -849,6 +897,9 @@ class BrowserClient : public CefClient,
 
   CefRefPtr<CefBrowserHost> host = browser->GetHost();
   host->SetAudioMuted(_audioMuted);
+  if (_zoomLevel != 0.0) {
+    host->SetZoomLevel(_zoomLevel);
+  }
   if (_destroyed) {
     // Closed before Chromium finished creating it.
     _client->BeginAppClose(browser);

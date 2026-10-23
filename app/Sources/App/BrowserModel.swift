@@ -17,6 +17,49 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
     @Published var canGoForward = false
     @Published var progress = 0.0
 
+    /// Tab organization: not the page's own state, but kept here since every tab already
+    /// carries one of these and `TabStrip` already observes it per tab.
+    @Published var isPinned = false
+    @Published var groupID: UUID?
+
+    /// CEF's zoom levels: 0 is 100%, and each whole step is about a 20% change.
+    @Published var zoomLevel: Double = 0 { didSet { view.zoomLevel = zoomLevel } }
+    var zoomPercent: Int { Int((pow(1.2, zoomLevel) * 100).rounded()) }
+    func zoomIn() { zoomLevel = min(zoomLevel + 1, 7) }
+    func zoomOut() { zoomLevel = max(zoomLevel - 1, -7) }
+    func zoomReset() { zoomLevel = 0 }
+
+    /// Find-in-page. `findText`'s didSet restarts the search; `Enter`/`Shift+Enter` in the
+    /// find bar step through it without retyping.
+    @Published var isFinding = false
+    @Published var findText = "" {
+        didSet { if isFinding { search(next: false) } }
+    }
+    @Published var findMatchCount = 0
+    @Published var findActiveMatch = 0
+
+    func startFinding() { isFinding = true }
+
+    func search(next: Bool, backward: Bool = false) {
+        guard !findText.isEmpty else {
+            findMatchCount = 0
+            findActiveMatch = 0
+            view.stopFinding(true)
+            return
+        }
+        view.find(findText, forward: !backward, matchCase: false, findNext: next)
+    }
+
+    func stopFinding() {
+        isFinding = false
+        findText = ""
+        findMatchCount = 0
+        findActiveMatch = 0
+        view.stopFinding(true)
+    }
+
+    func printPage() { view.printPage() }
+
     init(url: String) {
         view = ChromiumBrowserView(url: url)
         // A page's own drag and drop (a card to another column) is part of using it.
@@ -63,4 +106,9 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
     func browserViewDidRequestClose(_ browserView: ChromiumBrowserView) {}
 
     func browserView(_ browserView: ChromiumBrowserView, didChangeFullscreen fullscreen: Bool) {}
+
+    func browserView(_ browserView: ChromiumBrowserView, didUpdateFindCount count: Int, activeMatch: Int) {
+        findMatchCount = count
+        findActiveMatch = activeMatch
+    }
 }

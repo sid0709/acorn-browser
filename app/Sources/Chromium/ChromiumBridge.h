@@ -54,6 +54,12 @@ NS_SWIFT_UI_ACTOR
 /// The page entered or left HTML fullscreen (e.g. a video).
 - (void)browserView:(ChromiumBrowserView *)browserView didChangeFullscreen:(BOOL)fullscreen;
 
+/// A find-in-page search (`find:forward:matchCase:findNext:`) reported results: how many
+/// matches there are now and which one is current (1-based, 0 if none yet).
+- (void)browserView:(ChromiumBrowserView *)browserView
+    didUpdateFindCount:(NSInteger)count
+            activeMatch:(NSInteger)activeMatch;
+
 @end
 
 typedef NS_ENUM(NSInteger, ChromiumDialogKind) {
@@ -116,6 +122,21 @@ NS_SWIFT_UI_ACTOR
 - (void)goForward;
 - (void)reload;
 - (void)stopLoading;
+
+/// The page's zoom, in CEF's zoom levels (0 is 100%; each whole step is about 20%). Settable
+/// before the browser exists; applied once it is created.
+@property (nonatomic) double zoomLevel;
+
+/// Opens the system print panel for the page.
+- (void)printPage;
+
+/// Starts or continues a find-in-page search for `text`; results arrive as
+/// `browserView:didUpdateFindCount:activeMatch:`. An empty `text` stops the search. Changing
+/// `text` or `matchCase` restarts it; `findNext` moves to the next (or, backward, previous) match
+/// of a search already running.
+- (void)find:(NSString *)text forward:(BOOL)forward matchCase:(BOOL)matchCase findNext:(BOOL)findNext;
+/// Ends the current search, clearing its highlight if asked.
+- (void)stopFinding:(BOOL)clearSelection;
 
 /// Gives keyboard focus to the page unless a text field (e.g. the address bar) has it.
 - (void)focusBrowser;

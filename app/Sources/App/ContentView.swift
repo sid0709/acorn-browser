@@ -17,6 +17,13 @@ struct ContentView: View {
         VStack(spacing: 8) {
             topBar
             HStack(alignment: .top, spacing: 8) {
+                if store.verticalLayout {
+                    ScrollView {
+                        TabStrip(store: store, vertical: true).padding(8)
+                    }
+                    .frame(width: 220)
+                    .background(Color.white.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
                 BrowserCard(tab: store.active, store: store)
                     .id(store.activeID)
                 if showAgent {
@@ -46,7 +53,7 @@ struct ContentView: View {
     private var topBar: some View {
         HStack(spacing: 10) {
             WindowControls()
-            TabStrip(store: store)
+            if !store.verticalLayout { TabStrip(store: store) }
             Spacer(minLength: 8)
             Button { withAnimation(.snappy) { showAgent.toggle() } } label: {
                 HStack(spacing: 6) {
@@ -63,6 +70,14 @@ struct ContentView: View {
             .keyboardShortcut("k", modifiers: .command)
             .help("Show or hide the agent (⌘K)")
             .padding(.trailing, 10)
+
+            // Window-level shortcuts that don't belong to any one tab's own card.
+            Button { store.newTab() } label: { EmptyView() }
+                .keyboardShortcut("t", modifiers: .command)
+                .frame(width: 0, height: 0).opacity(0)
+            Button { store.close(store.active) } label: { EmptyView() }
+                .keyboardShortcut("w", modifiers: .command)
+                .frame(width: 0, height: 0).opacity(0)
         }
         .padding(.leading, 20)
         .frame(height: 44)
@@ -111,11 +126,12 @@ private struct BrowserCard: View {
     @ObservedObject var store: TabStore
     @State private var addressField = ""
     @FocusState private var addressFocused: Bool
+    @State private var showingMenu = false
 
     var body: some View {
         VStack(spacing: 0) {
             addressRow
-            ZStack(alignment: .top) {
+            ZStack(alignment: .topTrailing) {
                 BrowserPane(view: tab.view)
                 ProgressView(value: tab.isLoading ? tab.progress : 0)
                     .progressViewStyle(.linear)
@@ -125,6 +141,10 @@ private struct BrowserCard: View {
                     // Clear of the page's own vertical scrollbar, which draws in this
                     // same top strip and would otherwise cut into the bar.
                     .padding(.trailing, 16)
+                    .frame(maxWidth: .infinity, alignment: .top)
+                if tab.isFinding {
+                    FindBar(tab: tab).transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
         }
         .background(Color.white)
@@ -172,10 +192,36 @@ private struct BrowserCard: View {
 
             Button { store.newTab() } label: { Image(systemName: "plus.square.on.square") }
                 .buttonStyle(.chrome)
-                .keyboardShortcut("t", modifiers: .command)
                 .help("New tab (⌘T)")
+            Button { showingMenu = true } label: { Image(systemName: "ellipsis.circle") }
+                .buttonStyle(.chrome)
+                .help("More")
+                .popover(isPresented: $showingMenu, arrowEdge: .bottom) {
+                    BrowserMenu(tab: tab, store: store, isPresented: $showingMenu)
+                }
+
             Button { addressFocused = true } label: { EmptyView() }
                 .keyboardShortcut("l", modifiers: .command)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+            Button { tab.startFinding() } label: { EmptyView() }
+                .keyboardShortcut("f", modifiers: .command)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+            Button { tab.printPage() } label: { EmptyView() }
+                .keyboardShortcut("p", modifiers: .command)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+            Button { tab.zoomIn() } label: { EmptyView() }
+                .keyboardShortcut("=", modifiers: .command)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+            Button { tab.zoomOut() } label: { EmptyView() }
+                .keyboardShortcut("-", modifiers: .command)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+            Button { tab.zoomReset() } label: { EmptyView() }
+                .keyboardShortcut("0", modifiers: .command)
                 .frame(width: 0, height: 0)
                 .opacity(0)
         }
