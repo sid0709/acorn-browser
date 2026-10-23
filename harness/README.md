@@ -1,8 +1,10 @@
 # harness
 
-A general-purpose agent harness for a browser that does any task given in chat. Pure image
-based: the browser sends a screenshot, the harness answers with the next actions. It is the brain
-of Acorn Browser; the browser (the app, over its agent socket) is the hands and eyes.
+A general-purpose agent harness for a browser that does any task given in chat. The browser
+sends a look at the page, the harness answers with the next actions. It is the brain of Acorn
+Browser; the browser (the app, over its agent socket) is the hands and eyes. A look is a
+screenshot (image mode, the first way and the default) or the page map, the page as the browser
+itself knows it, with no picture (DOM mode, `page.rs`); a task's `mode` says which.
 
 ```bash
 cargo build                    # no warnings
@@ -195,7 +197,15 @@ and name when its number went stale. `scroll` takes `to` (a height of the page) 
 the node's role and name when the plan is taken and judged from the next look's map, with no
 model and no wait; a check in other words still goes to the decision model. The browser also
 reads a targeted control before and after the action and reports what changed
-(`checked: false → true`). Up to stage 2, this: the model still sees the screenshot.
+(`checked: false → true`).
+
+In DOM mode (`Task::mode`, the runner's `--mode dom`) the model reads the map and no picture:
+its own prompt (`prompts/system-dom.md`) and reply schema name nodes by number, there is no
+survey and no point check, and the gate's questions (the proof of done, a refused send, a
+human check) go to the decision model with the map text. A look the browser could not map ends
+the run as stuck, with the reason, rather than falling back to a picture: the benchmark then
+shows where this way of seeing fails. The screenshot is still taken every look, for the trace
+and the bench judge.
 
 ### Intervention and the end (`run.rs`, `report.rs`, `trace.rs`)
 

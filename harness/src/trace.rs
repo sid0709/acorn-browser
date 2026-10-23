@@ -61,6 +61,8 @@ pub struct Tracer {
 pub struct StepTrace {
     pub seq: u32,
     pub step: u32,
+    /// How the model saw the page on this step: `image` or `dom`.
+    pub mode: crate::task::Mode,
     /// `check` when the decision model carried the plan on; empty when the driving model looked.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub source: String,
@@ -199,6 +201,8 @@ pub struct StartTrace<'a> {
     pub url: &'a str,
     pub goal: &'a str,
     pub survey: bool,
+    /// How the model sees the page: `image` or `dom`.
+    pub mode: crate::task::Mode,
     pub max_steps: u32,
 }
 

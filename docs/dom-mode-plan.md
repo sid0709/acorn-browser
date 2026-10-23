@@ -9,6 +9,13 @@ on its own with `bench/run.py`.
 The plan is in five stages. Each stage ends with `cargo build` (no warnings), `cargo test`, and a
 `bench/run.py` run; a stage that lowers the pass rate is not done.
 
+Status: stages 1 to 4 are in the code (the map, acting by number, the DOM-mode prompt and gate,
+the switch and `bench/run.py --mode both`). The maps were checked on GOV.UK from the app; the
+DOM-mode runs of the five missions, and the comparison table, are still to be made on a Mac. Of
+stage 3, sending only the changed lines from the second look on was moved to stage 5: a look's
+map is a few kilobytes, and the numbers change between looks, so the whole map goes each time
+until the measurements say otherwise.
+
 ## Why
 
 A run of the L4 mission (the GOV.UK visa check, 7–8 short pages) takes 5–6 minutes in image mode.

@@ -8,6 +8,7 @@
 //!   --decider <id> | none    the decision model on a Decisions API (default openai/gpt-6-luna-decisions)
 //!   --decisions openrouter | openai
 //!   --reasoning <effort>     none, low, medium or high for the driving model (default none)
+//!   --mode image | dom       how the model sees the page (default image; a `mode:` line in the task wins)
 //!   --profile <file>         who the run acts as (default: profile.md in the app's data folder)
 //!   --trace <dir>            where to write the run's trace (default: traces/ in the current folder)
 //!   --env-file <file>        a file of KEY=VALUE lines to read the keys from
@@ -56,6 +57,7 @@ struct Options {
     decider: Option<String>,
     decisions: Wire,
     reasoning: String,
+    mode: Option<harness::task::Mode>,
     profile: PathBuf,
     trace: PathBuf,
     env_file: Option<PathBuf>,
@@ -76,6 +78,7 @@ fn options() -> Result<Options, String> {
         decider: None,
         decisions: Wire::OpenRouter,
         reasoning: DEFAULT_REASONING.to_string(),
+        mode: None,
         profile: app_dir().join("profile.md"),
         trace: PathBuf::from("traces"),
         env_file: None,
@@ -99,6 +102,7 @@ fn options() -> Result<Options, String> {
                 }
             }
             "--reasoning" => out.reasoning = value("--reasoning")?,
+            "--mode" => out.mode = Some(taskfile::mode_of(&value("--mode")?)?),
             "--profile" => out.profile = PathBuf::from(value("--profile")?),
             "--trace" => out.trace = PathBuf::from(value("--trace")?),
             "--env-file" => out.env_file = Some(PathBuf::from(value("--env-file")?)),
@@ -119,7 +123,7 @@ fn options() -> Result<Options, String> {
     Ok(out)
 }
 
-const USAGE: &str = "usage: acorn-runner <task.md> [--socket <path>] [--model <id>] [--decider <id>|none] [--decisions openrouter|openai] [--reasoning <effort>] [--profile <file>] [--trace <dir>] [--env-file <file>]";
+const USAGE: &str = "usage: acorn-runner <task.md> [--socket <path>] [--model <id>] [--decider <id>|none] [--decisions openrouter|openai] [--reasoning <effort>] [--mode image|dom] [--profile <file>] [--trace <dir>] [--env-file <file>]";
 
 /// Prints one event for the app.
 fn emit(event: Value) {
@@ -175,6 +179,11 @@ fn run() -> Result<i32, String> {
     })?;
 
     let mut loaded = taskfile::load(&options.task)?;
+    if let Some(mode) = options.mode
+        && loaded.task.mode == harness::task::Mode::Image
+    {
+        loaded.task.mode = mode;
+    }
     let facts = std::fs::read_to_string(&options.profile).unwrap_or_else(|_| DEFAULT_FACTS.to_string());
 
     let model_meter = Meter::default();
@@ -208,11 +217,12 @@ fn run() -> Result<i32, String> {
     }
 
     let max_steps = loaded.task.persistence.max_steps;
+    let mode_name = serde_json::to_value(loaded.task.mode).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
     let goal_line = loaded.task.goal.lines().next().unwrap_or("").to_string();
     let start_url = loaded.task.start_url.clone();
     let id = agent.start(loaded.task, Profile::new(facts));
     emit(json!({
-        "event": "start", "run": id, "goal": goal_line, "startUrl": start_url, "model": options.model,
+        "event": "start", "run": id, "goal": goal_line, "startUrl": start_url, "model": options.model, "mode": mode_name,
         "checker": options.decider, "maxSteps": max_steps, "trace": options.trace.join(&id).display().to_string(),
     }));
 

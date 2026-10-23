@@ -111,7 +111,7 @@ Config/             Info.plist and entitlements
 scripts/            setup-cef.sh, build.sh
 ```
 
-## The page map (DOM mode, stages 1 and 2)
+## DOM mode and the page map
 
 Every look also carries the page as this browser knows it (`PageMap.swift`): the accessibility
 tree joined with the DOM snapshot through DevTools, as a list of nodes with their computed name,
@@ -123,8 +123,11 @@ the harness sent: the node is found again by role and name if the map was renumb
 scrolled into view, measured now, and the point must hit it (a node under a banner or a dialog
 is refused, saying what covers it); the click is then the same human-paced click as any other.
 The control's state is read before and after and the result says what changed. `scroll` with
-`to` goes straight to a height of the page; `read` answers with a node's whole text. The plan
-for the rest is in `docs/dom-mode-plan.md`.
+`to` goes straight to a height of the page; `read` answers with a node's whole text.
+
+The switch beside the model menu picks how the next run sees the page: **Image** (a screenshot
+each step, the default) or **DOM** (the map and no picture, `acorn-runner --mode dom`). It is
+locked while a run is on. The plan and its stages are in `docs/dom-mode-plan.md`.
 
 ## Build and run
 

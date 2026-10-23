@@ -126,6 +126,7 @@ struct ChatSidebar: View {
                 .padding(.horizontal, 4)
             HStack(spacing: 8) {
                 modelMenu
+                modeSwitch
                 Spacer()
                 modelSummary
                 sendButton
@@ -174,15 +175,30 @@ struct ChatSidebar: View {
         }
     }
 
+    /// How the model sees the page: a screenshot each step, or the page map and no picture
+    /// (DOM mode). The pick drives the next run.
+    private var modeSwitch: some View {
+        Picker("", selection: $runner.mode) {
+            Text("Image").tag("image")
+            Text("DOM").tag("dom")
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+        .frame(width: 110)
+        .disabled(runner.isRunning)
+        .help("Image: the model sees a screenshot each step. DOM: it reads the page map (the page's own controls, names and states) and no picture at all.")
+    }
+
     /// What the chosen model reads and a warning when it cannot read images.
     @ViewBuilder
     private var modelSummary: some View {
         if let model = catalog.model(runner.model) {
             HStack(spacing: 5) {
                 ModalityIcons(kinds: model.inputs)
-                if !model.seesImages {
+                if !model.seesImages && runner.mode != "dom" {
                     Image(systemName: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(.orange)
-                        .help("This model does not read images, and the agent sends it a screenshot every step.")
+                        .help("This model does not read images, and the agent sends it a screenshot every step. Switch to DOM mode, which sends none.")
                 }
             }
             .help(model.shortPrice + " per 1M tokens")

@@ -10,6 +10,7 @@ cd app && scripts/build.sh run       # the browser must be running
 cd .. && bench/run.py                # the five levels, once
 bench/run.py --only L4-govuk-visa --repeat 2
 bench/run.py --missions bench/missions/basics --no-judge
+bench/run.py --mode both              # each mission in image mode, then in DOM mode
 ```
 
 ## The missions
@@ -35,8 +36,11 @@ with no sites or key points; run it with `--no-judge`.
 
 ## The score
 
-For each run the table shows the agent's own verdict (`done`, `need_person`, `stuck`), the
-judge's verdict (`pass` or `fail`, with its reason), the steps, the time and the cost. The
+For each run the table shows the mode the model saw the page in (`image`: a screenshot each
+step; `dom`: the page map and no picture, see `docs/dom-mode-plan.md`), the agent's own verdict
+(`done`, `need_person`, `stuck`), the judge's verdict (`pass` or `fail`, with its reason), the
+steps, the time and the cost. `--mode both` runs every mission both ways, one after the other,
+so the two columns of the comparison come from the same sites on the same day. The
 judge is given the request, the key points, up to eight screenshots (the last one always, the
 ones where a focused field had just changed its value, since a wrong pick in a dropdown and its
 correction a step later look the same in an even spread, and the rest spread over the run), and

@@ -448,18 +448,27 @@ pub fn clip_text(text: &str, max_chars: usize) -> String {
 /// uses: a click is not twelve fields with nine of them null. The order of the properties is the
 /// order the model writes them in: the observation first, so it reads the screen before it
 /// decides, and the actions last.
-pub fn reply_schema(survey: bool, checks: bool) -> Value {
+/// With `dom`, a pointed action names a node by number (`target`) instead of a point, scroll
+/// goes to a height or a node, and `read` exists.
+pub fn reply_schema(survey: bool, checks: bool, dom: bool) -> Value {
+    // DOM mode plans from the map: no survey, no screens, no settled parts, no field list.
+    let survey = survey && !dom;
     let string = json!({"type": "string"});
     let null_string = json!({"type": ["string", "null"]});
     let number = json!({"type": "number"});
     let null_number = json!({"type": ["number", "null"]});
+    let integer = json!({"type": "integer"});
     let point = |kinds: &[&str], extra: Vec<(&str, Value)>| -> Value {
         let mut fields = vec![("kind", kind_enum(kinds))];
         if survey {
             fields.push(("screen", json!({"type": ["integer", "null"]})));
         }
-        fields.push(("x", number.clone()));
-        fields.push(("y", number.clone()));
+        if dom {
+            fields.push(("target", integer.clone()));
+        } else {
+            fields.push(("x", number.clone()));
+            fields.push(("y", number.clone()));
+        }
         fields.push(("label", null_string.clone()));
         fields.extend(extra);
         if checks {
@@ -495,7 +504,11 @@ pub fn reply_schema(survey: bool, checks: bool) -> Value {
         point(&["upload"], vec![("resource", null_string.clone())]),
         plain("type", vec![("text", string.clone()), ("secret", json!({"type": ["boolean", "null"]}))]),
         plain("key", vec![("keys", string.clone())]),
-        plain("scroll", vec![("x", null_number.clone()), ("y", null_number.clone()), ("dx", number.clone()), ("dy", number.clone())]),
+        if dom {
+            plain("scroll", vec![("to", null_number.clone()), ("target", json!({"type": ["integer", "null"]})), ("dx", null_number.clone()), ("dy", null_number.clone())])
+        } else {
+            plain("scroll", vec![("x", null_number.clone()), ("y", null_number.clone()), ("dx", number.clone()), ("dy", number.clone())])
+        },
         object(vec![("kind", kind_enum(&["wait"])), ("ms", json!({"type": "integer"}))]),
         plain("navigate", vec![("url", string.clone())]),
         plain("choose", vec![("option", string.clone())]),
@@ -504,6 +517,9 @@ pub fn reply_schema(survey: bool, checks: bool) -> Value {
     ];
     if survey {
         shapes.push(object(vec![("kind", kind_enum(&["survey"]))]));
+    }
+    if dom {
+        shapes.push(plain("read", vec![("target", integer.clone())]));
     }
     let stop = json!({"anyOf": [{"type": "null"}, object(vec![
         ("reason", json!({"type": "string", "enum": ["captcha", "verification_code", "verification_link", "identity", "payment", "credentials", "account_rejected", "unavailable", "decision", "page_problem", "other"]})),
@@ -649,13 +665,15 @@ mod tests {
         assert!(parse_reply("").is_err());
         let reply = parse_reply("{\"status\":\"done\",\"message\":\"\",\"proof\":\"the row shows 25 kg\",\"actions\":[]}").unwrap();
         assert_eq!(reply.proof.as_deref(), Some("the row shows 25 kg"));
-        let schema = reply_schema(true, true).to_string();
+        let schema = reply_schema(true, true, false).to_string();
         assert!(schema.find("\"observation\"").unwrap() < schema.find("\"actions\"").unwrap());
         assert!(schema.contains("\"proof\""));
         assert!(schema.contains("\"choose\""));
         assert!(schema.contains("\"survey\""));
         assert!(schema.contains("\"needs_person\""));
-        let plain = reply_schema(false, false).to_string();
+        let plain = reply_schema(false, false, false).to_string();
         assert!(!plain.contains("\"check\"") && !plain.contains("\"fields\""));
+        let dom = reply_schema(true, true, true).to_string();
+        assert!(dom.contains("\"target\"") && dom.contains("\"read\"") && dom.contains("\"to\"") && !dom.contains("\"survey\"") && !dom.contains("\"screen\""), "{dom}");
     }
 }

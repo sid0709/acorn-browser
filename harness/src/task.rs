@@ -35,8 +35,21 @@ pub struct Task {
     /// A kind not listed is asked about.
     pub allowances: BTreeMap<Irreversible, Allowance>,
     /// Whether the run may look at a whole long page as several screenshots (a survey) and plan
-    /// it at once. Off, the model sees one screen at a time, as a person does.
+    /// it at once. Off, the model sees one screen at a time, as a person does. Never in DOM mode.
     pub survey: bool,
+    /// How the model sees the page: as a screenshot, or as the page map and no picture.
+    pub mode: Mode,
+}
+
+/// The two ways the model sees a page.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    /// A screenshot each step; points are pixels of it.
+    #[default]
+    Image,
+    /// The page map each step (`page.rs`) and no picture; actions name nodes by number.
+    Dom,
 }
 
 impl Task {
@@ -53,7 +66,13 @@ impl Task {
             persistence: Persistence::default(),
             allowances: BTreeMap::new(),
             survey: true,
+            mode: Mode::Image,
         }
+    }
+
+    /// Whether the model sees the page map and no picture.
+    pub fn dom_mode(&self) -> bool {
+        self.mode == Mode::Dom
     }
 
     /// Sets what the run may do on its own for one kind of irreversible action.

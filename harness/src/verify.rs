@@ -94,7 +94,8 @@ impl Outcome {
 /// whether something is in the way, and whether the page is still loading. `evidence` is what
 /// the page reports beside the picture (the focused control, the address, what became of the
 /// actions): what a screenshot cannot show, the checker is told.
-pub fn look(decider: &(dyn Decider + Send + Sync), screenshot: &str, evidence: &str, expect: &str) -> Result<(Verdict, Verdicts), Error> {
+/// In DOM mode `map` is the page map, which stands in for the picture.
+pub fn look(decider: &(dyn Decider + Send + Sync), screenshot: &str, map: Option<&str>, evidence: &str, expect: &str) -> Result<(Verdict, Verdicts), Error> {
     let mut questions = std::collections::BTreeMap::new();
     questions.insert(
         ASK_MATCHES.to_string(),
@@ -112,7 +113,10 @@ pub fn look(decider: &(dyn Decider + Send + Sync), screenshot: &str, evidence: &
         ASK_LOADING.to_string(),
         Question::yes_no("Is the page still loading or changing: a spinner, a progress bar, a blank or half-drawn page, or a control that says it is still working?"),
     );
-    let mut state = vec![Part::Text("A screenshot of a web page the browser is on.".to_string()), Part::Image(screenshot.to_string())];
+    let mut state = match map {
+        Some(map) => vec![Part::Text(format!("The map of a web page the browser is on, as the browser itself reports it: one line per control, heading or text, with its live state; what is on the screen now first, the rest of the page summed up after. Read it as you would a screenshot.\n{map}"))],
+        None => vec![Part::Text("A screenshot of a web page the browser is on.".to_string()), Part::Image(screenshot.to_string())],
+    };
     if !evidence.trim().is_empty() {
         state.push(Part::Text(format!("What the page itself reports, which the screenshot may not show:\n{}", evidence.trim())));
     }
@@ -288,7 +292,8 @@ impl Agent {
             }
             let started = std::time::SystemTime::now();
             let evidence = prompt::evidence_text(obs, results);
-            let looked = look(decider.as_ref(), &obs.screenshot, &evidence, &expect);
+            let map = if s.task.dom_mode() { obs.page.as_ref().map(|page| page.text(&obs.viewport)) } else { None };
+            let looked = look(decider.as_ref(), &obs.screenshot, map.as_deref(), &evidence, &expect);
             s.pending_calls.push(ModelCall::decision(&format!("expected: {expect}"), looked.as_ref().map(|(_, verdicts)| verdicts), started));
             let (verdict, verdicts) = match looked {
                 Ok(looked) => looked,
