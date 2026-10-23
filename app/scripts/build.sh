@@ -50,8 +50,8 @@ echo "Compiling Swift"
 xcrun swiftc -O -swift-version 5 -target "arm64-apple-macos$MIN_MACOS" -sdk "$SDK" \
   -import-objc-header Sources/Chromium/Bridging-Header.h \
   -Xcc -ISources/Chromium -Xcc -I"$CEF_DIR" \
-  Sources/App/*.swift "$OBJ"/ChromiumEngine.o "$OBJ"/ChromiumBrowserView.o "$WRAPPER_LIB" \
-  -Xlinker -lc++ -framework AppKit -framework SwiftUI \
+  Sources/App/*.swift "$OBJ"/ChromiumEngine.o "$OBJ"/ChromiumBrowserView.o "$OBJ"/ChromiumInput.o "$WRAPPER_LIB" \
+  -Xlinker -lc++ -framework AppKit -framework SwiftUI -framework Carbon \
   -o "$OBJ/$PRODUCT"
 
 # 4. The app bundle.

@@ -5,6 +5,8 @@ import SwiftUI
 struct ChatSidebar: View {
     @StateObject private var runner = AgentRunner()
     @State private var draft = ""
+    @State private var choosingModel = false
+    @ObservedObject private var catalog = ModelCatalog.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -14,9 +16,12 @@ struct ChatSidebar: View {
                 if runner.isRunning {
                     ProgressView().controlSize(.small)
                     Text("Working").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    modelMenu
                 }
             }
             .padding(12)
+            modelSummary
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
@@ -53,7 +58,49 @@ struct ChatSidebar: View {
             .padding(12)
         }
         .background(.background)
+        .task { await catalog.refresh() }
         .task { await runTaskFromLaunchArguments() }
+    }
+
+    /// Opens the searchable list of OpenRouter's models. The pick drives the next run; the
+    /// decision model behind the checks is the runner's own and is not offered here.
+    private var modelMenu: some View {
+        Button { choosingModel.toggle() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "cpu")
+                Text(shortName(runner.model)).lineLimit(1)
+                Image(systemName: "chevron.down").font(.caption2)
+            }
+            .font(.caption)
+        }
+        .buttonStyle(.borderless)
+        .help("The model that drives the page. The checks between its batches use the runner's decision model.")
+        .popover(isPresented: $choosingModel, arrowEdge: .bottom) {
+            ModelPicker(selection: $runner.model)
+        }
+    }
+
+    /// One line under the header for the chosen model: what it reads and its token prices.
+    @ViewBuilder
+    private var modelSummary: some View {
+        if let model = catalog.model(runner.model) {
+            HStack(spacing: 6) {
+                ModalityIcons(kinds: model.inputs)
+                Text(model.shortPrice + " per 1M tokens").font(.caption2).foregroundStyle(.secondary)
+                if !model.seesImages {
+                    Image(systemName: "exclamationmark.triangle").font(.caption2).foregroundStyle(.orange)
+                        .help("This model does not read images, and the agent sends it a screenshot every step.")
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+        }
+    }
+
+    /// "openai/gpt-6-luna" as "gpt-6-luna".
+    private func shortName(_ id: String) -> String {
+        id.split(separator: "/").last.map(String.init) ?? id
     }
 
     /// `AcornBrowser --run-task <file>` submits that task file once the first page is up, so a

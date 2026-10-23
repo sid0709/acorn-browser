@@ -29,14 +29,140 @@ final class AgentDriver {
     nonisolated private static let evaluateRetries = 5
     nonisolated private static let maxLabel = 80
     nonisolated private static let maxValue = 200
+    /// How long one in-page wait for quiet may last: each DevTools call has a time limit in
+    /// the browser view, so a long settle is made of short waits.
+    nonisolated private static let maxQuietWait = 2.0
+    /// A request still open after this long (a long poll, a stream) no longer holds a look.
+    nonisolated private static let staleRequest = 8.0
+    /// How long an upload waits for the page to ask for a file after the click.
+    nonisolated private static let chooserWait = 3.0
+    nonisolated private static let pollMs = 50
 
     private let model: BrowserModel
     private var view: ChromiumBrowserView { model.view }
     private var notes: [String] = []
     private var zoneShots: [[String: Any]] = []
+    /// The page's requests not yet answered, by request id, with when each was sent.
+    private var inFlight: [String: Date] = [:]
+    /// The file picker the page opened and the browser intercepted, until an upload takes it.
+    private var chooser: [String: Any]?
+    /// What the page is dragging, once a drag of the agent's became one of the page's own.
+    private var dragData: [String: Any]?
+    /// Whether the DevTools domains this driver listens to are on for the current browser.
+    private var domainsOn = false
+    private var attached = false
 
     init(model: BrowserModel) {
         self.model = model
+        // The browser view calls these on the main thread, which the actor is.
+        model.view.devToolsEventHandler = { [weak self] method, params in
+            MainActor.assumeIsolated { self?.event(method, (params as? [String: Any]) ?? [:]) }
+        }
+    }
+
+    // MARK: Attaching
+
+    /// Takes the page over for the harness: dialogs are answered, file pickers intercepted,
+    /// blocked windows opened in this tab, and the page's traffic watched.
+    private func attach() async {
+        if !attached {
+            attached = true
+            view.dialogHandler = { [weak self] kind, message, _ in
+                MainActor.assumeIsolated {
+                    // An alert only informs, and leaving a page is what the plan asked for; a
+                    // question the page asks is not the harness's to answer, so it is declined.
+                    let accept = kind == .alert || kind == .beforeUnload
+                    let shown = Self.cut(message, Self.maxValue)
+                    self?.notes.append("A dialog said: \(shown) (it was \(accept ? "accepted" : "dismissed")).")
+                    return accept ? "" : nil
+                }
+            }
+            view.downloadHandler = { [weak self] name, finished in
+                MainActor.assumeIsolated {
+                    self?.notes.append(finished ? "A file downloaded: \(name)." : "A download started: \(name).")
+                }
+            }
+            view.blockedPopupHandler = { [weak self] url in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if url.isEmpty || url == "about:blank" {
+                        self.notes.append("The page tried to open a new window, which this browser blocked.")
+                    } else {
+                        self.notes.append("The page opened a new window for \(url); it was opened in this tab instead.")
+                        self.view.loadURL(url)
+                    }
+                }
+            }
+        }
+        await enableDomains()
+    }
+
+    /// Gives the page back to the person: dialogs and file pickers show again.
+    func detach() async {
+        guard attached else { return }
+        attached = false
+        await releaseHeld()
+        view.releasePointer()
+        view.showPointer(false)
+        view.dialogHandler = nil
+        view.downloadHandler = nil
+        view.blockedPopupHandler = nil
+        if domainsOn {
+            _ = try? await call("Page.setInterceptFileChooserDialog", ["enabled": false])
+            _ = try? await call("Input.setInterceptDrags", ["enabled": false])
+        }
+        domainsOn = false
+        inFlight.removeAll()
+        chooser = nil
+        dragData = nil
+    }
+
+    private func enableDomains() async {
+        guard !domainsOn else { return }
+        do {
+            _ = try await call("Network.enable")
+            _ = try await call("Page.enable")
+            _ = try await call("DOM.enable")
+            _ = try await call("Page.setInterceptFileChooserDialog", ["enabled": true])
+            // A page's own drag (a card to another column) would otherwise become a drag of
+            // the system's, which follows the person's mouse, not the agent's pointer.
+            _ = try await call("Input.setInterceptDrags", ["enabled": true])
+            domainsOn = true
+        } catch {
+            // Without a browser yet (the window is still opening) there is nothing to enable;
+            // the next request tries again.
+        }
+    }
+
+    /// A DevTools event of one of the enabled domains.
+    private func event(_ method: String, _ params: [String: Any]) {
+        switch method {
+        case "Network.requestWillBeSent":
+            // A socket or an event stream stays open on purpose; it is not loading.
+            let type = params["type"] as? String ?? ""
+            if type == "WebSocket" || type == "EventSource" { return }
+            if let id = params["requestId"] as? String { inFlight[id] = Date() }
+        case "Network.loadingFinished", "Network.loadingFailed":
+            if let id = params["requestId"] as? String { inFlight.removeValue(forKey: id) }
+        case "Page.fileChooserOpened":
+            chooser = params
+        case "Input.dragIntercepted":
+            dragData = params["data"] as? [String: Any]
+        default:
+            break
+        }
+    }
+
+    /// Whether the page is waiting on a request, leaving out those open for too long.
+    private var loading: Bool {
+        let now = Date()
+        inFlight = inFlight.filter { now.timeIntervalSince($0.value) < Self.staleRequest }
+        return !inFlight.isEmpty
+    }
+
+    nonisolated private static func cut(_ text: String, _ max: Int) -> String {
+        let one = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return String(one.prefix(max))
     }
 
     // MARK: Requests
@@ -45,6 +171,7 @@ final class AgentDriver {
     func handle(_ request: [String: Any]) async -> [String: Any] {
         var reply: [String: Any]
         do {
+            await attach()
             switch request["cmd"] as? String {
             case "open":
                 guard let url = request["url"] as? String else { throw AgentError("open needs a url") }
@@ -59,6 +186,7 @@ final class AgentDriver {
                 let actions = request["actions"] as? [[String: Any]] ?? []
                 reply = ["ok": true, "results": await act(actions)]
             case "close":
+                await detach()
                 reply = ["ok": true]
             default:
                 reply = ["ok": false, "error": "unknown command \(request["cmd"] as? String ?? "")"]
@@ -131,25 +259,38 @@ final class AgentDriver {
     private func shot(_ m: [String: Any]? = nil) async throws -> String {
         let size: [String: Any]
         if let m { size = m } else { size = try await metrics() }
-        let result = try await call("Page.captureScreenshot", [
+        let params: [String: Any] = [
             "format": "jpeg", "quality": Self.jpegQuality, "fromSurface": true,
             "clip": ["x": number(size["scrollX"]), "y": number(size["scrollY"]),
                      "width": number(size["width"]), "height": number(size["height"]),
                      // Chromium multiplies the scale by the screen's pixel ratio; undo that so
                      // the picture has one pixel to a CSS pixel.
                      "scale": 1 / max(number(size["ratio"]), 1)],
-        ])
+        ]
+        var result: [String: Any]
+        do {
+            result = try await call("Page.captureScreenshot", params)
+        } catch {
+            // Chromium only paints a window that is on screen: bring it there and try again.
+            if let window = view.window {
+                if window.isMiniaturized { window.deminiaturize(nil) }
+                window.makeKeyAndOrderFront(nil)
+            }
+            NSApp.activate()
+            try? await Task.sleep(for: .milliseconds(300))
+            result = try await call("Page.captureScreenshot", params)
+        }
         guard let data = result["data"] as? String else { throw AgentError("the browser returned no picture") }
         return "data:image/jpeg;base64," + data
     }
 
-    /// Waits until the page has settled: no change to its DOM for a quarter second, and nothing
-    /// still loading, within `cap` seconds. A menu still opening or a list still filling is not
-    /// what the model should plan from.
+    /// Waits until the page has settled: no change to its DOM for a quarter second, no request
+    /// of the page's still open, and the document loaded, within `cap` seconds. A menu still
+    /// opening or a list still filling is not what the model should plan from.
     private func settled(cap: Double = AgentDriver.settleCap) async {
         let started = Date()
         while Date().timeIntervalSince(started) < cap {
-            let left = max(cap - Date().timeIntervalSince(started), Self.quietMs / 1000)
+            let left = min(max(cap - Date().timeIntervalSince(started), Self.quietMs / 1000), Self.maxQuietWait)
             let quiet = (try? await evaluate("""
             new Promise((resolve) => {
               let timer = setTimeout(() => done(true), \(Self.quietMs));
@@ -165,7 +306,7 @@ final class AgentDriver {
             })
             """) as? Bool) ?? true
             let ready = ((try? await evaluate("document.readyState === 'complete'")) as? Bool) ?? false
-            if quiet && ready && !view.isLoading { return }
+            if quiet && ready && !view.isLoading && !loading { return }
             try? await Task.sleep(for: .milliseconds(150))
         }
     }
@@ -289,11 +430,14 @@ final class AgentDriver {
 
     // MARK: Acting
 
-    /// Carries the actions out in order. A failure stops the batch (the rest is reported as not
-    /// run); typing with nothing focused is a failure of that action only.
+    /// Carries the actions out in order, with the real mouse and keyboard. A failure stops the
+    /// batch (the rest is reported as not run); typing with nothing focused is a failure of
+    /// that action only.
     private func act(_ actions: [[String: Any]]) async -> [[String: Any]] {
         var results: [[String: Any]] = []
         var stopped: String?
+        view.takeFront()
+        view.showPointer(true)
         for (index, action) in actions.enumerated() {
             let id = action["id"] as? String ?? ""
             if let stopped {
@@ -309,8 +453,15 @@ final class AgentDriver {
                     }
                     if abs(number(m["scrollY"]) - target.doubleValue) > 1 { try await scrollTo(target.doubleValue) }
                 }
+                chooser = nil
                 var result: [String: Any] = ["id": id, "ok": true]
                 for (key, value) in try await doAction(action) { result[key] = value }
+                // A plain click that opened the file picker: the browser held it back, and the
+                // harness is told so it can plan an upload.
+                if chooser != nil && action["kind"] as? String != "upload" {
+                    chooser = nil
+                    result["opened"] = "file_picker"
+                }
                 results.append(result)
             } catch let failure as ActionFailure {
                 results.append(["id": id, "ok": false, "error": failure.message, "unreached": failure.unreached])
@@ -330,22 +481,31 @@ final class AgentDriver {
                 }
             }
         }
+        await releaseHeld()
         return results
     }
 
     private func doAction(_ action: [String: Any]) async throws -> [String: Any] {
         let x = number(action["x"]), y = number(action["y"])
+        let flags: CGEventFlags
+        do { flags = try KeyPress.flags(named: action["modifiers"] as? String ?? "") } catch { throw ActionFailure(message: "\(error)") }
         switch action["kind"] as? String {
         case "click":
-            try await click(x, y, count: 1)
+            try await click(x, y, count: 1, flags: flags)
         case "double_click":
-            try await click(x, y, count: 2)
+            try await click(x, y, count: 2, flags: flags)
         case "triple_click":
-            try await click(x, y, count: 3)
+            try await click(x, y, count: 3, flags: flags)
         case "right_click":
-            try await click(x, y, count: 1, button: "right")
+            try await click(x, y, count: 1, button: .right, flags: flags)
         case "hover":
-            try await mouse("mouseMoved", x, y)
+            try await hold(flags)
+            try await move(x, y, flags: flags)
+            await releaseHeld()
+        case "drag":
+            let path = ((action["path"] as? [[String: Any]]) ?? []).map { (x: number($0["x"]), y: number($0["y"])) }
+            guard path.count >= 2 else { throw ActionFailure(message: "a drag needs a path of at least two points") }
+            try await drag(path, flags: flags)
         case "type":
             guard await hasFocus() else {
                 throw ActionFailure(message: "nothing has focus, so there is nowhere to type", unreached: true)
@@ -356,21 +516,17 @@ final class AgentDriver {
             for name in keys {
                 let press: KeyPress
                 do { press = try KeyPress.parse(name) } catch { throw ActionFailure(message: "\(error)") }
-                for event in press.events() { _ = try await call("Input.dispatchKeyEvent", event) }
+                try await tap(press)
             }
         case "scroll":
             let m = try await metrics()
             let at = (x: (action["x"] as? NSNumber)?.doubleValue ?? number(m["width"]) / 2,
                       y: (action["y"] as? NSNumber)?.doubleValue ?? number(m["height"]) / 2)
-            try await mouse("mouseMoved", at.x, at.y)
-            _ = try await call("Input.dispatchMouseEvent", [
-                "type": "mouseWheel", "x": at.x, "y": at.y,
-                "deltaX": number(action["dx"]), "deltaY": number(action["dy"]),
-            ])
+            try await wheel(at.x, at.y, dx: number(action["dx"]), dy: number(action["dy"]))
             await settled(cap: Self.scrollSettleCap)
             return [:]
         case "upload":
-            throw ActionFailure(message: "this browser cannot attach files yet")
+            return try await upload(x, y, path: action["path"] as? String ?? "", name: action["fileName"] as? String ?? "")
         case "wait":
             let ms = min((action["ms"] as? NSNumber)?.doubleValue ?? 1000, Self.maxWaitMs)
             try? await Task.sleep(for: .milliseconds(Int(ms)))
@@ -382,40 +538,209 @@ final class AgentDriver {
         return [:]
     }
 
-    private func mouse(_ type: String, _ x: Double, _ y: Double, button: String = "none", count: Int = 0, buttons: Int = 0) async throws {
-        _ = try await call("Input.dispatchMouseEvent", [
-            "type": type, "x": x, "y": y, "button": button, "clickCount": count, "buttons": buttons,
-        ])
+    /// Clicks what opens the file picker, and hands the page the task's file in its place.
+    private func upload(_ x: Double, _ y: Double, path: String, name: String) async throws -> [String: Any] {
+        chooser = nil
+        try await click(x, y, count: 1)
+        let started = Date()
+        while chooser == nil && Date().timeIntervalSince(started) < Self.chooserWait {
+            try? await Task.sleep(for: .milliseconds(Self.pollMs))
+        }
+        guard let opened = chooser else {
+            throw ActionFailure(message: "the click did not open a file picker")
+        }
+        chooser = nil
+        if path.isEmpty { throw ActionFailure(message: "the task has no file to upload") }
+        guard let nodeId = opened["backendNodeId"] as? NSNumber else {
+            throw ActionFailure(message: "the browser did not say which control asked for the file")
+        }
+        _ = try await call("DOM.setFileInputFiles", ["files": [path], "backendNodeId": nodeId.intValue])
+        await settled()
+        return ["detail": "attached \(name.isEmpty ? path : name)"]
     }
 
-    private func click(_ x: Double, _ y: Double, count: Int, button: String = "left") async throws {
-        let mask = button == "right" ? 2 : 1
-        try await mouse("mouseMoved", x, y)
+    // MARK: The mouse and keyboard
+
+    // The pace of a person: a mouse reports about every 8 ms, a button stays down a moment,
+    // keys come a few per tenth of a second.
+    nonisolated private static let moveMs = 8
+    nonisolated private static let pressMs = 40
+    nonisolated private static let betweenClicksMs = 70
+    nonisolated private static let keyMs = 12
+    nonisolated private static let afterKeyMs = 25
+    /// How far the pointer moves between two reports of a drag, in pixels.
+    nonisolated private static let dragStep = 4.0
+    nonisolated private static let maxDragMoves = 2000
+    /// How much one turn of the wheel scrolls, in pixels; a long scroll is many turns.
+    nonisolated private static let wheelStep = 120.0
+
+    /// The modifier keys held down at the moment, to let go of at the end of a batch, whatever
+    /// happened in between.
+    private var held: [CGKeyCode] = []
+    private var heldFlags: CGEventFlags = []
+
+    private func pause(_ ms: Int) async {
+        try? await Task.sleep(for: .milliseconds(ms))
+    }
+
+    private func offScreen() -> ActionFailure {
+        ActionFailure(message: "the page is not in a window, so the pointer cannot reach it")
+    }
+
+    private func move(_ x: Double, _ y: Double, flags: CGEventFlags = []) async throws {
+        guard view.pointerMove(toX: x, y: y, flags: flags) else { throw offScreen() }
+        await pause(Self.moveMs)
+    }
+
+    private func button(_ button: ChromiumMouseButton, down: Bool, _ x: Double, _ y: Double, count: Int, flags: CGEventFlags) async throws {
+        guard view.pointerButton(button, down: down, x: x, y: y, clickCount: count, flags: flags) else { throw offScreen() }
+    }
+
+    /// Moves to the point and clicks there, the given number of times, like a person: down, a
+    /// moment, up, with the system's click count on each so the page sees a double click.
+    private func click(_ x: Double, _ y: Double, count: Int, button: ChromiumMouseButton = .left, flags: CGEventFlags = []) async throws {
+        try await hold(flags)
+        try await move(x, y, flags: flags)
         for n in 1...count {
-            try await mouse("mousePressed", x, y, button: button, count: n, buttons: mask)
-            try await mouse("mouseReleased", x, y, button: button, count: n)
+            if n > 1 { await pause(Self.betweenClicksMs) }
+            try await self.button(button, down: true, x, y, count: n, flags: flags)
+            await pause(Self.pressMs)
+            try await self.button(button, down: false, x, y, count: n, flags: flags)
         }
+        await releaseHeld()
     }
 
-    /// Types into the focused control, a key at a time like a person, which pages that listen to
-    /// keys expect. Characters a keyboard cannot type (Chinese, say) are inserted as text.
-    private func type(_ text: String) async throws {
-        for character in text {
-            let string = String(character)
-            let named = character.isNewline ? "Enter" : character == "\t" ? "Tab" : nil
-            if let press = named.flatMap({ try? KeyPress.parse($0) }) ?? asciiPress(character) {
-                for event in press.events() { _ = try await call("Input.dispatchKeyEvent", event) }
-            } else {
-                _ = try await call("Input.insertText", ["text": string])
+    /// Presses at the first point, moves through the rest a few pixels at a time, and lets go at
+    /// the last: a stroke, a sweep, or something carried to where it is dropped.
+    private func drag(_ path: [(x: Double, y: Double)], flags: CGEventFlags) async throws {
+        try await hold(flags)
+        dragData = nil
+        var carrying = false
+        try await move(path[0].x, path[0].y, flags: flags)
+        await pause(Self.pressMs)
+        try await button(.left, down: true, path[0].x, path[0].y, count: 1, flags: flags)
+        await pause(Self.pressMs)
+        // The step grows on a long path so a drag stays within a few seconds.
+        var length = 0.0
+        for pair in zip(path, path.dropFirst()) { length += distance(pair.1.x - pair.0.x, pair.1.y - pair.0.y) }
+        let step = max(Self.dragStep, length / Double(Self.maxDragMoves))
+        for pair in zip(path, path.dropFirst()) {
+            let (dx, dy) = (pair.1.x - pair.0.x, pair.1.y - pair.0.y)
+            let moves = max(1, Int((distance(dx, dy) / step).rounded(.up)))
+            for i in 1...moves {
+                let f = Double(i) / Double(moves)
+                let (x, y) = (pair.0.x + dx * f, pair.0.y + dy * f)
+                if let data = dragData {
+                    // The page took the drag over (something draggable): from here it is told
+                    // where its item is, through the browser, as the system would tell it.
+                    try await dragEvent(carrying ? "dragOver" : "dragEnter", x, y, data, flags)
+                    carrying = true
+                    await pause(Self.moveMs)
+                } else {
+                    try await move(x, y, flags: flags)
+                }
             }
-            try? await Task.sleep(for: .milliseconds(10))
+        }
+        await pause(Self.pressMs)
+        if let data = dragData {
+            try await dragEvent(carrying ? "drop" : "dragCancel", path.last!.x, path.last!.y, data, flags)
+            dragData = nil
+            view.releasePointer()
+        } else {
+            try await button(.left, down: false, path.last!.x, path.last!.y, count: 1, flags: flags)
+        }
+        await releaseHeld()
+    }
+
+    private func dragEvent(_ type: String, _ x: Double, _ y: Double, _ data: [String: Any], _ flags: CGEventFlags) async throws {
+        var modifiers = 0
+        if flags.contains(.maskAlternate) { modifiers |= 1 }
+        if flags.contains(.maskControl) { modifiers |= 2 }
+        if flags.contains(.maskCommand) { modifiers |= 4 }
+        if flags.contains(.maskShift) { modifiers |= 8 }
+        _ = try await call("Input.dispatchDragEvent", ["type": type, "x": x, "y": y, "data": data, "modifiers": modifiers])
+    }
+
+    /// Turns the wheel at the point, a turn at a time, until the distance is covered.
+    private func wheel(_ x: Double, _ y: Double, dx: Double, dy: Double) async throws {
+        try await move(x, y)
+        var (leftX, leftY) = (dx, dy)
+        while abs(leftX) >= 1 || abs(leftY) >= 1 {
+            let stepX = leftX.clamped(to: Self.wheelStep)
+            let stepY = leftY.clamped(to: Self.wheelStep)
+            guard view.wheel(atX: x, y: y, deltaX: stepX, deltaY: stepY, flags: []) else { throw offScreen() }
+            leftX -= stepX
+            leftY -= stepY
+            await pause(Self.moveMs)
         }
     }
 
-    /// The key press that types a printable ASCII character, or nil for any other.
-    private func asciiPress(_ character: Character) -> KeyPress? {
-        guard let ascii = character.asciiValue, ascii >= 32, ascii < 127 else { return nil }
-        guard let press = try? KeyPress.parse(String(character)), press.text != nil else { return nil }
-        return press
+    /// Presses the modifier keys of the flags and keeps them down.
+    private func hold(_ flags: CGEventFlags) async throws {
+        for key in KeyPress.modifierKeys(flags) where !held.contains(key) {
+            heldFlags.insert(KeyPress.flag(of: key))
+            guard view.keyCode(key, down: true, flags: heldFlags, characters: "", unmodified: "") else { throw offScreen() }
+            held.append(key)
+            await pause(Self.keyMs)
+        }
     }
+
+    /// Lets go of every held modifier key, last pressed first.
+    private func releaseHeld() async {
+        for key in held.reversed() {
+            heldFlags.remove(KeyPress.flag(of: key))
+            _ = view.keyCode(key, down: false, flags: heldFlags, characters: "", unmodified: "")
+            await pause(Self.keyMs)
+        }
+        held.removeAll()
+        heldFlags = []
+    }
+
+    /// One press and release of a key, with its chord's modifiers held round it.
+    private func tap(_ press: KeyPress) async throws {
+        try await hold(press.flags)
+        let flags = press.flags.union(heldFlags)
+        guard view.keyCode(press.keyCode, down: true, flags: flags, characters: press.characters, unmodified: press.unmodified) else { throw offScreen() }
+        await pause(Self.keyMs)
+        _ = view.keyCode(press.keyCode, down: false, flags: flags, characters: press.characters, unmodified: press.unmodified)
+        await pause(Self.afterKeyMs)
+        await releaseHeld()
+    }
+
+    /// Types into the focused control a key at a time, like a person. A run of characters a
+    /// keyboard cannot type (Chinese, say) is handed over the way an input method commits it.
+    private func type(_ text: String) async throws {
+        var run = ""
+        func flush() throws {
+            guard !run.isEmpty else { return }
+            guard view.insertText(run) else { throw ActionFailure(message: "the page took no text") }
+            run = ""
+        }
+        for character in text {
+            if character.isNewline {
+                try flush()
+                try await tap(KeyPress.parse("Enter"))
+            } else if character == "\t" {
+                try flush()
+                try await tap(KeyPress.parse("Tab"))
+            } else if let press = try? KeyPress(character: character) {
+                try flush()
+                try await tap(press)
+            } else {
+                run.append(character)
+            }
+        }
+        try flush()
+        await pause(Self.afterKeyMs)
+    }
+}
+
+private extension Double {
+    /// The value cut to `limit` either side of zero.
+    func clamped(to limit: Double) -> Double { Swift.min(Swift.max(self, -limit), limit) }
+}
+
+/// The length of a move of `dx`, `dy`.
+private func distance(_ dx: Double, _ dy: Double) -> Double {
+    (dx * dx + dy * dy).squareRoot()
 }

@@ -17,9 +17,31 @@ own observation and action shapes. Everything goes through Chromium's DevTools p
 the harness cannot tell this browser from the Playwright one.
 
 - Screenshots are JPEGs at one pixel to a CSS pixel, so a point in the picture is a point to click.
-- Actions: click, double/triple/right click, hover, type, key chords (`Enter`, `Meta+a`),
-  scroll, wait. `upload` is not done yet.
-- A look waits for the page to settle (no DOM change for 250 ms, nothing loading).
+- Actions: click, double/triple/right click (with modifier keys held), hover, drag along a path,
+  type, key chords (`Enter`, `Meta+a`), scroll, wait, upload (the file picker is intercepted and
+  the task's file handed to the page; a plain click that opens the picker reports
+  `opened: file_picker`).
+- **The agent has a pointer and keyboard of its own.** Its events are built as the system
+  builds them from the hardware (`NSEvent`) and handed to Chromium's view the way the window
+  hands them over, not injected through DevTools: a drag is a button held through a path of
+  moves a few pixels apart, a double click is two clicks with the system's click count, keys are
+  the keys of the keyboard with their modifiers held round them, and `event.buttons` says the
+  button is down. A page cannot tell them from a person's: a drawing tool gets a stroke. The
+  person's own mouse and keyboard are left alone, so the computer stays usable during a run; the
+  agent's pointer is drawn on the page as an orange arrow, beside the person's. A page's own
+  drag and drop (a card to another column) is carried through the browser the way the system
+  would carry it. Characters a keyboard cannot type (Chinese, say) are committed the way an
+  input method commits them, and the page's input context uses a Latin layout while the agent
+  types, whatever the person's keyboard is set to. Chords the system owns (`Meta+q`,
+  `Meta+Tab`, ...) are refused.
+- A look waits for the page to settle: no DOM change for 250 ms, the document loaded, and
+  none of the page's requests (fetch, XHR, images; not sockets or event streams) still open.
+- While the harness is connected, the page's dialogs are answered (alert and beforeunload
+  accepted, confirm and prompt dismissed), downloads are noted, and a window the page tries to
+  open is opened in this tab; all of it is reported in `notes`. When the connection ends the
+  page is given back to the person.
+- If the window is hidden when a picture is needed, it is brought forward and the picture
+  taken again.
 
 ```bash
 scripts/build.sh run        # start the app
@@ -31,7 +53,13 @@ Tests/agent_smoke.py        # drives it over the socket and checks 19 things
 Type a task in the sidebar (or paste a task file with `url:`, `done_when:`, `steps:` lines, like
 the ones in `kit/tasks`). The app writes it to a task file, starts `acorn-runner` (the harness,
 in `../runner`), and shows each step in the chat. The stop button ends a run. A task without a
-`url:` line starts on the page the browser shows.
+`url:` line starts on the page the browser shows. The button in the sidebar's header picks the
+model that drives the page (`gpt-6-luna` by default) from every model OpenRouter lists, with a
+search field. The chosen model's inputs and outputs, context, reasoning efforts and every price
+are shown beneath the list, and a model that cannot read the screenshots is flagged. The list
+comes from OpenRouter's public `/api/v1/models` (no key needed) and is kept in
+`openrouter-models.json` beside the runs for offline use; the choice is kept between launches. The checks between batches use the runner's own decision
+model, which the sidebar does not change.
 
 **One-time setup: the model key.** The runner reads `OPENROUTER_API_KEY` from
 `~/Library/Application Support/com.acorn.browser/.env`, which is outside the repo:
@@ -47,8 +75,8 @@ Each run keeps a folder under `~/Library/Application Support/com.acorn.browser/r
 
 `AcornBrowser --run-task <file>` submits a task file at launch, for trying it without typing.
 
-Known limits: Chromium only paints a visible window, so the window must be on screen; JavaScript
-dialogs and downloads are not reported in `notes` yet; popups are blocked (one tab).
+Known limits: Chromium only paints a visible window, so the window is brought on screen when
+a picture is needed; there is one tab, so a window the page opens takes this tab's place.
 
 ```text
 Sources/App/        SwiftUI: window, toolbar, chat sidebar, one tab's state

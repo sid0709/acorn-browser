@@ -3,6 +3,11 @@ import Foundation
 /// Lets the harness's runner drive the browser: a Unix socket that speaks the kit's protocol,
 /// one JSON object per line each way. A socket, not a TCP port, so that only this user's
 /// processes can reach it (the file is mode 0600) and no web page can.
+/// A result handed from the main actor to the thread waiting for it.
+private final class Box<Value>: @unchecked Sendable {
+    var value: Value?
+}
+
 final class AgentServer: @unchecked Sendable {
     static let shared = AgentServer()
 
@@ -56,15 +61,24 @@ final class AgentServer: @unchecked Sendable {
         Thread.detachNewThread { [self] in
             while true {
                 let connection = accept(fd, nil, nil)
-                if connection < 0 { continue }
-                Task.detached { [self] in await serve(connection) }
+                if connection < 0 {
+                    if errno == EINTR || errno == ECONNABORTED { continue }
+                    NSLog("AgentServer: accept failed: %s", strerror(errno))
+                    return
+                }
+                // A thread of its own: the read blocks, which a cooperative thread must not.
+                Thread.detachNewThread { [self] in serve(connection) }
             }
         }
     }
 
-    /// Reads request lines from one connection and answers each, one at a time.
-    private func serve(_ connection: Int32) async {
-        defer { close(connection) }
+    /// Reads request lines from one connection and answers each, one at a time. When the
+    /// connection ends (the runner finished, or died), the page is given back to the person.
+    private func serve(_ connection: Int32) {
+        defer {
+            close(connection)
+            _ = onMain { driver in await driver.detach() }
+        }
         var pending = Data()
         var chunk = [UInt8](repeating: 0, count: 1 << 16)
         while true {
@@ -75,18 +89,31 @@ final class AgentServer: @unchecked Sendable {
                 let line = pending[pending.startIndex..<newline]
                 pending.removeSubrange(pending.startIndex...newline)
                 if line.allSatisfy({ $0 == 0x20 || $0 == 0x0D }) { continue }
-                let reply = await answer(Data(line))
-                var out = reply
+                var out = answer(Data(line))
                 out.append(0x0A)
                 if !write(all: out, to: connection) { return }
             }
         }
     }
 
-    private func answer(_ line: Data) async -> Data {
+    /// Runs `body` with the driver on the main actor and waits for it, from a plain thread.
+    private func onMain<Result>(_ body: @escaping @MainActor (AgentDriver) async -> Result) -> Result? {
+        guard let driver else { return nil }
+        let done = DispatchSemaphore(value: 0)
+        let box = Box<Result>()
+        Task { @MainActor in
+            box.value = await body(driver)
+            done.signal()
+        }
+        done.wait()
+        return box.value
+    }
+
+    private func answer(_ line: Data) -> Data {
         var reply: [String: Any]
-        if let request = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any], let driver {
-            reply = await driver.handle(request)
+        if let request = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
+           let answered = onMain({ driver in await driver.handle(request) }) {
+            reply = answered
         } else {
             reply = ["id": NSNull(), "ok": false, "error": "bad request: not a JSON object"]
         }

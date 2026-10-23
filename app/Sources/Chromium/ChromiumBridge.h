@@ -56,6 +56,28 @@ NS_SWIFT_UI_ACTOR
 
 @end
 
+typedef NS_ENUM(NSInteger, ChromiumDialogKind) {
+  ChromiumDialogKindAlert,
+  ChromiumDialogKindConfirm,
+  ChromiumDialogKindPrompt,
+  /// The page asks whether to leave (beforeunload).
+  ChromiumDialogKindBeforeUnload,
+};
+
+/// Answers a page's dialog without showing it: nil dismisses it (Cancel, or stay on the page);
+/// a string accepts it (OK, or leave), and is the answer to a prompt.
+typedef NSString *_Nullable (^ChromiumDialogHandler)(ChromiumDialogKind kind,
+                                                      NSString *message,
+                                                      NSString *defaultText);
+
+/// A DevTools protocol event for a domain the page enabled (`Network.enable`, `Page.enable`).
+typedef void (^ChromiumDevToolsEventHandler)(NSString *method, NSDictionary *_Nullable params);
+
+typedef NS_ENUM(NSInteger, ChromiumMouseButton) {
+  ChromiumMouseButtonLeft,
+  ChromiumMouseButtonRight,
+};
+
 typedef NS_ENUM(NSInteger, ChromiumScreenshotArea) {
   /// What's currently on screen in the tab.
   ChromiumScreenshotAreaVisible,
@@ -107,10 +129,71 @@ NS_SWIFT_UI_ACTOR
 
 /// Runs one Chrome DevTools Protocol method on this page (for example `Page.navigate` or
 /// `Input.dispatchMouseEvent`). Calls back on the main thread with whether it worked and the
-/// method's result (or the protocol's error). Events are not delivered, only the result.
+/// method's result (or the protocol's error). Events go to `devToolsEventHandler`.
 - (void)sendDevToolsMethod:(NSString *)method
                     params:(nullable NSDictionary *)params
                 completion:(void (^)(BOOL success, NSDictionary *_Nullable result))completion;
+
+/// Receives the DevTools events of the domains that were enabled with `sendDevToolsMethod`
+/// (`Network.requestWillBeSent`, `Page.fileChooserOpened`, ...), on the main thread.
+@property (nonatomic, copy, nullable) ChromiumDevToolsEventHandler devToolsEventHandler;
+
+/// While set, the page's JavaScript dialogs are answered by this block instead of being shown.
+/// For an agent driving the page, which cannot click a native dialog.
+@property (nonatomic, copy, nullable) ChromiumDialogHandler dialogHandler;
+
+/// Called on the main thread when a download starts (`finished` NO) and when it completes
+/// (`finished` YES), with the file's name.
+@property (nonatomic, copy, nullable) void (^downloadHandler)(NSString *fileName, BOOL finished);
+
+/// Called on the main thread when the page asked for a new window that this view did not get
+/// a tab for (its delegate declined, or popups are off), with the window's URL. The handler
+/// may open it in this tab.
+@property (nonatomic, copy, nullable) void (^blockedPopupHandler)(NSString *url);
+
+#pragma mark The agent's own pointer and keyboard
+
+/// Input for the agent that is real to the page and invisible to the system: the events are
+/// built as the system builds them from the hardware (NSEvent) and handed to Chromium's view
+/// the way the window hands them over, so the page sees a person's click, drag or key, while
+/// the person's own mouse and keyboard are left alone. The agent's pointer is drawn on the
+/// page as an arrow of its own. Points are CSS pixels of the page, from its top left.
+
+/// Brings the window on screen and gives the page the keyboard, without taking the person's
+/// focus from another app.
+- (void)takeFront;
+
+/// Shows the agent's pointer on the page, or hides it.
+- (void)showPointer:(BOOL)shown;
+
+/// Moves the pointer to the point: a move, or a drag while a button is held. `flags` are the
+/// modifier keys held meanwhile. Returns NO when the view is not in a window.
+- (BOOL)pointerMoveToX:(double)x y:(double)y flags:(CGEventFlags)flags
+    NS_SWIFT_NAME(pointerMove(toX:y:flags:));
+- (BOOL)pointerButton:(ChromiumMouseButton)button
+                 down:(BOOL)down
+                    x:(double)x
+                    y:(double)y
+           clickCount:(NSInteger)clickCount
+                flags:(CGEventFlags)flags NS_SWIFT_NAME(pointerButton(_:down:x:y:clickCount:flags:));
+/// Forgets a held button without an event, when the page took the drag over as a drop.
+- (void)releasePointer;
+/// One turn of the wheel at the point: positive deltas scroll right and down, in pixels.
+- (BOOL)wheelAtX:(double)x y:(double)y deltaX:(double)deltaX deltaY:(double)deltaY flags:(CGEventFlags)flags
+    NS_SWIFT_NAME(wheel(atX:y:deltaX:deltaY:flags:));
+
+/// A key going down or up, by its macOS virtual key code, with the characters the key event
+/// carries (as modified, and without the modifiers) and the modifier keys held. A modifier
+/// key's own code (Shift, Command, ...) makes a flags-changed event.
+- (BOOL)keyCode:(CGKeyCode)keyCode
+           down:(BOOL)down
+          flags:(CGEventFlags)flags
+     characters:(NSString *)characters
+     unmodified:(NSString *)unmodified NS_SWIFT_NAME(keyCode(_:down:flags:characters:unmodified:));
+
+/// Hands the focused control text as an input method does when it commits a composition: how
+/// characters a keyboard cannot type (Chinese, say) arrive. NO when nothing takes text.
+- (BOOL)insertText:(NSString *)text;
 
 /// Renders the page inside Chromium (no screen recording involved, so it works while the
 /// window is hidden from capture). Calls back on the main thread with PNG data and an

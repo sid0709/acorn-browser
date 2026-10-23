@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn a_plan_expects_each_typed_field_to_show_its_last_value() {
         let obs = Observation { viewport: Viewport { scroll_y: 100.0, ..Default::default() }, ..Default::default() };
-        let mut name = Action::new("a1", Kind::Click { x: 10.0, y: 20.0 });
+        let mut name = Action::new("a1", Kind::Click { x: 10.0, y: 20.0, modifiers: String::new() });
         name.label = "Full name".into();
         name.zone = 1;
         let mut typed = Action::new("a2", Kind::Type { text: " A. Person ".into(), secret: false });

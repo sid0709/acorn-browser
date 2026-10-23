@@ -45,13 +45,14 @@ const CLICK: Color = [235, 30, 30];
 const SCROLL: Color = [30, 90, 235];
 const UPLOAD: Color = [20, 160, 60];
 const HOVER: Color = [170, 60, 200];
+const DRAG: Color = [235, 120, 20];
 const LABEL: Color = [255, 255, 0];
 const HALO: Color = [255, 255, 255];
 const PLATE: Color = [0, 0, 0];
 
 /// Draws where each action points on the screenshot: an open ring with a dot at its middle for a
-/// click or an upload, a ring for a hover, a line for a scroll, each numbered in order. Returns
-/// the marked screenshot as a JPEG data URL.
+/// click or an upload, a ring for a hover, a line for a scroll, a path from a ring for a drag,
+/// each numbered in order. Returns the marked screenshot as a JPEG data URL.
 pub fn mark_screenshot(data_url: &str, actions: &[Action]) -> Result<String, String> {
     let raw = change::decode_data_url(data_url)?;
     let mut canvas = image::load_from_memory(&raw).map_err(|e| format!("the screenshot is not a readable image: {e}"))?.to_rgb8();
@@ -70,6 +71,15 @@ pub fn mark_screenshot(data_url: &str, actions: &[Action]) -> Result<String, Str
                 let limit = 160.0 * scale as f64;
                 draw_line(&mut canvas, x, y, x + dx.clamp(-limit, limit) as i32, y + dy.clamp(-limit, limit) as i32, SCROLL, thick);
                 draw_ring(&mut canvas, x, y, 6 * scale, SCROLL, thick);
+            }
+            Kind::Drag { path, .. } => {
+                for pair in path.windows(2) {
+                    draw_line(&mut canvas, pair[0].x as i32, pair[0].y as i32, pair[1].x as i32, pair[1].y as i32, DRAG, thick);
+                }
+                if let Some(end) = path.last() {
+                    draw_ring(&mut canvas, end.x as i32, end.y as i32, 0, DRAG, DOT_RADIUS * scale);
+                }
+                draw_open_mark(&mut canvas, x, y, radius, scale, DRAG, thick);
             }
             Kind::Upload { .. } => draw_open_mark(&mut canvas, x, y, radius, scale, UPLOAD, thick),
             Kind::Hover { .. } => draw_ring(&mut canvas, x, y, radius, HOVER, thick),
@@ -240,7 +250,7 @@ mod tests {
 
     #[test]
     fn a_marked_screenshot_keeps_its_size_and_shows_the_point() {
-        let click = Action::new("a", Kind::Click { x: 50.0, y: 50.0 });
+        let click = Action::new("a", Kind::Click { x: 50.0, y: 50.0, modifiers: String::new() });
         let marked = mark_screenshot(&change::test_screenshot(200, 100, false), &[click]).unwrap();
         assert!(marked.starts_with("data:image/jpeg;base64,"));
         let img = image::load_from_memory(&change::decode_data_url(&marked).unwrap()).unwrap();

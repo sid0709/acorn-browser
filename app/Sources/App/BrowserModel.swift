@@ -17,6 +17,8 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
 
     init(url: String) {
         view = ChromiumBrowserView(url: url)
+        // A page's own drag and drop (a card to another column) is part of using it.
+        view.allowsDragAndDrop = true
         address = url
         super.init()
         view.delegate = self

@@ -55,7 +55,8 @@ If your actions change nothing, try something different instead of repeating the
 
 Coordinates are pixels of the screenshot you are shown, from its top left. Write each action with only the fields listed for its kind, and nothing else. Aim every point at the line where a value is typed or shown, never at the words of the question, even when those words are printed inside the box. Give every click and upload a "label": the caption of its control as the page writes it ("First name", "Add to cart"), in a few words, or null when it has none.
 
-- click, double_click, triple_click, right_click, hover: at x, y; a click also says "commit", as above.
+- click, double_click, triple_click, right_click, hover: at x, y; a click also says "commit", as above. Each may hold keys meanwhile with "modifiers" ("Shift" to extend a selection, "Meta" to add to one), or null.
+- drag: "path", two or more points [{"x", "y"}, ...] in order: the mouse button goes down at the first, moves through the others, and comes up at the last. For moving something (a slider's knob, a card to another column, an item onto a drop zone), for sweeping over text to select it, and for drawing on a canvas: a line is two points, a curve or a shape is many close points along it. "modifiers" as for a click (Shift often keeps a drawn line straight), or null. Give it a "label" too: what is taken hold of.
 - type: "text" into the focused control (click it first). Before typing into a box that already shows text, select it with key "Control+a", so the typing replaces it. Set "secret" for a password or a code.
 - key: "keys", one key or chord, or several separated by spaces: "Enter", "Tab", "Escape", "ArrowDown", "Control+a".
 - scroll: at x, y by dx, dy pixels (dy positive goes down).

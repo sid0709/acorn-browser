@@ -29,6 +29,13 @@ final class AgentRunner: ObservableObject {
         ChatMessage(kind: .agent, text: "Type a task and I will do it in the page on the left. You can also paste a task file, with its url: and done_when: lines.")
     ]
     @Published private(set) var isRunning = false
+    /// The model that drives the page, as OpenRouter names it, kept between launches. The
+    /// checks between batches use the runner's own decision model, which this does not touch.
+    @Published var model: String = UserDefaults.standard.string(forKey: AgentRunner.modelKey) ?? AgentRunner.defaultModel {
+        didSet { UserDefaults.standard.set(model, forKey: Self.modelKey) }
+    }
+    static let defaultModel = "openai/gpt-6-luna"
+    private static let modelKey = "agentModel"
 
     private var process: Process?
     private var stopped = false
@@ -82,6 +89,7 @@ final class AgentRunner: ObservableObject {
             taskFile.path,
             "--socket", AgentServer.socketPath,
             "--trace", runDirectory.path,
+            "--model", drivingModel,
             "--env-file", Self.appDirectory.appendingPathComponent(".env").path,
         ]
         let output = Pipe()
@@ -138,6 +146,12 @@ final class AgentRunner: ObservableObject {
         } catch {
             messages.append(ChatMessage(kind: .problem, text: "Could not start the agent: \(error.localizedDescription)"))
         }
+    }
+
+    /// The chosen model, or the default when the field was left blank.
+    private var drivingModel: String {
+        let chosen = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return chosen.isEmpty ? Self.defaultModel : chosen
     }
 
     private func ended(status: Int32, errorText: String) {
