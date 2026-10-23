@@ -188,9 +188,11 @@ struct Themed: ViewModifier {
 }
 
 extension View {
+    /// `store` is the person's theme unless given: a default argument is worked out off the
+    /// main actor, where the shared store cannot be reached, so the body supplies it.
     @MainActor
-    func themed(_ store: ThemeStore = .shared, fixed: ThemeSettings? = nil) -> some View {
-        modifier(Themed(store: store, fixed: fixed))
+    func themed(_ store: ThemeStore? = nil, fixed: ThemeSettings? = nil) -> some View {
+        modifier(Themed(store: store ?? .shared, fixed: fixed))
     }
 }
 
