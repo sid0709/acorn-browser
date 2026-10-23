@@ -498,7 +498,7 @@ final class AgentDriver {
         if let focused = await focus() { observation["focus"] = focused }
         // The page as this browser knows it, beside the picture (PageMap.swift). In stage 1 the
         // harness only writes it to the trace.
-        if let page = await pageMap() { observation["page"] = page }
+        if let page = await pageMap(m) { observation["page"] = page }
         if survey { observation["survey"] = try await surveyScreens(m, focusYs: focusYs, settledSpans: settledSpans) }
         return observation
     }

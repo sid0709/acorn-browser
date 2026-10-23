@@ -111,8 +111,10 @@ extension AgentDriver {
         var childFrame: [Int: String] = [:]
     }
 
-    /// Builds the page map for this look, or nil when the browser could not answer.
-    func pageMap() async -> [String: Any]? {
+    /// Builds the page map for this look, or nil when the browser could not answer. `m` is the
+    /// page's metrics (`metrics()`): the snapshot's boxes come in the screen's pixels on a
+    /// Retina display, and the page's width says by how much to bring them back to CSS pixels.
+    func pageMap(_ m: [String: Any]) async -> [String: Any]? {
         do {
             let frameTree = try await call("Page.getFrameTree")
             let childIds = Self.childFrameIds((frameTree["frameTree"] as? [String: Any]) ?? [:])
@@ -121,7 +123,7 @@ extension AgentDriver {
             let axReply = try await ax
             let snapReply = try await snapshot
             let nodes = (axReply["nodes"] as? [[String: Any]]) ?? []
-            let snap = Self.readSnapshot(snapReply)
+            let snap = Self.readSnapshot(snapReply, scale: Self.snapshotScale(snapReply, m))
             // A child frame's tree is its own; a frame that will not answer (gone, another
             // process) is left as its frame line.
             var trees: [String: [[String: Any]]] = [:]
@@ -147,6 +149,16 @@ extension AgentDriver {
         return out
     }
 
+    /// How many of the snapshot's pixels make one CSS pixel: the screen's ratio when the
+    /// document's width in the snapshot matches the page's width times it, else 1.
+    nonisolated private static func snapshotScale(_ reply: [String: Any], _ m: [String: Any]) -> Double {
+        let ratio = max((m["ratio"] as? NSNumber)?.doubleValue ?? 1, 1)
+        let pageWidth = (m["pageWidth"] as? NSNumber)?.doubleValue ?? 0
+        let content = ((reply["documents"] as? [[String: Any]])?.first?["contentWidth"] as? NSNumber)?.doubleValue ?? 0
+        guard ratio > 1, pageWidth > 0, content > 0 else { return 1 }
+        return abs(content - pageWidth * ratio) < abs(content - pageWidth) ? ratio : 1
+    }
+
     nonisolated private static func ints(_ value: Any?) -> [Int] {
         ((value as? [Any]) ?? []).map { ($0 as? NSNumber)?.intValue ?? -1 }
     }
@@ -154,7 +166,7 @@ extension AgentDriver {
     /// Reads the snapshot's columns into one entry per node. Layout bounds are relative to the
     /// document's own scroll, and a child document's to its frame: both offsets are added, so
     /// every box is in page coordinates.
-    nonisolated private static func readSnapshot(_ reply: [String: Any]) -> Snapshot {
+    nonisolated private static func readSnapshot(_ reply: [String: Any], scale: Double) -> Snapshot {
         let strings = (reply["strings"] as? [String]) ?? []
         let documents = (reply["documents"] as? [[String: Any]]) ?? []
         let str = { (i: Int) -> String in i >= 0 && i < strings.count ? strings[i] : "" }
@@ -174,8 +186,8 @@ extension AgentDriver {
                 let sy = (doc["scrollOffsetY"] as? NSNumber)?.doubleValue ?? 0
                 for (k, i) in indexes.enumerated() where k < values.count && values[k] < documents.count {
                     guard let at = laidIndex.firstIndex(of: i), at < bounds.count, bounds[at].count == 4 else { continue }
-                    let x = (bounds[at][0] as? NSNumber)?.doubleValue ?? 0
-                    let y = (bounds[at][1] as? NSNumber)?.doubleValue ?? 0
+                    let x = ((bounds[at][0] as? NSNumber)?.doubleValue ?? 0) / scale
+                    let y = ((bounds[at][1] as? NSNumber)?.doubleValue ?? 0) / scale
                     offsets[values[k]] = (offsets[d].x + x + sx, offsets[d].y + y + sy)
                 }
             }
@@ -221,7 +233,7 @@ extension AgentDriver {
             for (k, i) in laidIndex.enumerated() where i < backend.count {
                 var entry = Laid()
                 if k < bounds.count, bounds[k].count == 4 {
-                    let b = bounds[k].map { ($0 as? NSNumber)?.doubleValue ?? 0 }
+                    let b = bounds[k].map { (($0 as? NSNumber)?.doubleValue ?? 0) / scale }
                     entry.box = (b[0] + sx + offsets[d].x, b[1] + sy + offsets[d].y, b[2], b[3])
                 }
                 let st = k < styles.count ? ints(styles[k]).map(str) : []
@@ -299,7 +311,9 @@ extension AgentDriver {
 
         private func walk(_ ax: [String: Any], depth: Int) {
             let role = ((ax["role"] as? [String: Any])?["value"] as? String) ?? ""
-            let name = AgentDriver.clean(((ax["name"] as? [String: Any])?["value"] as? String) ?? "", AgentDriver.maxName)
+            // Text keeps more of itself than a name does.
+            let text = AgentDriver.clean(((ax["name"] as? [String: Any])?["value"] as? String) ?? "", AgentDriver.maxText)
+            let name = String(text.prefix(AgentDriver.maxName))
             let ignored = (ax["ignored"] as? Bool) ?? false
             let backendId = (ax["backendDOMNodeId"] as? NSNumber)?.intValue ?? -1
             let laid = snap.laid[backendId]
@@ -323,7 +337,7 @@ extension AgentDriver {
             }
             if keep && (AgentDriver.controlRoles.contains(role) || AgentDriver.groupRoles.contains(role) || role == "StaticText" || named) {
                 if role == "StaticText" || named {
-                    if !name.isEmpty { emit("text", AgentDriver.clean(name, AgentDriver.maxText)) { _ in } }
+                    if !text.isEmpty { emit("text", text) { _ in } }
                 } else {
                     var states: [String] = []
                     for key in AgentDriver.stateProperties {

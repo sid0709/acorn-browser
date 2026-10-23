@@ -111,6 +111,12 @@ function readableClasses(attrs) {
 // hold the nodes of its child frames).
 export function buildPageMap(ax, snap, viewport, trees = new Map()) {
   const byAx = new Map(ax.nodes.map((n) => [n.nodeId, n]));
+  // The app's Chromium reports the snapshot's boxes in the screen's pixels on a Retina
+  // display (Playwright's emulation does not): the document's width says which.
+  const ratio = Math.max(viewport.ratio ?? 1, 1);
+  const content = snap.documents[0]?.contentWidth ?? 0;
+  const scale = ratio > 1 && content > 0 && viewport.pageWidth > 0 && Math.abs(content - viewport.pageWidth * ratio) < Math.abs(content - viewport.pageWidth) ? ratio : 1;
+  if (scale !== 1) for (const doc of snap.documents) doc.layout.bounds = doc.layout.bounds.map((b) => b.map((v) => v / scale));
   for (const t of trees.values()) for (const n of t.nodes) byAx.set(n.nodeId, n);
   const lay = layoutIndex(snap);
   const nodes = [];
@@ -119,7 +125,7 @@ export function buildPageMap(ax, snap, viewport, trees = new Map()) {
 
   const emit = (role, name, l, depth, extra = {}) => {
     const [x, y, w, h] = l?.box ?? [0, 0, 0, 0];
-    nodes.push({ id: ++next, role, name: clean(name).slice(0, MAX_NAME), depth, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), frame: l?.frame ?? 0, ...extra });
+    nodes.push({ id: ++next, role, name: clean(name).slice(0, role === 'text' ? MAX_TEXT : MAX_NAME), depth, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), frame: l?.frame ?? 0, ...extra });
     return nodes[nodes.length - 1];
   };
 
@@ -250,7 +256,7 @@ async function run(browser, target) {
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('DOM.enable'); await cdp.send('Accessibility.enable');
-  const m = await page.evaluate(() => ({ width: innerWidth, height: innerHeight, scrollX: scrollX, scrollY: scrollY, pageWidth: document.documentElement.scrollWidth, pageHeight: document.documentElement.scrollHeight }));
+  const m = await page.evaluate(() => ({ width: innerWidth, height: innerHeight, scrollX: scrollX, scrollY: scrollY, pageWidth: document.documentElement.scrollWidth, pageHeight: document.documentElement.scrollHeight, ratio: devicePixelRatio }));
   const t0 = performance.now();
   await cdp.send('Page.enable');
   const frameTree = await cdp.send('Page.getFrameTree');
