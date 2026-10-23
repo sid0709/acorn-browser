@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Agent test page</title>
+  <style>
+    body { font: 16px -apple-system, sans-serif; margin: 24px; }
+    .spacer { height: 1600px; background: linear-gradient(#fff, #cde); }
+    input, button { font-size: 16px; padding: 6px 10px; margin: 4px 0; }
+    #log { margin-top: 12px; color: #060; white-space: pre-wrap; }
+    /* Fixed, so writing into it never moves the page (scroll anchoring would shift the scroll). */
+    #keys { position: fixed; top: 4px; right: 8px; margin: 0; }
+  </style>
+</head>
+<body>
+  <h1>Agent test page</h1>
+  <label for="name">Your name</label><br>
+  <input id="name" placeholder="Type a name" autocomplete="off">
+  <button id="go">Say hello</button>
+  <div id="log"></div>
+  <p id="keys"></p>
+  <div class="spacer"></div>
+  <h2 id="bottom">Bottom of the page</h2>
+  <script>
+    const log = (text) => { document.getElementById('log').textContent += text + '\n'; };
+    document.getElementById('go').addEventListener('click', () => {
+      log('Hello, ' + document.getElementById('name').value + '!');
+    });
+    document.getElementById('name').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') log('Enter pressed');
+    });
+    window.addEventListener('scroll', () => {
+      document.getElementById('keys').textContent = 'scrollY=' + Math.round(window.scrollY);
+    });
+  </script>
+</body>
+</html>
