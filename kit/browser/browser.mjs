@@ -24,6 +24,7 @@ const OPEN_MS = 30000; // how long opening the start page may take
 const CHOOSER_MS = 3000; // how long an upload waits for the file picker
 const MAX_WAIT_MS = 10000; // the longest one wait action may be
 const JPEG_QUALITY = 80;
+const EVALUATE_RETRIES = 5; // how many times a page function is tried again across a navigation
 const MAX_LABEL_CHARS = 80;
 const MAX_VALUE_CHARS = 200;
 
@@ -80,8 +81,21 @@ function clip(text, max) {
   return text.length > max ? text.slice(0, max) : text;
 }
 
+// Runs a page function, waiting out a navigation that destroys the page's context meanwhile.
+async function evaluate(fn, arg) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await page.evaluate(fn, arg);
+    } catch (error) {
+      if (attempt >= EVALUATE_RETRIES || !/context was destroyed|navigat/i.test(error.message)) throw error;
+      await page.waitForLoadState('load', { timeout: LOAD_MS }).catch(() => {});
+      await page.waitForTimeout(SETTLE_MS);
+    }
+  }
+}
+
 async function metrics() {
-  return page.evaluate(() => ({
+  return evaluate(() => ({
     scrollX: window.scrollX,
     scrollY: window.scrollY,
     pageWidth: document.documentElement.scrollWidth,
@@ -95,13 +109,13 @@ async function shot() {
 }
 
 async function scrollTo(y) {
-  await page.evaluate((top) => window.scrollTo(window.scrollX, top), y);
+  await evaluate((top) => window.scrollTo(window.scrollX, top), y);
   await page.waitForTimeout(SETTLE_MS);
 }
 
 /// Whether a control has the keyboard: typing goes somewhere.
 async function hasFocus() {
-  return page.evaluate(() => {
+  return evaluate(() => {
     const a = document.activeElement;
     if (!a || a === document.body || a === document.documentElement) return false;
     return a.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName);
@@ -110,7 +124,7 @@ async function hasFocus() {
 
 /// The focused control as the page describes it, or null.
 async function focus() {
-  return page.evaluate(
+  return evaluate(
     ({ maxLabel, maxValue }) => {
       const a = document.activeElement;
       if (!a || a === document.body || a === document.documentElement) return null;
