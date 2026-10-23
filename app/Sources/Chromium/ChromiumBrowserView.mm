@@ -599,6 +599,7 @@ static BOOL gChromeStyleRefused = NO;
   NSString *_pendingURL;
   BOOL _isPopupHost;
   BOOL _destroyed;
+  BOOL _creationScheduled;
   BOOL _closeNotified;
   NSMapTable<NSNumber *, ChromiumBrowserView *> *_pendingPopups;
   NSMutableDictionary<NSNumber *, NSAlert *> *_permissionAlerts;
@@ -659,7 +660,7 @@ static BOOL gChromeStyleRefused = NO;
 - (void)viewDidMoveToWindow {
   [super viewDidMoveToWindow];
   if (self.window) {
-    [self createBrowserIfNeeded];
+    [self scheduleBrowserCreation];
   }
 }
 
@@ -683,8 +684,25 @@ static BOOL gChromeStyleRefused = NO;
                                                   name:ChromiumEngineDidStartNotification
                                                 object:nil];
   if (self.window) {
-    [self createBrowserIfNeeded];
+    [self scheduleBrowserCreation];
   }
+}
+
+/// Makes the browser on the main thread's next turn rather than now. A view joins its window
+/// in the middle of SwiftUI's update (a new tab), and creating a browser holds the main thread
+/// for a while: done there, the window could not draw or take keys until it was over. On the
+/// next turn the update has been drawn, and the view has its final size.
+- (void)scheduleBrowserCreation {
+  if (_browser || _creationScheduled) {
+    return;
+  }
+  _creationScheduled = YES;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    self->_creationScheduled = NO;
+    if (self.window) {
+      [self createBrowserIfNeeded];
+    }
+  });
 }
 
 - (void)createBrowserIfNeeded {
@@ -709,6 +727,7 @@ static BOOL gChromeStyleRefused = NO;
     }
     context = gIncognitoContext;
   }
+  chromium::PerfScope scope("create browser");
   CefRefPtr<CefBrowser> browser = CefBrowserHost::CreateBrowserSync(
       windowInfo, _client.get(), ToCefString(_pendingURL), browserSettings, nullptr, context);
   if (!browser && wantsChrome) {

@@ -132,14 +132,22 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
 
     // MARK: ChromiumBrowserViewDelegate
 
+    /// Publishes a value only when it changed. Chromium reports often (every step of a load's
+    /// progress, for every tab loading), and each publish redraws every view showing this tab.
+    private func update<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<BrowserModel, Value>, to value: Value) {
+        if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
+    }
+
     func browserViewDidUpdateState(_ browserView: ChromiumBrowserView) {
-        address = browserView.currentURL
-        title = browserView.title
-        isLoading = browserView.isLoading
-        canGoBack = browserView.canGoBack
-        canGoForward = browserView.canGoForward
-        progress = browserView.loadingProgress
-        favicon = browserView.favicon
+        ChromiumPerf.enter("tab state update")
+        defer { ChromiumPerf.leave() }
+        update(\.address, to: browserView.currentURL)
+        update(\.title, to: browserView.title)
+        update(\.isLoading, to: browserView.isLoading)
+        update(\.canGoBack, to: browserView.canGoBack)
+        update(\.canGoForward, to: browserView.canGoForward)
+        update(\.progress, to: browserView.loadingProgress)
+        if favicon !== browserView.favicon { favicon = browserView.favicon }
         // Once the load is done, so the icon is this page's and not the last one's.
         if let favicon, !isLoading, !isIncognito { FaviconCache.shared.remember(favicon, forURL: address) }
         noteInHistory()
