@@ -100,7 +100,7 @@ final class HistoryStore: ObservableObject {
         return Array(entries
             .filter { entry in
                 let haystack = (entry.title + " " + entry.url).lowercased()
-                return words.allSatisfy(haystack.contains)
+                return words.allSatisfy { haystack.contains($0) }
             }
             .sorted { $0.score > $1.score }
             .prefix(limit))
@@ -147,7 +147,7 @@ final class BookmarkStore: ObservableObject {
         Array(bookmarks
             .filter { mark in
                 let haystack = (mark.title + " " + mark.url).lowercased()
-                return words.allSatisfy(haystack.contains)
+                return words.allSatisfy { haystack.contains($0) }
             }
             .prefix(limit))
     }
@@ -264,7 +264,7 @@ struct HistoryView: View {
     private var days: [(day: Date, entries: [HistoryEntry])] {
         let words = search.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
         let shown = history.entries.filter { entry in
-            words.isEmpty || words.allSatisfy((entry.title + " " + entry.url).lowercased().contains)
+            words.isEmpty || words.allSatisfy { (entry.title + " " + entry.url).lowercased().contains($0) }
         }
         let calendar = Calendar.current
         return Dictionary(grouping: shown) { calendar.startOfDay(for: $0.lastVisit) }

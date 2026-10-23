@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// Dragging tabs: onto another tab's ends to move it there, onto its middle to group the two,
 /// onto a group's label to join it, onto open space to leave its group, among the pinned tiles
 /// to pin it. The agent's tab neither moves nor takes a drop.
+@MainActor
 enum TabDrag {
     /// A type of this app's own, so a tab dropped on a page is not taken for text.
     static let type = UTType(exportedAs: "com.acorn.browser.tab")

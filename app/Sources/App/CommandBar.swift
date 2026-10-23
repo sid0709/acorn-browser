@@ -212,7 +212,7 @@ struct CommandBar: View {
 
     private func matches(_ haystack: String) -> Bool {
         let lowered = haystack.lowercased()
-        return words.allSatisfy(lowered.contains)
+        return words.allSatisfy { lowered.contains($0) }
     }
 
     /// The window's commands, acting on the tab shown.
