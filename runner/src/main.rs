@@ -268,11 +268,32 @@ fn run() -> Result<i32, String> {
         "seconds": started.elapsed().as_secs_f64(),
     }));
 
+    // The person may write while the run goes on: the app sends each message as a JSON line
+    // ({"say": "..."}) on standard input. A thread collects them, and each look hands them to
+    // the harness first, which reads them with that look and stops a plan running on its own.
+    let (said, heard) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        let stdin = std::io::stdin();
+        for line in stdin.lock().lines().map_while(Result::ok) {
+            if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&line)
+                && let Some(text) = map.get("say").and_then(Value::as_str)
+                && said.send(text.to_string()).is_err()
+            {
+                return;
+            }
+        }
+    });
+
     let mut results = Vec::new();
     let mut survey = false;
     let last = loop {
         let mut obs = browser.observe(survey).map_err(|e| format!("The browser could not look at the page: {e}"))?;
         obs.results = std::mem::take(&mut results);
+        for text in heard.try_iter() {
+            agent.say(&id, &text).map_err(|e| format!("The message could not be taken: {e}"))?;
+            emit(json!({"event": "heard", "text": text}));
+        }
         let step = agent.step(&id, obs).map_err(|e| format!("The step failed: {e}"))?;
         emit(step_event(&step, started.elapsed().as_secs_f64()));
         if step.status != Status::Working {
