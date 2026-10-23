@@ -5,6 +5,7 @@
 //! acorn-runner <task.md>
 //!   --socket <path>          the app's agent socket (default: in the app's data folder)
 //!   --model <id>             the driving model (default openai/gpt-6-luna)
+//!   --intake-model <id>      the model that reads the request before the run (default: the driving model)
 //!   --decider <id> | none    the decision model on a Decisions API (default openai/gpt-6-luna-decisions)
 //!   --decisions openrouter | openai
 //!   --reasoning <effort>     none, low, medium or high for the driving model (default none)
@@ -54,6 +55,8 @@ struct Options {
     task: PathBuf,
     socket: PathBuf,
     model: String,
+    /// The model that reads the request before the run; the driving model when not named.
+    intake_model: Option<String>,
     decider: Option<String>,
     decisions: Wire,
     reasoning: String,
@@ -75,6 +78,7 @@ fn options() -> Result<Options, String> {
         task: PathBuf::new(),
         socket: std::env::var_os("ACORN_AGENT_SOCKET").map(PathBuf::from).unwrap_or_else(|| app_dir().join("agent.sock")),
         model: DEFAULT_MODEL.to_string(),
+        intake_model: None,
         decider: None,
         decisions: Wire::OpenRouter,
         reasoning: DEFAULT_REASONING.to_string(),
@@ -89,6 +93,7 @@ fn options() -> Result<Options, String> {
         match arg.as_str() {
             "--socket" => out.socket = PathBuf::from(value("--socket")?),
             "--model" => out.model = value("--model")?,
+            "--intake-model" => out.intake_model = Some(value("--intake-model")?),
             "--decider" => {
                 let named = value("--decider")?;
                 decider_named = true;
@@ -123,7 +128,7 @@ fn options() -> Result<Options, String> {
     Ok(out)
 }
 
-const USAGE: &str = "usage: acorn-runner <task.md> [--socket <path>] [--model <id>] [--decider <id>|none] [--decisions openrouter|openai] [--reasoning <effort>] [--mode image|dom] [--profile <file>] [--trace <dir>] [--env-file <file>]";
+const USAGE: &str = "usage: acorn-runner <task.md> [--socket <path>] [--model <id>] [--intake-model <id>] [--decider <id>|none] [--decisions openrouter|openai] [--reasoning <effort>] [--mode image|dom] [--profile <file>] [--trace <dir>] [--env-file <file>]";
 
 /// Prints one event for the app.
 fn emit(event: Value) {
@@ -194,15 +199,53 @@ fn run() -> Result<i32, String> {
     let model = Metered { inner: OpenRouter::new(key.clone(), options.model.clone(), OPENROUTER_URL, options.reasoning.clone(), Box::new(UreqTransport::default())), meter: model_meter.clone() };
 
     // A request in plain words names neither where to start nor what "done" looks like: the
-    // model reads them from it before the run, and the person sees what it understood.
-    if intake::needed(&loaded.task) {
-        let sheet = intake::understand(&model, &loaded.task.goal, &Profile::new(facts.clone())).map_err(|e| format!("The request could not be understood: {e}"))?;
+    // model reads them from it before the run, and the person sees what it understood. The
+    // reading takes seconds, and so do reaching the browser and opening the site: when the task
+    // names its site, the two go on at the same time, and the first look comes when the slower
+    // of them is done, not after both. The reading may go to a model of its own, a faster one.
+    let profile = Profile::new(facts.clone());
+    let reader = options.intake_model.as_ref().filter(|m| *m != &options.model).map(|m| Metered {
+        inner: OpenRouter::new(key.clone(), m.clone(), OPENROUTER_URL, options.reasoning.clone(), Box::new(UreqTransport::default())),
+        meter: model_meter.clone(),
+    });
+    let connect = |site: Option<&str>| -> Result<AppBrowser, String> {
+        let mut browser = AppBrowser::connect(&options.socket).map_err(|e| e.to_string())?;
+        if let Some(url) = site {
+            browser.open(url).map_err(|e| e.to_string())?;
+        }
+        Ok(browser)
+    };
+    let read = |goal: &str| {
+        let model: &dyn harness::ports::Model = match &reader {
+            Some(reader) => reader,
+            None => &model,
+        };
+        intake::understand(model, goal, &profile).map_err(|e| format!("The request could not be understood: {e}"))
+    };
+    let (sheet, browser) = if !intake::needed(&loaded.task) {
+        (None, connect(loaded.task.start_url.as_deref())?)
+    } else if let Some(site) = loaded.task.start_url.clone() {
+        std::thread::scope(|scope| -> Result<_, String> {
+            let reading = scope.spawn(|| read(&loaded.task.goal));
+            let browser = connect(Some(&site));
+            let sheet = reading.join().map_err(|_| "The request could not be understood: the reading stopped".to_string())??;
+            Ok((Some(sheet), browser?))
+        })?
+    } else {
+        // The sheet names the site, so it comes first.
+        let sheet = read(&loaded.task.goal)?;
         intake::apply(&sheet, &mut loaded.task);
+        (Some(sheet), connect(loaded.task.start_url.as_deref())?)
+    };
+    if let Some(sheet) = &sheet {
+        intake::apply(sheet, &mut loaded.task);
         emit(json!({
             "event": "understood", "summary": sheet.summary, "startUrl": loaded.task.start_url,
             "doneWhen": loaded.task.done_when, "approach": loaded.task.approach, "watchOut": loaded.task.watch_out, "relentless": sheet.relentless,
+            "seconds": started.elapsed().as_secs_f64(),
         }));
     }
+    let mut browser = browser.with_resources(loaded.files);
     let mut agent = Agent::new(Config::default(), Box::new(model)).with_trace_dir(&options.trace);
     if let Some(decider) = &options.decider {
         let (decision_key, url) = match options.decisions {
@@ -214,11 +257,6 @@ fn run() -> Result<i32, String> {
         agent = agent.with_decider(Box::new(checker));
     }
 
-    let mut browser = AppBrowser::connect(&options.socket).map_err(|e| e.to_string())?.with_resources(loaded.files);
-    if let Some(url) = &loaded.task.start_url {
-        browser.open(url).map_err(|e| e.to_string())?;
-    }
-
     let max_steps = loaded.task.persistence.max_steps;
     let mode_name = serde_json::to_value(loaded.task.mode).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
     let goal_line = loaded.task.goal.lines().next().unwrap_or("").to_string();
@@ -227,6 +265,7 @@ fn run() -> Result<i32, String> {
     emit(json!({
         "event": "start", "run": id, "goal": goal_line, "startUrl": start_url, "model": options.model, "mode": mode_name,
         "checker": options.decider, "maxSteps": max_steps, "trace": options.trace.join(&id).display().to_string(),
+        "seconds": started.elapsed().as_secs_f64(),
     }));
 
     let mut results = Vec::new();

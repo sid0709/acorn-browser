@@ -7,6 +7,48 @@ and why that rather than a patch; and what the bench said afterwards. A commit m
 the what; this log keeps the why, so that a rule in the code can be traced to the run that
 asked for it. Newest first.
 
+## 2026-10-23 — Stage 1 of the agent plan: the request read while the site opens
+
+Branch `feat/intake-overlap`. Stage 1 of `docs/agent-plan.md` takes the serial preamble apart:
+the runner read the request (one driving-model call that writes a summary, approaches and
+warnings), then connected to the browser, then opened the site, then looked. The reading and
+the opening need nothing of each other when the task names its site, which every bench
+mission does.
+
+**Observed.** In `bench/results/20261023-145326.md` the first step came 25–30 s after the
+runner started on a good day and 215 s on a bad one (L2: the intake call alone took minutes
+when the provider was slow, then the site took 71 s to parse). The intake's `done_when` for
+L3 asked for "the discussion open with its reply count visible", a detail the request does
+not make and the thread page does not show, and the model dithered 15 steps for it.
+
+**Causes.**
+1. `run()` in `runner/src/main.rs` did the three in sequence on one thread.
+2. The intake ran on the driving model with no way to choose a faster one.
+3. `intake.md` asked for a `done_when` "a checker could confirm from the last screenshot
+   alone", which invites a detail the page may never show.
+
+**Changed.**
+1. When the task names its site, the reading runs on a scoped thread while the main thread
+   connects and opens the site; the first look comes when the slower of the two is done. A
+   request without a site is read first, since the sheet names the site.
+2. `--intake-model <id>` (runner and bench) reads the request on another model; the driving
+   model by default. Both are metered as model time.
+3. The sheet is told to add no requirement the request does not make: for the item with the
+   most of something, done is that item open; for a page to open, that page open.
+4. The `understood` and `start` events carry their time from the runner's start, and the
+   bench prints "understood after N s" and "first look after N s", so the preamble is seen.
+
+**Bench after.** `bench/results/20261023-151826.md`, DOM mode: 4 of 5 on the screen, 3 of 5
+answers right, 656 s of which 403 s waiting on the models (from 951 s, 3 of 5, in
+`20261023-145326`). L1 pass, 4 steps, 49 s with 20 s on the models (from 275 s); L2 pass, 5
+steps, 59 s (from 277 s); L4 pass, 26 steps, 247 s; L5 the capture of 1 January 2005 08:47
+opened and the tsunami notice reported, which the screen judge passed and the answer judge
+failed for naming no product, there being none; L3 opened a discussion with fewer replies than
+the top of the sorted list and ended unconfirmed, a wrong pick by the model. The first look
+came 5 s after the runner started where the request was read in parallel with the site's
+opening (L5: "understood after 5 s, first look after 5 s"); the provider was also quicker
+than in the afternoon run, which the model column shows.
+
 ## 2026-10-23 — Stage 0 of the agent plan: the answer in words, and the clock that counts everything
 
 Branch `feat/answer-in-words`. The first stage of `docs/agent-plan.md` changes the measure
