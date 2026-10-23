@@ -125,3 +125,11 @@ Needs Xcode (for `swiftc` and `clang++`), no CMake.
 
 3. Several live tabs with frame-rate tiers.
 4. Interface polish.
+
+## Interface
+
+The window is a pastel wash behind rounded cards: a tab strip on top, the page with its address
+row in one card, and the agent panel in another (toggled with the Ask AI button or ⌘K). Tabs are
+real, `⌘T` opens one. The first tab is the agent's: it is marked with a sparkle, cannot be
+closed, and is the page `AgentDriver` and the harness work in. Theme and shared styles are in
+`Theme.swift`, tab state in `TabStore.swift`, the strip in `TabStrip.swift`.

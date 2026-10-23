@@ -7,7 +7,9 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
     static let shared = BrowserModel(url: "https://www.wikipedia.org")
 
     let view: ChromiumBrowserView
+    let id = UUID()
 
+    @Published var favicon: NSImage?
     @Published var address = ""
     @Published var title = ""
     @Published var isLoading = false
@@ -48,6 +50,7 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
         canGoBack = browserView.canGoBack
         canGoForward = browserView.canGoForward
         progress = browserView.loadingProgress
+        favicon = browserView.favicon
     }
 
     func browserView(_ browserView: ChromiumBrowserView,
