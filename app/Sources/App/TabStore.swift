@@ -85,6 +85,9 @@ final class TabStore: ObservableObject {
     /// The command bar, when open: for a new tab (⌘T) or to send one tab elsewhere (⌘L).
     @Published var commandBar: CommandBarMode?
 
+    /// The tab whose address opens for editing (⌘L), wherever that address is shown.
+    @Published var editingAddress: UUID?
+
     /// The history sheet (⌘Y).
     @Published var showingHistory = false
 

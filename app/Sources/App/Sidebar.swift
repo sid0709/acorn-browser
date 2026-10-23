@@ -40,8 +40,6 @@ struct Sidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             topRow
-            AddressPill(tab: store.active, store: store)
-                .id(store.activeID)
             if !favorites.isEmpty { favoritesGrid } else if store.draggedTab != nil { pinPlaceholder }
             if store.hasAgent { AgentRow(agentTab: BrowserModel.shared, store: store, runner: runner) }
             Rectangle().fill(palette.hairline).frame(height: 1).padding(.horizontal, Theme.Space.xs)
@@ -203,7 +201,7 @@ private struct AgentRow: View {
             }
             VStack(alignment: .leading, spacing: 0) {
                 Text("Agent").font(isActive ? Theme.Text.bodyStrong : Theme.Text.body).foregroundStyle(palette.ink)
-                Text(agentTab.title.isEmpty ? "Its own tab" : agentTab.title)
+                Text(agentTab.displayTitle)
                     .font(Theme.Text.caption).foregroundStyle(palette.inkTertiary).lineLimit(1)
             }
             Spacer(minLength: 0)

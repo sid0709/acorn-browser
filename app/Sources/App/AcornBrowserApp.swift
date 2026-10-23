@@ -42,7 +42,7 @@ struct BrowserCommands: Commands {
             Button("New Incognito Window") { openWindow(id: "browser", value: WindowRequest(kind: .incognito)) }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Divider()
-            Button("Open Location\u{2026}") { if let store { store.commandBar = .tab(store.activeID) } }
+            Button("Open Location\u{2026}") { if let store { store.editingAddress = store.activeID } }
                 .keyboardShortcut("l")
             Divider()
             Button("Close Tab") { if let store { store.close(store.active) } }

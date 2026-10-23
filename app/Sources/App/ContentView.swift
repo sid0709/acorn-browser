@@ -33,6 +33,8 @@ private struct Shell: View {
     @ObservedObject private var agentTab = BrowserModel.shared
     @Environment(\.palette) private var palette
     @State private var peeking = false
+    @State private var window: NSWindow?
+    @State private var edge = EdgePeek()
 
     static let agentPanelWidth: CGFloat = 340
 
@@ -43,6 +45,23 @@ private struct Shell: View {
     /// The window's buttons live in the sidebar's top row, so they go away with it, and come
     /// back while it peeks out.
     private var buttonsVisible: Bool { !store.verticalLayout || showsSidebar || peeking }
+    /// The sidebar is put away, and the window's left edge brings it out.
+    private var peekable: Bool { store.verticalLayout && !showsSidebar }
+
+    /// While the sidebar is put away, the pointer at the window's left edge brings it out, and
+    /// moving well past it puts it back. A window-wide watch, since the edge is over the page,
+    /// whose own view takes the pointer's moves.
+    private func watchEdge() {
+        guard peekable, let window else {
+            edge.stop()
+            peeking = false
+            return
+        }
+        edge.start(window: window, width: { store.sidebarWidth }, isOpen: { peeking }) { open in
+            guard open != peeking else { return }
+            withAnimation(Theme.layout) { peeking = open }
+        }
+    }
 
     var body: some View {
         Group {
@@ -50,7 +69,7 @@ private struct Shell: View {
         }
         .frame(minWidth: 960, minHeight: 580)
         .background(WindowDragArea())
-        .background(WindowConfigurator(buttonsVisible: buttonsVisible))
+        .background(WindowConfigurator(buttonsVisible: buttonsVisible) { window = $0 })
         .background(WindowShortcuts(store: store))
         .overlay {
             if let mode = store.commandBar {
@@ -69,6 +88,9 @@ private struct Shell: View {
         .ignoresSafeArea(.container, edges: .top)
         .animation(Theme.layout, value: showsSidebar)
         .onChange(of: showsSidebar) { _, shown in if shown { peeking = false } }
+        .onChange(of: peekable) { _, _ in watchEdge() }
+        .onChange(of: window) { _, _ in watchEdge() }
+        .onDisappear { edge.stop() }
         .onChange(of: agentTab.isDriven) { _, driven in store.agentDrivingChanged(driven) }
     }
 
@@ -91,32 +113,25 @@ private struct Shell: View {
         }
     }
 
-    /// With the sidebar put away, the window's left edge brings it out over the page while the
-    /// pointer stays on it.
+    /// The sidebar out over the page: in the very place it sits when shown (flush with the
+    /// window's left, top and bottom), so the window's buttons, back while it is out, sit in its
+    /// first row as they always do; rounded and shadowed only on its open side.
+    @ViewBuilder
     private var peekingSidebar: some View {
-        ZStack(alignment: .leading) {
-            Color.clear
-                .frame(width: 6)
+        if peeking {
+            let shape = UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 0,
+                                               bottomTrailingRadius: Theme.Radius.popover,
+                                               topTrailingRadius: Theme.Radius.popover, style: .continuous)
+            Sidebar(store: store, runner: runner, showAgent: $showAgent)
+                .frame(width: store.sidebarWidth)
                 .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onHover { if $0 { withAnimation(Theme.layout) { peeking = true } } }
-            if peeking {
-                Sidebar(store: store, runner: runner, showAgent: $showAgent)
-                    .frame(width: store.sidebarWidth)
-                    .padding(.bottom, Theme.Space.xs)
-                    .background {
-                        WindowCanvas()
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous))
-                            .shadow(color: .black.opacity(palette.isDark ? 0.5 : 0.18), radius: 24, y: 8)
-                    }
-                    .overlay(RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous)
-                        .strokeBorder(palette.hairline))
-                    // Flush with the window's top, so its first row lines up with the
-                    // window's buttons, which come back while it is out.
-                    .padding([.leading, .bottom], Theme.gutter)
-                    .onHover { if !$0 { withAnimation(Theme.layout) { peeking = false } } }
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
+                .background {
+                    WindowCanvas()
+                        .clipShape(shape)
+                        .shadow(color: .black.opacity(palette.isDark ? 0.5 : 0.2), radius: 22, x: 4)
+                }
+                .overlay(shape.strokeBorder(palette.hairline))
+                .transition(.move(edge: .leading))
         }
     }
 
@@ -209,7 +224,11 @@ struct PageCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if showsToolbar { PageToolbar(tab: tab, store: store) }
+            if showsToolbar {
+                PageToolbar(tab: tab, store: store)
+            } else {
+                PageHeader(tab: tab, store: store)
+            }
             ZStack(alignment: .top) {
                 BrowserPane(view: tab.view)
                 // The page stays underneath, so the agent can take the tab at any moment;
