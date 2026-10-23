@@ -9,12 +9,16 @@ on its own with `bench/run.py`.
 The plan is in five stages. Each stage ends with `cargo build` (no warnings), `cargo test`, and a
 `bench/run.py` run; a stage that lowers the pass rate is not done.
 
-Status: stages 1 to 4 are in the code (the map, acting by number, the DOM-mode prompt and gate,
-the switch and `bench/run.py --mode both`). The maps were checked on GOV.UK from the app; the
-DOM-mode runs of the five missions, and the comparison table, are still to be made on a Mac. Of
-stage 3, sending only the changed lines from the second look on was moved to stage 5: a look's
-map is a few kilobytes, and the numbers change between looks, so the whole map goes each time
-until the measurements say otherwise.
+Status: all five stages are in the code: the map, acting by number, the DOM-mode prompt and
+gate, the switch and `bench/run.py --mode both`, and the folding of repeated blocks with the
+byte budget. The maps were checked on GOV.UK from the app. Still to do, on a Mac with the
+network: the DOM-mode runs of the five missions and the comparison table (stage 4's last
+item), and the stage 5 measurements on live shopping pages with `bench/pagemap/compare.mjs`,
+which set the budget and the folding thresholds for good. Sending only the changed lines from
+the second look on is left out for now: a look's map is a few kilobytes and its numbers change
+between looks, so the whole map goes each time until the measurements say otherwise. The
+isolated-world alternative to the snapshot is not needed so far: a page of 96 cards maps in
+about 150 ms on Playwright's Chromium.
 
 ## Why
 

@@ -29,6 +29,14 @@ const MINIMAP_NAME_CHARS: usize = 40;
 const MINIMAP_HEADING_CHARS: usize = 60;
 /// Deeper nesting than this is drawn at this depth: the indentation says enough.
 const MAX_INDENT: u32 = 8;
+/// A run of blocks of the same shape (the cards of a list of results) is folded once it has
+/// this many: the first `FULL_BLOCKS` keep their lines, the rest get one line each.
+const FOLD_AFTER: usize = 4;
+const FULL_BLOCKS: usize = 2;
+/// The longest shape of block looked for in a run of nodes with no list round them.
+const MAX_PERIOD: usize = 16;
+/// The most text lines a folded block keeps (a price, a rating).
+const FOLDED_TEXTS: usize = 2;
 
 /// The roles a person acts on.
 const CONTROL_ROLES: &[&str] = &[
@@ -181,15 +189,12 @@ impl PageMap {
         let top = viewport.scroll_y;
         let bottom = viewport.scroll_y + viewport.height as f64;
         let header = format!("VIEW y={top:.0}..{bottom:.0} of {:.0}", viewport.page_height);
-        let mut view: Vec<(bool, String)> = Vec::new();
+        let in_view: Vec<&PageNode> = self.nodes.iter().zip(&shown).filter(|(_, seen)| **seen).map(|(node, _)| node).collect();
+        let mut view: Vec<(bool, String)> = fold(&in_view);
         let height = (viewport.height as f64).max(1.0);
         let mut bands: std::collections::BTreeMap<i64, Band> = std::collections::BTreeMap::new();
         for (node, &seen) in self.nodes.iter().zip(&shown) {
-            if seen {
-                view.push((node.is_text(), node.line()));
-                continue;
-            }
-            if node.is_text() || node.boxless() {
+            if seen || node.is_text() || node.boxless() {
                 continue;
             }
             let band = bands.entry((node.y / height).floor() as i64).or_default();
@@ -253,6 +258,115 @@ impl PageMap {
     }
 }
 
+/// The lines of the view, with runs of blocks of the same shape folded: a list of results is
+/// many cards alike, and the model needs the first few whole and the rest one line each, with
+/// the number to act on. A block is a list item with what is under it, or, with no list round
+/// them, one period of a run of nodes whose roles repeat.
+fn fold(nodes: &[&PageNode]) -> Vec<(bool, String)> {
+    let blocks = blocks_of(nodes);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < blocks.len() {
+        // How many blocks from here have the same shape as this one.
+        let shape = &blocks[i].shape;
+        let mut run = 1;
+        while i + run < blocks.len() && blocks[i + run].shape == *shape && shape.len() > 1 {
+            run += 1;
+        }
+        if run < FOLD_AFTER {
+            for block in &blocks[i..i + run] {
+                out.extend(block.nodes.iter().map(|node| (node.is_text(), node.line())));
+            }
+        } else {
+            for (k, block) in blocks[i..i + run].iter().enumerate() {
+                if k < FULL_BLOCKS {
+                    out.extend(block.nodes.iter().map(|node| (node.is_text(), node.line())));
+                } else {
+                    out.push((false, block.folded()));
+                }
+            }
+        }
+        i += run;
+    }
+    out
+}
+
+/// A block of the view: nodes that go together, and the shape they make.
+struct Block<'a> {
+    nodes: Vec<&'a PageNode>,
+    shape: Vec<&'a str>,
+}
+
+impl Block<'_> {
+    /// The block in one line: its first control, its texts with a number in them (a price, a
+    /// rating), and how many more controls it holds.
+    fn folded(&self) -> String {
+        let depth = self.nodes.first().map(|n| n.depth).unwrap_or(0);
+        let mut parts: Vec<String> = Vec::new();
+        let mut controls = 0;
+        // The texts with a number in them, prices first: what tells the cards apart.
+        let mut texts: Vec<&str> = self.nodes.iter().filter(|n| n.is_text() && n.name.chars().any(|c| c.is_ascii_digit())).map(|n| n.name.as_str()).collect();
+        texts.sort_by_key(|t| !t.contains(['$', '£', '€', '¥', '₩']));
+        for node in &self.nodes {
+            if node.is_control() {
+                controls += 1;
+                if controls == 1 {
+                    parts.push(format!("{}[{}]{}", node.role, node.id, if node.name.is_empty() { String::new() } else { format!(" \"{}\"", node.name) }));
+                }
+            }
+        }
+        parts.extend(texts.iter().take(FOLDED_TEXTS).map(|t| format!("\"{t}\"")));
+        if controls > 1 {
+            parts.push(format!("(+{} controls)", controls - 1));
+        }
+        format!("{}· {}", indent(depth), parts.join("  "))
+    }
+}
+
+/// Cuts the view into blocks: each list item with what is under it is one; a run of nodes with
+/// roles that repeat with a period is cut at that period; anything else is a block of its own.
+fn blocks_of<'a>(nodes: &[&'a PageNode]) -> Vec<Block<'a>> {
+    let mut out: Vec<Block<'a>> = Vec::new();
+    let mut i = 0;
+    while i < nodes.len() {
+        if nodes[i].role == "listitem" {
+            let depth = nodes[i].depth;
+            let mut end = i + 1;
+            while end < nodes.len() && nodes[end].depth > depth {
+                end += 1;
+            }
+            out.push(Block { nodes: nodes[i..end].to_vec(), shape: nodes[i..end].iter().map(|n| n.role.as_str()).collect() });
+            i = end;
+            continue;
+        }
+        // A run from here whose roles repeat with the shortest period that holds for at least
+        // FOLD_AFTER periods.
+        let roles: Vec<&str> = nodes[i..].iter().map(|n| n.role.as_str()).collect();
+        let found = (2..=MAX_PERIOD.min(roles.len() / FOLD_AFTER)).find(|&p| {
+            roles[p..].iter().zip(&roles).take(p * (FOLD_AFTER - 1)).all(|(a, b)| a == b) && roles[0] != "text" && nodes[i].depth <= nodes[i + p].depth
+        });
+        match found {
+            Some(p) => {
+                // As many whole periods as hold, cut one block each.
+                let mut periods = 1;
+                while (periods + 1) * p <= roles.len() && roles[periods * p..(periods + 1) * p] == roles[..p] {
+                    periods += 1;
+                }
+                for k in 0..periods {
+                    let slice = &nodes[i + k * p..i + (k + 1) * p];
+                    out.push(Block { nodes: slice.to_vec(), shape: slice.iter().map(|n| n.role.as_str()).collect() });
+                }
+                i += periods * p;
+            }
+            None => {
+                out.push(Block { nodes: vec![nodes[i]], shape: vec![nodes[i].role.as_str()] });
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 fn cut(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
@@ -309,6 +423,21 @@ mod tests {
         let text = map.text(&Viewport { width: 1280, height: 800, page_height: 800.0, ..Default::default() });
         assert!(text.contains("frame[3] \"Payment\" @300,150 400x300\n  textbox[4] \"Card number\" @404,170 185x21\n  button[5] \"Pay $10\""), "{text}");
         assert_eq!(map.nodes[3].frame, 1);
+    }
+
+    #[test]
+    fn a_run_of_cards_alike_is_folded_after_the_first_two() {
+        let map: PageMap = serde_json::from_str(include_str!("fixtures/shop.page.json")).unwrap();
+        let text = map.text(&Viewport { width: 1280, height: 800, page_width: 1280.0, page_height: 1600.0, ..Default::default() });
+        // The first two cards whole, the rest one line each with the number to act on.
+        assert!(text.contains("link[13] \"Acer Aspire 5 15.6in Laptop (1)\" @29,289 274x120\nlink[14] \"Acer Aspire 5 15.6in Laptop (1)\" @29,427 274x22\n\"4.3 out of 5 stars\"\n  \"★★★★☆\"\n  \"(1,023)\"\n\"$199.00\"\nbutton[19] \"Add to cart\""), "{text}");
+        assert!(text.contains("· link[27] \"Lenovo IdeaPad 3 (3)\"  \"$214.00\"  \"4.3 out of 5 stars\"  (+2 controls)"), "{text}");
+        assert!(text.contains("· link[34] \"ASUS Vivobook 16 (4)\""), "{text}");
+        assert!(!text.contains("button[33]"), "{text}");
+        // The controls above the list are untouched.
+        assert!(text.contains("searchbox[2] \"Search Shopmart\" value=\"laptop\""), "{text}");
+        let lines = text.lines().count();
+        assert!(lines < 60, "{lines} lines:\n{text}");
     }
 
     #[test]

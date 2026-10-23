@@ -67,4 +67,11 @@ are regenerated from `pagemap/pages/*.html`.
 
 ```bash
 cd bench/pagemap && node pagemap.mjs pages/govuk.html https://www.gov.uk/   # → out/
+cd bench/pagemap && node compare.mjs https://www.amazon.com/s?k=laptop      # the three sources side by side
 ```
+
+`compare.mjs` measures a page three ways, Chromium's DOM snapshot, its accessibility tree and
+Oak's own serializer (bundled from the `Oak` submodule, needs `bun`), and prints sizes, times,
+the controls each misses, the hidden nodes each keeps and the icon-only controls each leaves
+nameless: the comparison the page map was designed from, to repeat on pages with many cards
+(shopping results, long listings) whenever a rule of the map is in question.
