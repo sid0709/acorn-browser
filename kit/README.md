@@ -20,8 +20,8 @@ kit/
 ## Set up
 
 - Rust (stable) and Node 18 or newer.
-- `cd kit/browser && npm install` (Playwright, and its Chromium unless you already have one;
-  `npx playwright install chromium` fetches it when npm did not).
+- `cd kit/browser && npm install && npx playwright install chromium` (Playwright, then its
+  Chromium; `npm run browsers` does the second step too).
 - An OpenRouter key: `cp .env.example .env` and put it there, or set `OPENROUTER_API_KEY`.
 
 ## Run a task

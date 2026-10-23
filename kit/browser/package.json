@@ -7,5 +7,8 @@
   "main": "browser.mjs",
   "dependencies": {
     "playwright": "1.56.1"
+  },
+  "scripts": {
+    "browsers": "playwright install chromium"
   }
 }
