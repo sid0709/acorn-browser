@@ -49,6 +49,17 @@ owner's standing permission to push to that branch instead of the assigned one.
 No branch holds traces, screenshots or results: `bench/traces` and `bench/results` stay ignored,
 since they hold the pages a run saw and would grow the repository for nothing.
 
+## Records
+
+The harness is the brain, and a change to it changes how every mission is run. Every change
+that touches `harness/`, or the parts of the driver it depends on (waits, scrolling, the page
+map, what the model is told), is written down in `docs/harness-log.md` before its pull request:
+what was observed, with the trace or the experiment that showed it; what the cause was; what was
+changed and why that rather than a patch; and what `bench/run.py` said afterwards. A commit
+message tells the what; the log keeps the why, so a rule in the code can be traced to the run
+that asked for it. Plans for the harness live in `docs/` too (`docs/agent-plan.md` is the
+current one), in English, with their targets as numbers the bench can check.
+
 ## What matters
 
 The harness (`harness/`) is the brain and stays independent of any browser. The app (`app/`)

@@ -168,6 +168,9 @@ the targets set from the measurements, and the DOM-mode pass rate did not drop.
 - The harness README says the harness is "pure image based". DOM mode makes it two modes; the
   README and the architecture notes are updated in stage 3.
 - DOM mode has no image fallback by design, so that the benchmark is honest about its gaps. A mixed
-  mode (map + screenshot) can be measured later as a third mode.
+  mode (map + screenshot) can be measured later as a third mode: it is the hybrid mode of
+  `docs/agent-plan.md`, where a picture joins the map on a signal and the map stays the base.
+- The first DOM-mode bench runs (2026-10-23) and what they changed are in `docs/harness-log.md`;
+  what comes after DOM mode is `docs/agent-plan.md`.
 - Network access from the cloud environment is needed for the stage 5 measurements on shopping
   sites.
