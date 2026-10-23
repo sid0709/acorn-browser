@@ -24,6 +24,7 @@ mod taskfile;
 
 use std::path::PathBuf;
 use std::process::exit;
+use std::time::Instant;
 
 use harness::action::Kind;
 use harness::openrouter::{OpenRouter, UreqTransport};
@@ -157,13 +158,16 @@ fn run() -> Result<i32, String> {
     let id = agent.start(loaded.task, Profile::new(facts));
     println!("run {id}: trace in {}", options.trace.join(&id).display());
 
+    let started = Instant::now();
     let mut results = Vec::new();
     let mut survey = false;
     let last = loop {
+        let step_started = Instant::now();
         let mut obs = browser.observe(survey).map_err(|e| format!("the browser could not look: {e}"))?;
+        let looked = step_started.elapsed();
         obs.results = std::mem::take(&mut results);
         let step = agent.step(&id, obs).map_err(|e| format!("the step failed: {e}"))?;
-        show(&step);
+        show(&step, looked.as_secs_f64(), step_started.elapsed().as_secs_f64() - looked.as_secs_f64(), started.elapsed().as_secs_f64());
         if step.status != Status::Working {
             break step;
         }
@@ -174,7 +178,7 @@ fn run() -> Result<i32, String> {
         survey = step.survey;
         browser.after(&step);
     };
-    conclude(&last);
+    conclude(&last, started.elapsed().as_secs_f64());
     Ok(if last.status == Status::Done { 0 } else { 1 })
 }
 
@@ -193,10 +197,11 @@ fn announce(task: &Task, options: &Options) {
     );
 }
 
-/// What one step decided, for the terminal.
-fn show(step: &Step) {
+/// What one step decided, for the terminal, with the seconds the look and the decision took and
+/// the seconds since the run began.
+fn show(step: &Step, looked: f64, decided: f64, elapsed: f64) {
     let status = serde_json::to_value(step.status).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
-    println!("step {} {status}: {}", step.number, step.message);
+    println!("[{elapsed:6.1}s] step {} {status}: {} (look {looked:.1}s, decide {decided:.1}s)", step.number, step.message);
     if !step.actions.is_empty() {
         println!("   -> {}", step.actions.iter().map(describe).collect::<Vec<_>>().join("; "));
     }
@@ -235,9 +240,9 @@ fn describe(action: &harness::action::Action) -> String {
 }
 
 /// The end of the run, for the terminal: the outcome and the report.
-fn conclude(last: &Step) {
+fn conclude(last: &Step, elapsed: f64) {
     println!();
-    println!("{}", last.message);
+    println!("{} ({elapsed:.1}s in all)", last.message);
     if let Some(stop) = &last.stop {
         println!("{} {}", stop.problem, stop.action);
     }
