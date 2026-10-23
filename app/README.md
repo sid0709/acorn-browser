@@ -132,12 +132,17 @@ look like this (numbers made up):
 ```
 … new tab, 5 open
 … create browser took 180 ms (5 browsers)
-… main thread stuck 1340 ms (5 browsers, 3 pump runs): chromium pump 1180 ms, AppKit/SwiftUI 160 ms
+… main thread stuck 1340 ms, 1290 ms of it on the CPU (5 browsers, 3 pump runs): chromium pump 1180 ms, AppKit/SwiftUI 160 ms
+  main thread's stack, 2 of 2 samples:
+    #0  …
 ```
 
 The shares are sampled every 10 ms across the sections the code marks (`ChromiumPerf.enter`
 and `leave`, `chromium::PerfScope` in Objective-C++); `AppKit/SwiftUI` is time in none of
 them. Few pump runs over a long stall mean single long Chromium tasks; many mean a backlog.
+CPU time well short of the stall means the main thread was waiting, not working. From 400 ms
+into a stall the main thread's call stack is taken every half second; the distinct stacks
+follow the line, each frame with its library, symbol and offset in the image.
 `tail -f` the file, or `log stream --predicate 'eventMessage CONTAINS "acorn-perf"'`.
 `defaults write com.acorn.browser perfWatch -bool NO` turns the watcher off.
 
