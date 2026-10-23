@@ -164,6 +164,7 @@ pub(crate) fn describe(action: &Action) -> String {
         Kind::Scroll { dx, dy, .. } => format!("scroll {dx:.0},{dy:.0}"),
         Kind::Wait { ms } => format!("wait {ms}ms"),
         Kind::Navigate { url } => format!("go to {url}"),
+        Kind::Choose { option } => format!("choose {:?}", clip(option, 60)),
         Kind::Back => "go back".to_string(),
         Kind::Survey => "survey".to_string(),
         Kind::Resume => "resume the kept plan".to_string(),

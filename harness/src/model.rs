@@ -41,6 +41,10 @@ pub struct Reply {
     /// One line for the person: what the model is doing, or why it stopped.
     #[serde(default)]
     pub message: String,
+    /// With "done": what on the screen shows the task done, in the model's words, for the
+    /// checker to look for. `None` when the model gave none.
+    #[serde(default)]
+    pub proof: Option<String>,
     /// Why the run ends for the person, when it does.
     #[serde(default)]
     pub stop: Option<StopInfo>,
@@ -121,6 +125,9 @@ pub struct RawAction {
     /// Where to go, for a navigate.
     #[serde(default)]
     pub url: Option<String>,
+    /// The option to choose in a native dropdown, as its text.
+    #[serde(default)]
+    pub option: Option<String>,
 }
 
 /// A point of a drag's path as the model writes it.
@@ -280,6 +287,16 @@ fn fill(input: &RawAction, vp: &Viewport) -> Result<Kind, String> {
             }
             Kind::Navigate { url }
         }
+        "choose" => {
+            let option = input.option.as_deref().unwrap_or("").trim().to_string();
+            if option.is_empty() {
+                return Err("there is no option to choose".to_string());
+            }
+            if option.chars().count() > MAX_LABEL_CHARS {
+                return Err(format!("the option is longer than {MAX_LABEL_CHARS} characters"));
+            }
+            Kind::Choose { option }
+        }
         "back" => Kind::Back,
         "survey" => Kind::Survey,
         "resume" => Kind::Resume,
@@ -418,6 +435,7 @@ pub fn reply_schema(survey: bool, checks: bool) -> Value {
         plain("scroll", vec![("x", null_number.clone()), ("y", null_number.clone()), ("dx", number.clone()), ("dy", number.clone())]),
         object(vec![("kind", kind_enum(&["wait"])), ("ms", json!({"type": "integer"}))]),
         plain("navigate", vec![("url", string.clone())]),
+        plain("choose", vec![("option", string.clone())]),
         plain("back", vec![]),
         object(vec![("kind", kind_enum(&["resume"]))]),
     ];
@@ -434,6 +452,7 @@ pub fn reply_schema(survey: bool, checks: bool) -> Value {
         ("memo", null_string.clone()),
         ("status", json!({"type": "string", "enum": ["working", "done", "need_person", "stuck"]})),
         ("message", string.clone()),
+        ("proof", null_string.clone()),
         ("stop", stop),
         ("question", null_string.clone()),
         ("assumed", json!({"type": ["array", "null"], "items": {"type": "string"}})),
@@ -494,10 +513,13 @@ mod tests {
             raw(r#"{"kind":"navigate","url":"https://example.test/a"}"#),
             raw(r#"{"kind":"navigate","url":"example.test"}"#),
             raw(r#"{"kind":"back"}"#),
+            raw(r#"{"kind":"choose","option":" United States of America "}"#),
+            raw(r#"{"kind":"choose","option":""}"#),
         ];
         let (valid, dropped) = check_actions(3, raw, &vp, 30, &[0.0, 500.0]);
         let ids: Vec<&str> = valid.iter().map(|a| a.id.as_str()).collect();
-        assert_eq!(ids, vec!["s3a1", "s3a3", "s3a4", "s3a6", "s3a8", "s3a11", "s3a13"]);
+        assert_eq!(ids, vec!["s3a1", "s3a3", "s3a4", "s3a6", "s3a8", "s3a11", "s3a13", "s3a14"]);
+        assert_eq!(valid[7].kind, Kind::Choose { option: "United States of America".to_string() });
         assert_eq!(valid[5].kind, Kind::Navigate { url: "https://example.test/a".to_string() });
         assert_eq!(valid[6].kind, Kind::Back);
         assert_eq!(valid[4].kind, Kind::Drag { path: vec![Point { x: 10.0, y: 10.0 }, Point { x: 50.0, y: 60.0 }], modifiers: "Shift+Meta".to_string() });
@@ -510,7 +532,7 @@ mod tests {
         assert_eq!(valid[1].kind, Kind::Wait { ms: 100 });
         assert_eq!(valid[2].kind, Kind::Scroll { x: Some(400.0), y: Some(300.0), dx: 0.0, dy: 1800.0 });
         assert_eq!(valid[3].kind, Kind::Survey);
-        assert_eq!(dropped.len(), 6);
+        assert_eq!(dropped.len(), 7);
     }
 
     #[test]
@@ -519,8 +541,12 @@ mod tests {
         assert_eq!(reply.status, Status::Working);
         assert_eq!(reply.actions[0].kind, "wait");
         assert!(parse_reply("").is_err());
+        let reply = parse_reply("{\"status\":\"done\",\"message\":\"\",\"proof\":\"the row shows 25 kg\",\"actions\":[]}").unwrap();
+        assert_eq!(reply.proof.as_deref(), Some("the row shows 25 kg"));
         let schema = reply_schema(true, true).to_string();
         assert!(schema.find("\"observation\"").unwrap() < schema.find("\"actions\"").unwrap());
+        assert!(schema.contains("\"proof\""));
+        assert!(schema.contains("\"choose\""));
         assert!(schema.contains("\"survey\""));
         assert!(schema.contains("\"needs_person\""));
         let plain = reply_schema(false, false).to_string();

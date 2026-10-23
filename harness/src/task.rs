@@ -20,6 +20,12 @@ pub struct Task {
     /// What the screen shows when the task is done, in words. Written at the start, by the
     /// person or by the model from the goal. A "done" from the model is checked against it.
     pub done_when: String,
+    /// How to go about the task, a few conditional lines ("if a sort control is in view, sort by
+    /// it before taking the top row"), and what to watch out for. Written at the start, by the
+    /// person or by the model from the goal; a model with no reasoning of its own does far better
+    /// when the thinking was done before the run. Empty leaves the model to its own judgment.
+    pub approach: Vec<String>,
+    pub watch_out: Vec<String>,
     /// Files the task may use. The model sees ids, names and descriptions; the bytes stay here
     /// and go to the browser only at an upload.
     pub resources: Vec<Resource>,
@@ -41,6 +47,8 @@ impl Task {
             goal: goal.into(),
             start_url: None,
             done_when: String::new(),
+            approach: Vec::new(),
+            watch_out: Vec::new(),
             resources: Vec::new(),
             persistence: Persistence::default(),
             allowances: BTreeMap::new(),

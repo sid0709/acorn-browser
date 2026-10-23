@@ -19,6 +19,8 @@ pub fn system_prompt(task: &Task, profile: &Profile, config: &Config, checks: bo
     let mut values: BTreeMap<&str, String> = BTreeMap::new();
     values.insert("goal", task.goal.trim().to_string());
     values.insert("done_when", task.done_when.trim().to_string());
+    values.insert("approach", numbered(&task.approach));
+    values.insert("watch_out", bulleted(&task.watch_out));
     values.insert("max_actions", config.plan_limit(checks).to_string());
     values.insert("chunk", config.chunk_actions.to_string());
     values.insert("stop_reasons", stop_reason_lines(task));
@@ -35,6 +37,16 @@ pub fn system_prompt(task: &Task, profile: &Profile, config: &Config, checks: bo
     );
     values.insert("today", today().unwrap_or_default());
     render(SYSTEM_TEMPLATE, &values)
+}
+
+/// Lines as a numbered list, one per line; empty for none.
+fn numbered(lines: &[String]) -> String {
+    lines.iter().enumerate().map(|(i, line)| format!("{}. {}", i + 1, line.trim())).collect::<Vec<_>>().join("\n")
+}
+
+/// Lines as a bulleted list, one per line; empty for none.
+fn bulleted(lines: &[String]) -> String {
+    lines.iter().map(|line| format!("- {}", line.trim())).collect::<Vec<_>>().join("\n")
 }
 
 /// Fills a template: `{{#if key}}...{{/if}}` blocks stay when the key has a non-empty value and
@@ -222,7 +234,7 @@ fn focus_line(focus: Option<&Focus>) -> String {
     if focus.tag.eq_ignore_ascii_case("select") && !focus.options.is_empty() {
         let several = if focus.multiple { " (several may be chosen)" } else { "" };
         line.push_str(&format!(
-            "It is a list the browser draws itself, which no screenshot shows. Its options{several}: {}.\n",
+            "It is a list the browser draws itself, which no screenshot shows. Pick with a \"choose\" action, writing the option exactly as listed here; do not type into it. Its options{several}: {}.\n",
             focus.options.join(" | ")
         ));
     }
@@ -284,8 +296,20 @@ mod tests {
 
         let mut task = Task::new("Buy a kettle.").allow(Irreversible::Pay, Allowance::Auto);
         task.survey = false;
+        task.approach = vec!["If a sort control is in view, sort by price first.".to_string(), "Open the top row.".to_string()];
+        task.watch_out = vec!["A filter left at a default.".to_string()];
         let prompt = system_prompt(&task, &Profile::new("Name: B."), &Config::default(), false);
         assert!(prompt.contains("Buy a kettle."));
+        assert!(prompt.contains("How to go about it, as read from the request before the run (the site itself was not seen; what the screen shows comes first):\n1. If a sort control is in view, sort by price first.\n2. Open the top row.\n"));
+        assert!(prompt.contains("Watch out for:\n- A filter left at a default.\n"));
+        assert!(prompt.contains("\"proof\""));
+        assert!(prompt.contains("- choose:"));
+        task.approach.clear();
+        task.watch_out.clear();
+        let bare = system_prompt(&task, &Profile::new("Name: B."), &Config::default(), false);
+        assert!(!bare.contains("How to go about it"));
+        assert!(!bare.contains("Watch out for:"));
+        let prompt = bare;
         assert!(prompt.contains("up to 6,"));
         assert!(!prompt.contains("\"check\""));
         assert!(prompt.contains("- pay (pay, enter a card, start a subscription): allowed"));
@@ -314,6 +338,7 @@ mod tests {
         assert!(text.starts_with("Step 2 of at most 150.\nPage: Checkout (https://shop.test/pay)\n"));
         assert!(text.contains("about 300 px lies above and 1100 px below"));
         assert!(text.contains("labelled \"Country\""));
+        assert!(text.contains("Pick with a \"choose\" action"));
         assert!(text.contains("France | Spain"));
         assert!(text.contains("- s1a1 failed: nothing at that point"));
         assert!(text.contains("Note: the file was attached"));

@@ -5,9 +5,15 @@
 //! - "Done" is the page's confirmation, not the model's word. A model can say done without that
 //!   being so: a recorded run stopped with the form still open and nothing submitted, because it
 //!   had decided the task did not apply, and the run was shown to the person as finished. So the
-//!   decision model is asked whether the screen shows the task done; when it does not, the model
-//!   is sent back to finish or to say plainly why it did not, and a run that still ends "done"
-//!   without the page's confirmation is reported as one that could not confirm, never as done.
+//!   decision model is asked whether the screen shows the task done, and shows what the model
+//!   named as the proof of it (a recorded run had the thread it was asked for open, with its
+//!   post counter in view, and was sent back because the checker looked for the words "reply
+//!   count" instead); when it does not, the model is sent back to finish or to say plainly why
+//!   it did not, and a run that still ends "done" without the page's confirmation is reported
+//!   as one that could not confirm, never as done. A "done" sent back means the proof is
+//!   missing from this page, not that the page is wrong: the same recorded run left the thread
+//!   for the list it came from and ended there, so on the look after one the plan may not go
+//!   back or to another address.
 //! - The person is asked last. A model that stops for them (a CAPTCHA, a code, a document) has
 //!   often done so with fillable fields still empty: the optional ones the person's details
 //!   answer, a part of the page it never scrolled to, or the rest of the step it stopped on. So a
@@ -94,6 +100,7 @@ impl Agent {
     /// for an action the gate puts in.
     pub(crate) fn gate(&self, s: &mut Session, obs: &Observation, reply: &mut Reply, planned: &mut Vec<Action>, dropped: &mut Vec<String>, number: u32, lost: usize) {
         if reply.status == Status::Working {
+            hold_leaving(s, planned, dropped);
             hold_commits_lost(s, planned, dropped, lost);
             hold_for_list(s, obs, planned, dropped);
         }
@@ -358,7 +365,8 @@ impl Agent {
         }
         let decider = self.decider.as_ref()?;
         let started = SystemTime::now();
-        let answered = decider.decide(Decision { state: page_state(obs), questions: done_question(&s.task) });
+        let proof = reply.proof.as_deref().map(str::trim).unwrap_or("");
+        let answered = decider.decide(Decision { state: page_state(obs), questions: done_question(&s.task, proof) });
         s.pending_calls.push(ModelCall::decision("the page shows the task done", answered.as_ref(), started));
         // A checker that cannot answer is not a reason to refuse the model's word.
         let verdicts = answered.ok()?;
@@ -380,18 +388,28 @@ impl Agent {
             return None;
         }
         s.done_passes += 1;
+        s.leave_held = true;
+        let named = if proof.is_empty() {
+            "You named no proof.".to_string()
+        } else {
+            format!("You named as proof: {proof:?}.")
+        };
         Some(format!(
-            "You reported done, but the screen does not show that the task is done (a checker read it, {:.0}% sure it did). Done means the page itself shows it: a confirmation, or the final state the task asked for. If something is still open, finish it. If you decided not to finish, do not report done: say plainly what stands in the way, with need_person or stuck.",
+            "You reported done, but the screen does not show that the task is done (a checker read it, {:.0}% sure it did). {named} Done means the page itself shows it: a confirmation, or the final state the task asked for. If this is the right page, put the proof in view on it (scroll to it, open the detail that shows it) and report done again with \"proof\" saying exactly what to look at and where; do not go back or to another address to show it. If something is still open, finish it. If you decided not to finish, do not report done: say plainly what stands in the way, with need_person or stuck.",
             sure * 100.0
         ))
     }
 }
 
-/// Asks whether the screen shows the task complete, in the task's own terms.
-fn done_question(task: &Task) -> BTreeMap<String, Question> {
+/// Asks whether the screen shows the task complete, in the task's own terms, and in the light of
+/// what the model named as the proof when it named one.
+fn done_question(task: &Task, proof: &str) -> BTreeMap<String, Question> {
     let mut wording = format!("The task was: {}.", task.goal.trim());
     if !task.done_when.trim().is_empty() {
         wording.push_str(&format!(" It is done when the page shows: {}.", task.done_when.trim()));
+    }
+    if !proof.is_empty() {
+        wording.push_str(&format!(" The agent says the proof on this screen is: {proof:?}. Look for that on the screen; if it is there and it means what the agent says, the task is done, even when the page words it differently from the task."));
     }
     let mut questions = BTreeMap::new();
     questions.insert(
@@ -401,6 +419,23 @@ fn done_question(task: &Task) -> BTreeMap<String, Question> {
         )),
     );
     questions
+}
+
+/// Holds a back or a navigate on the look after a "done" was sent back: the proof belongs on
+/// the page the model called done, and leaving it loses the state the task asked for. The hold
+/// is for one look; a model that still wants to leave after that is let go.
+fn hold_leaving(s: &mut Session, planned: &mut Vec<Action>, dropped: &mut Vec<String>) {
+    if !s.leave_held {
+        return;
+    }
+    s.leave_held = false;
+    let before = planned.len();
+    planned.retain(|action| !matches!(action.kind, Kind::Back | Kind::Navigate { .. }));
+    let held = before - planned.len();
+    if held > 0 {
+        dropped.push(format!("{} not sent: your \"done\" was sent back for proof, which belongs on this page; leaving it loses the state you reported", prompt::count(held, "leaving action")));
+        s.notes.push("Your plan left the page after a \"done\" was sent back, so the leaving action was not run. Show the proof on this page: scroll to it, or open the detail that shows it, and report done again with \"proof\" saying what to look at.".to_string());
+    }
 }
 
 /// The plan without the clicks the model named as the one that sends the page or goes on to the
@@ -545,7 +580,7 @@ mod tests {
     use crate::profile::Profile;
     use crate::run::Config;
     use crate::task::Irreversible;
-    use crate::testing::{Replying, Sure, look};
+    use crate::testing::{Asked, Replying, Sequenced, Sure, look};
 
     #[test]
     fn a_done_the_screen_does_not_show_is_sent_back_then_ends_unconfirmed() {
@@ -566,6 +601,31 @@ mod tests {
         let agent = Agent::new(Config::default(), model).with_decider(Sure::of(&[(ASK_DONE, 0.9)]));
         let id = agent.start(Task::new("send the form"), Profile::default());
         assert_eq!(agent.step(&id, look(false, &[])).unwrap().status, Status::Done);
+    }
+
+    #[test]
+    fn a_done_names_its_proof_to_the_checker_and_a_sent_back_done_may_not_leave_the_page() {
+        let done = r#"{"status":"done","message":"Open.","proof":"the counter at the top right reads 1 / 558 posts","actions":[]}"#;
+        let leave = r#"{"status":"working","message":"Going back.","actions":[{"kind":"back"},{"kind":"scroll","dy":200}]}"#;
+        let (model, seen) = Sequenced::new(&[done, leave, leave]);
+        let (decider, questions) = Asked::of(&[(ASK_DONE, 0.2)]);
+        let agent = Agent::new(Config { done_passes: 2, max_stale: 100, ..Config::default() }, model).with_decider(decider);
+        let id = agent.start(Task::new("open the thread with the most replies"), Profile::default());
+        let first = agent.step(&id, look(false, &[])).unwrap();
+        assert_eq!(first.message, DONE_PASS_MESSAGE);
+        // The checker was asked about the proof the model named.
+        assert!(questions.lock().unwrap()[0].contains("The agent says the proof on this screen is: \"the counter at the top right reads 1 / 558 posts\"."));
+        // The next plan leaves the page: the back is held, the scroll goes out, and the model is told.
+        let second = agent.step(&id, look(true, &[])).unwrap();
+        assert_eq!(second.status, Status::Working);
+        assert!(second.actions.iter().all(|a| !matches!(a.kind, Kind::Back)));
+        assert!(second.actions.iter().any(|a| matches!(a.kind, Kind::Scroll { .. })));
+        assert!(second.dropped.iter().any(|d| d.contains("1 leaving action not sent")));
+        assert!(seen.lock().unwrap()[1].contains("You named as proof: \"the counter at the top right reads 1 / 558 posts\"."));
+        // The hold is for one look: the model that still wants to leave is let go.
+        let third = agent.step(&id, look(false, &["s2a2"])).unwrap();
+        assert!(seen.lock().unwrap()[2].contains("the leaving action was not run"));
+        assert!(third.actions.iter().any(|a| matches!(a.kind, Kind::Back)));
     }
 
     #[test]

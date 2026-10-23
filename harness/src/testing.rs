@@ -33,12 +33,65 @@ impl Model for Replying {
     }
 }
 
+/// Answers each call with the next reply of a list, the last one again once they run out, and
+/// keeps the text of the last message of each call.
+pub(crate) struct Sequenced {
+    replies: Vec<String>,
+    calls: Mutex<usize>,
+    pub seen: Arc<Mutex<Vec<String>>>,
+}
+
+impl Sequenced {
+    pub fn new(replies: &[&str]) -> (Box<Sequenced>, Arc<Mutex<Vec<String>>>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        (Box::new(Sequenced { replies: replies.iter().map(|r| r.to_string()).collect(), calls: Mutex::new(0), seen: seen.clone() }), seen)
+    }
+}
+
+impl Model for Sequenced {
+    fn complete(&self, request: ModelRequest) -> Result<ModelResponse, Error> {
+        self.seen.lock().unwrap().push(request.messages.last().map(|m| m.text.clone()).unwrap_or_default());
+        let mut calls = self.calls.lock().unwrap();
+        let reply = self.replies[(*calls).min(self.replies.len() - 1)].clone();
+        *calls += 1;
+        Ok(ModelResponse { content: reply, ..Default::default() })
+    }
+
+    fn name(&self) -> &str {
+        "sequenced"
+    }
+}
+
 /// Answers each yes/no question with the probability set for its key, and no to the rest.
 pub(crate) struct Sure(BTreeMap<String, f64>);
 
 impl Sure {
     pub fn of(answers: &[(&str, f64)]) -> Box<Sure> {
         Box::new(Sure(answers.iter().map(|(key, p)| (key.to_string(), *p)).collect()))
+    }
+}
+
+/// Answers as `Sure` does, and keeps the wording of every question it was asked.
+pub(crate) struct Asked {
+    sure: Sure,
+    pub questions: Arc<Mutex<Vec<String>>>,
+}
+
+impl Asked {
+    pub fn of(answers: &[(&str, f64)]) -> (Box<Asked>, Arc<Mutex<Vec<String>>>) {
+        let questions = Arc::new(Mutex::new(Vec::new()));
+        (Box::new(Asked { sure: *Sure::of(answers), questions: questions.clone() }), questions)
+    }
+}
+
+impl Decider for Asked {
+    fn decide(&self, decision: Decision) -> Result<Verdicts, Error> {
+        self.questions.lock().unwrap().extend(decision.questions.values().map(|q| q.instructions.clone()));
+        self.sure.decide(decision)
+    }
+
+    fn name(&self) -> &str {
+        "asked"
     }
 }
 

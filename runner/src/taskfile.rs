@@ -43,6 +43,8 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
         match key.as_str() {
             "url" => task.start_url = Some(if value.contains("://") { value } else { file_url(&dir.join(&value))? }),
             "done_when" => task.done_when = value,
+            "approach" => task.approach.push(value),
+            "watch_out" => task.watch_out.push(value),
             "steps" => steps = Some(value.parse::<u32>().map_err(|_| format!("steps must be a number, not {value:?}"))?),
             "survey" => task.survey = matches!(value.to_lowercase().as_str(), "yes" | "true" | "on"),
             "persistence" => match value.to_lowercase().as_str() {

@@ -58,6 +58,9 @@ pub struct Session {
     pub stop_passes: u32,
     pub captcha_passes: u32,
     pub field_hold: FieldHold,
+    /// Set when a "done" was sent back on the page the run is on: the next plan may not leave
+    /// that page (no back, no navigate), since the proof belongs on it.
+    pub leave_held: bool,
     /// The click that sends the page, as the last plan kept it; how many times a send was held
     /// on this page for the to-do list; and that the page refused the last send, so the next is
     /// held for one look.
@@ -180,6 +183,7 @@ impl Session {
             stop_passes: 0,
             captcha_passes: 0,
             field_hold: FieldHold::default(),
+            leave_held: false,
             commit: CommitState::default(),
             list_hold: ListHold::default(),
             send_refused: false,

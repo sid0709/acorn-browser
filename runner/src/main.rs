@@ -188,7 +188,7 @@ fn run() -> Result<i32, String> {
         intake::apply(&sheet, &mut loaded.task);
         emit(json!({
             "event": "understood", "summary": sheet.summary, "startUrl": loaded.task.start_url,
-            "doneWhen": loaded.task.done_when, "relentless": sheet.relentless,
+            "doneWhen": loaded.task.done_when, "approach": loaded.task.approach, "watchOut": loaded.task.watch_out, "relentless": sheet.relentless,
         }));
     }
     let mut agent = Agent::new(Config::default(), Box::new(model)).with_trace_dir(&options.trace);
@@ -261,6 +261,7 @@ fn describe(action: &Action) -> String {
         Kind::Scroll { dy, .. } => format!("scroll {dy:+.0}"),
         Kind::Wait { ms } => format!("wait {ms}ms"),
         Kind::Navigate { url } => format!("go to {url}"),
+        Kind::Choose { option } => format!("choose {option:?}"),
         Kind::Back => "go back".to_string(),
         Kind::Survey => "look over the whole page".to_string(),
         other => {

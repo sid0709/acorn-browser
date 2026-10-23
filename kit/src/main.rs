@@ -330,6 +330,7 @@ fn describe(action: &harness::action::Action) -> String {
         Kind::Scroll { dy, .. } => format!("scroll {dy:+.0}"),
         Kind::Wait { ms } => format!("wait {ms}ms"),
         Kind::Navigate { url } => format!("go to {url}"),
+        Kind::Choose { option } => format!("choose {option:?}"),
         Kind::Back => "go back".to_string(),
         Kind::Survey => "survey".to_string(),
         other => {
