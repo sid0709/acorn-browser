@@ -87,7 +87,7 @@ all that is left. Set `allow: send` for a task you want sent.
 
 ## What the browser side does
 
-- A look: a JPEG of the viewport, the page's address and title, the scroll position and the
+- A look: a JPEG of the viewport once it holds still (two shots 150 ms apart that match), the page's address and title, the scroll position and the
   page's size, and the focused control as the page names it (its label, kind, value and options;
   never a password's value). With a survey: the whole page as screens from the top down, each at
   its own scroll position, leaving out the stretches the harness settled and adding one centred

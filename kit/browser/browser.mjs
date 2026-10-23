@@ -19,6 +19,8 @@ const SURVEY_OVERLAP_PX = 120; // shared by neighbouring survey screens, so a co
 const FOCUS_NEAR_PX = 24; // a survey screen this close to a wanted one is the same screen
 const SETTLE_MS = 150; // what the page gets to settle after a scroll
 const AFTER_ACTION_MS = 100; // what the page gets to react after a click or a key
+const STILL_MS = 150; // two screenshots this far apart that match mean the page has settled
+const STILL_TRIES = 10; // how many times a look waits for the page to settle before it goes with what it has
 const LOAD_MS = 1000; // how long a look waits for the network to go quiet
 const OPEN_MS = 30000; // how long opening the start page may take
 const CHOOSER_MS = 3000; // how long an upload waits for the file picker
@@ -108,6 +110,20 @@ async function shot() {
   return `data:image/jpeg;base64,${raw.toString('base64')}`;
 }
 
+/// A screenshot of the page once it holds still: a menu that is still opening, a page still
+/// drawing, is not what the model should plan from. Two shots STILL_MS apart that match are the
+/// page settled; a page that never settles (an animation) is shot after STILL_TRIES.
+async function stillShot() {
+  let last = await shot();
+  for (let i = 0; i < STILL_TRIES; i++) {
+    await page.waitForTimeout(STILL_MS);
+    const next = await shot();
+    if (next === last) return next;
+    last = next;
+  }
+  return last;
+}
+
 async function scrollTo(y) {
   await evaluate((top) => window.scrollTo(window.scrollX, top), y);
   await page.waitForTimeout(SETTLE_MS);
@@ -176,7 +192,7 @@ async function observe(survey, focusYs, settled) {
   const vp = page.viewportSize();
   const m = await metrics();
   const observation = {
-    screenshot: await shot(),
+    screenshot: await stillShot(),
     url: page.url(),
     title: await page.title(),
     viewport: { width: vp.width, height: vp.height, ...m },
