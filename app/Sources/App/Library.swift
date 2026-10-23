@@ -381,6 +381,11 @@ final class BrowserSettings: ObservableObject {
         didSet { UserDefaults.standard.set(minimumFontSize, forKey: "minimumFontSize") }
     }
 
+    /// The bookmarks bar under the toolbar (⇧⌘B).
+    @Published var showBookmarksBar: Bool {
+        didSet { UserDefaults.standard.set(showBookmarksBar, forKey: "showBookmarksBar") }
+    }
+
     static let languages: [(code: String, name: String)] = [
         ("en", "English"), ("zh-CN", "Chinese (Simplified)"), ("zh-TW", "Chinese (Traditional)"),
         ("ja", "Japanese"), ("ko", "Korean"), ("es", "Spanish"), ("fr", "French"), ("de", "German"),
@@ -406,6 +411,7 @@ final class BrowserSettings: ObservableObject {
         askWhereToSave = defaults.bool(forKey: "askWhereToSave")
         defaultFontSize = defaults.object(forKey: "defaultFontSize") as? Int ?? 16
         minimumFontSize = defaults.integer(forKey: "minimumFontSize")
+        showBookmarksBar = defaults.object(forKey: "showBookmarksBar") as? Bool ?? true
     }
 
     private static var systemLanguage: String {

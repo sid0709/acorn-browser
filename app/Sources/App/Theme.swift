@@ -41,25 +41,120 @@ enum Theme {
         startPoint: .topLeading, endPoint: .bottomTrailing)
 }
 
-/// A card: the palette's card color, a hairline edge and a two-layer shadow (a close one for
-/// the edge, a wide soft one for the lift).
+// MARK: - Glass
+
+/// How much a pane of glass carries, and so how much it holds back of what is behind it: a bar
+/// of buttons stays clear, a panel of text is denser, and what floats over a page (the command
+/// bar, a peeking sidebar, suggestions) is densest.
+enum GlassWeight {
+    case bar, panel, overlay
+}
+
+/// The window's shell is glass, after Liquid Glass. On macOS 26 it is the real thing: the
+/// system's glass bends and lights what lies beneath it (the canvas's glows, the desktop),
+/// tinted faintly with the theme. Before that it is built the way crystal catches light: a
+/// blur of what is behind, a tinted body, a soft sheen across the upper part, a rim lit along
+/// the top and leading edges and fainter along the far ones, and a lift of shadow.
+///
+/// It is drawn behind what it carries, never applied to it, so text keeps the palette's ink and
+/// the Chromium view inside a card is not touched.
+struct GlassPlate<S: InsettableShape>: View {
+    let shape: S
+    var weight: GlassWeight = .bar
+    /// A pane that floats (a panel, a card) casts a shadow; a bar within one does not.
+    var lifted = true
+    @Environment(\.palette) private var palette
+
+    var body: some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            Color.clear
+                .glassEffect(.regular.tint(palette.glassTint(weight)), in: shape)
+                .overlay(GlassRim(shape: shape, strength: 0.5))
+        } else {
+            crystal
+        }
+        #else
+        crystal
+        #endif
+    }
+
+    private var crystal: some View {
+        ZStack {
+            shape.fill(weight == .bar ? Material.ultraThinMaterial : Material.thinMaterial)
+            shape.fill(palette.glassFill(weight))
+            shape.fill(LinearGradient(colors: [palette.sheen, palette.sheen.opacity(0)],
+                                      startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.45)))
+            GlassRim(shape: shape)
+        }
+        .compositingGroup()
+        .shadow(color: .black.opacity(lifted ? (palette.isDark ? 0.28 : 0.05) : 0), radius: 1, y: 1)
+        .shadow(color: .black.opacity(lifted ? (palette.isDark ? 0.34 : 0.09) : 0), radius: 14, y: 6)
+    }
+}
+
+/// The lit edge of a pane of glass: brightest at the top leading corner, where the light falls,
+/// fading along the sides, and picking up again faintly at the bottom trailing one, as light
+/// does through the far side of a crystal.
+struct GlassRim<S: InsettableShape>: View {
+    let shape: S
+    var strength: Double = 1
+    @Environment(\.palette) private var palette
+
+    var body: some View {
+        shape
+            .strokeBorder(LinearGradient(stops: [
+                .init(color: palette.rimLight, location: 0),
+                .init(color: palette.rimShade, location: 0.4),
+                .init(color: palette.rimShade, location: 0.7),
+                .init(color: palette.rimLight.opacity(0.55), location: 1),
+            ], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
+            .overlay(shape.strokeBorder(palette.hairline, lineWidth: 0.5))
+            .opacity(strength)
+            .allowsHitTesting(false)
+    }
+}
+
+/// A drop of glass under the row or tab in use: the selection's fill with a lit rim and a
+/// close shadow. No blur, so a list of rows costs no more than before.
+struct GlassBead<S: InsettableShape>: View {
+    let shape: S
+    @Environment(\.palette) private var palette
+
+    var body: some View {
+        shape
+            .fill(palette.selection)
+            .overlay(shape.fill(LinearGradient(colors: [palette.sheen, palette.sheen.opacity(0)],
+                                               startPoint: .top, endPoint: .center)))
+            .overlay(GlassRim(shape: shape, strength: 0.8))
+            .shadow(color: .black.opacity(palette.isDark ? 0.25 : 0.07), radius: 3, y: 1)
+    }
+}
+
+/// A card: content on a pane of glass, clipped to it, with the rim drawn over the content too,
+/// so the edge reads as glass even where a page fills the card to its border.
 struct CardStyle: ViewModifier {
     var radius: CGFloat = Theme.Radius.card
-    @Environment(\.palette) private var palette
+    var weight: GlassWeight = .panel
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         content
-            .background(palette.card, in: shape)
             .clipShape(shape)
-            .overlay(shape.strokeBorder(palette.hairline))
-            .shadow(color: .black.opacity(palette.isDark ? 0.3 : 0.06), radius: 1, y: 1)
-            .shadow(color: .black.opacity(palette.isDark ? 0.35 : 0.08), radius: 12, y: 6)
+            .background(GlassPlate(shape: shape, weight: weight))
+            .overlay(GlassRim(shape: shape, strength: 0.7))
     }
 }
 
 extension View {
-    func card(radius: CGFloat = Theme.Radius.card) -> some View { modifier(CardStyle(radius: radius)) }
+    func card(radius: CGFloat = Theme.Radius.card, weight: GlassWeight = .panel) -> some View {
+        modifier(CardStyle(radius: radius, weight: weight))
+    }
+
+    /// Sets the view on a pane of glass of the given shape, without clipping it.
+    func glass<S: InsettableShape>(_ shape: S, weight: GlassWeight = .bar, lifted: Bool = true) -> some View {
+        background(GlassPlate(shape: shape, weight: weight, lifted: lifted))
+    }
 }
 
 /// A borderless toolbar button that lights up under the pointer.

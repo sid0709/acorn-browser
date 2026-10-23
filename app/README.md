@@ -179,8 +179,8 @@ follow the line, each frame with its library, symbol and offset in the image.
 
 ## Interface
 
-The window is a tinted canvas behind rounded cards: the page in one, the agent panel in another
-(⌘K). The tabs go either across the top, where the page's card carries navigation and the
+The window is a tinted canvas behind panes of glass: the page in one, the sidebar in another,
+the agent panel in a third (⌘K). The tabs go either across the top, where the page's card carries navigation and the
 address, or down a sidebar on the left, Arc's way (the layout is chosen in the ⋮ menu): pinned
 tabs as tiles, the agent's tab, then groups as folders and the open tabs. In that layout one row
 runs along the window's top whether the sidebar shows or not (`SidebarTopBar`): the window's
@@ -195,7 +195,10 @@ on the address for the tab shown. It ranks, from what the browser already knows,
 search, open tabs, bookmarks, history and the window's commands, and offers the words to the
 agent as a task. History (⌘Y), bookmarks (⌘D) and the search engine and translate language are
 in `Library.swift`, kept as JSON beside the runs; pages the agent opens while it drives are not
-written to history. The menu bar lists every command; the keys are also held by
+written to history. Bookmarks show on a bar under the toolbar (`BookmarksBar.swift`, ⇧⌘B to
+show or hide it): a click opens one in the tab, ⌘-click in a new one, a right click offers a new
+tab, the link and removal, and what does not fit is under » at the end. The bar steps aside while
+the agent drives its tab, so the agent's page keeps its height. The menu bar lists every command; the keys are also held by
 `WindowShortcuts` inside the window, so they work with the page focused.
 
 Settings and Extensions are pages in a tab, as in Chrome: `acorn://settings` and
@@ -229,11 +232,15 @@ with its switch, a search, and a page of details (what it may reach, its id and 
 also holds site boosts (`Boosts.swift`): styles and a script of the person's own put into a
 site's pages when they load, never into the agent's tab.
 
-Tabs are dragged (`TabDrag.swift`): onto either end of another tab to move there, taking its
-group and pin; onto its middle to make a group of the two (the new folder's name opens for
-typing); onto a group's label or folder to join it; onto the open space below the sidebar's tabs
-to leave a group or a pin; among the pinned tiles to pin. The agent's tab neither moves nor
-takes a drop.
+Tabs are dragged (`TabDrag.swift`), in both layouts: onto either end of another tab to move
+there, taking its group and pin; onto its middle to make a group of the two, or to join the
+group that tab is in (a new folder's name opens for typing); onto a group's label or folder to
+join it; onto the open space below the sidebar's tabs or at the end of the tab row to leave a
+group or a pin; among the pinned tiles to pin; onto the page's right side to open it in a split.
+The agent's tab neither moves nor takes a drop. The drag is the app's own (a drag gesture, and
+the targets' frames looked up under the pointer) rather than AppKit's drag and drop, which went
+through the pasteboard with a type the system did not know, and lost the drop over the page to
+the Chromium view.
 
 ⌘\ (or the ⋮ menu, or a tab dropped on a page's right edge) puts two tabs side by side
 (`SplitView.swift`), each with its own toolbar and a handle between them; the pane clicked last
@@ -270,9 +277,19 @@ the tab shown, the sidebar steps aside so the page the agent sees is no narrower
 before there was a sidebar.
 
 The tint is the person's: the palette button opens the theme picker (presets, a pad where one
-to three colors are set, intensity, grain, light or dark). No view draws with a fixed color;
-each reads a `Palette` derived from the theme (`ThemeStore.swift`), whose text and accent are
-picked to stay readable in either appearance. Spacing, radii, type and the shared button styles
+to three colors are set, intensity, grain, glass, light or dark). No view draws with a fixed
+color; each reads a `Palette` derived from the theme (`ThemeStore.swift`), whose text and accent
+are picked to stay readable in either appearance. Light and dark are set on the app through
+AppKit (`NSApp.appearance`), not with SwiftUI's `preferredColorScheme`, which on macOS does not
+go back to the system's once it has forced one; an incognito window sets its own.
+
+The shell is glass, after Apple's Liquid Glass (`GlassPlate` in `Theme.swift`). The window is
+see-through: the canvas is the desktop, blurred, under the theme's gradient (less of it the
+higher Glass is set), with the theme's colors glowing in two corners for the glass to bend. On
+macOS 26 the panes are the system's own Liquid Glass, faintly tinted with the theme; before that
+they are drawn like crystal, a blur with a tinted body, a sheen across the top and a rim lit at
+the top leading corner. The row or tab in use is a drop of glass (`GlassBead`), with no blur of
+its own. Glass is drawn behind what it carries, so the page views are never touched by it. Spacing, radii, type and the shared button styles
 are in `Theme.swift`, tab state in `TabStore.swift`, the strip in `TabStrip.swift`, the sidebar
 in `Sidebar.swift`, and the pieces both layouts share (the window's buttons, the address, the page
 toolbar, the agent's ring, the shortcuts) in `WindowChrome.swift`. Where the interface is going

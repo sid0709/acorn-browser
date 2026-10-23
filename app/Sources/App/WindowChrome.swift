@@ -48,6 +48,10 @@ struct WindowConfigurator: NSViewRepresentable {
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
             window.styleMask.insert(.fullSizeContentView)
+            // See-through, so the canvas can blur the desktop behind it (`WindowCanvas`). The
+            // pages are opaque views of their own and are not affected.
+            window.isOpaque = false
+            window.backgroundColor = .clear
             // The sidebar's edge watch needs the pointer's moves over the whole window.
             window.acceptsMouseMovedEvents = true
             let center = NotificationCenter.default
@@ -242,7 +246,7 @@ struct AddressField: View {
         .padding(.horizontal, 10)
         .frame(height: Self.height)
         .frame(maxWidth: .infinity)
-        .background(fill, in: shape)
+        .background { plate }
         .overlay(shape.strokeBorder(palette.accent.opacity(editing ? 0.5 : 0), lineWidth: 1.5))
         .contentShape(shape)
         .onTapGesture { if !editing { beginEditing() } }
@@ -252,9 +256,8 @@ struct AddressField: View {
             if !items.isEmpty {
                 SuggestionList(items: items, selection: $selection) { run(items, at: $0) }
                     .frame(minWidth: 420)
-                    .background(palette.raised, in: RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous).strokeBorder(palette.hairline))
-                    .shadow(color: .black.opacity(palette.isDark ? 0.5 : 0.16), radius: 24, y: 10)
+                    .card(radius: Theme.Radius.popover, weight: .overlay)
+                    .shadow(color: .black.opacity(palette.isDark ? 0.4 : 0.12), radius: 24, y: 10)
                     .offset(y: Self.height + 6)
             }
         }
@@ -268,10 +271,18 @@ struct AddressField: View {
         .help(editing ? "" : tab.shownAddress)
     }
 
-    private var fill: Color {
-        if editing { return palette.card }
-        if hovering { return filled ? palette.selection : palette.hover }
-        return filled ? palette.hover : .clear
+    /// Being edited, it is a pane of glass of its own; in the toolbar, which is glass already,
+    /// a well in it with a lit rim; above a page in the sidebar layout, nothing until pointed at.
+    @ViewBuilder
+    private var plate: some View {
+        if editing {
+            GlassPlate(shape: shape, weight: .overlay)
+        } else if filled {
+            shape.fill(hovering ? palette.selection : palette.hover)
+                .overlay(GlassRim(shape: shape, strength: hovering ? 0.8 : 0.5))
+        } else {
+            shape.fill(hovering ? palette.hover : .clear)
+        }
     }
 
     // MARK: Showing
@@ -492,7 +503,6 @@ struct PageToolbar: View {
         }
         .padding(.horizontal, Theme.Space.s)
         .frame(height: 42)
-        .background(palette.card)
         .overlay(alignment: .bottom) { Rectangle().fill(palette.hairline).frame(height: 1) }
     }
 }
@@ -542,6 +552,7 @@ struct WindowShortcuts: View {
             key(",") { store.openPage(.settings) }
             key("\\") { store.toggleSplit() }
             key("c", modifiers: [.command, .shift]) { store.copyLink() }
+            key("b", modifiers: [.command, .shift]) { BrowserSettings.shared.showBookmarksBar.toggle() }
             key("=") { store.active.zoomIn() }
             key("-") { store.active.zoomOut() }
             key("0") { store.active.zoomReset() }

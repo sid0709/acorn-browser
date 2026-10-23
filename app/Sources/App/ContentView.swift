@@ -75,12 +75,17 @@ private struct Shell: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
         }
+        .overlay {
+            if let id = store.draggedTab, let tab = store.tabs.first(where: { $0.id == id }) {
+                TabDragGhost(tab: tab, pointer: store.dragPointer)
+            }
+        }
         .animation(.easeOut(duration: 0.15), value: store.commandBar)
         .environmentObject(runner)
         .sheet(isPresented: $store.showingHistory) { HistoryView(store: store) }
         .sheet(item: $store.boostTarget) { BoostEditor(host: $0.host) }
         .focusedSceneObject(store)
-        .containerBackground(for: .window) { WindowCanvas() }
+        .containerBackground(for: .window) { WindowCanvas(palette: palette) }
         .navigationTitle(store.active.title.isEmpty ? "Acorn Browser" : store.active.title)
         .ignoresSafeArea(.container, edges: .top)
         .animation(Theme.layout, value: showsSidebar)
@@ -101,14 +106,15 @@ private struct Shell: View {
                           trailingInset: showAgent && store.hasAgent ? Self.agentPanelWidth + Theme.gutter : 0)
             HStack(spacing: 0) {
                 if showsSidebar {
-                    Sidebar(store: store, runner: runner, showAgent: $showAgent)
+                    sidebarPane()
+                        .padding(.leading, Theme.gutter)
+                        .padding(.bottom, Theme.gutter)
                         .frame(width: store.sidebarWidth)
-                        .overlay(alignment: .trailing) { SidebarResizeHandle(store: store).offset(x: 3) }
+                        .overlay(alignment: .trailing) { SidebarResizeHandle(store: store).offset(x: 7) }
                         .transition(.move(edge: .leading).combined(with: .opacity))
                 }
                 pagesAndAgent(toolbar: false)
                     .padding([.horizontal, .bottom], Theme.gutter)
-                    .padding(.leading, showsSidebar ? -Theme.Space.xs : 0)
             }
             .overlay(alignment: .leading) {
                 if !showsSidebar { peekingSidebar }
@@ -116,24 +122,24 @@ private struct Shell: View {
         }
     }
 
+    /// The tabs on their own pane of glass, floating on the canvas like the page beside them.
+    private func sidebarPane(weight: GlassWeight = .bar) -> some View {
+        Sidebar(store: store, runner: runner, showAgent: $showAgent)
+            .card(radius: Theme.Radius.popover, weight: weight)
+    }
+
     /// The sidebar out over the page, below the top row: in the very place it sits when shown,
-    /// flush with the window's left edge and bottom, rounded and shadowed only on its open side.
+    /// on denser glass, since a page lies beneath it now, and with a deeper shadow.
     @ViewBuilder
     private var peekingSidebar: some View {
         if peeking {
-            let shape = UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 0,
-                                               bottomTrailingRadius: Theme.Radius.popover,
-                                               topTrailingRadius: Theme.Radius.popover, style: .continuous)
-            Sidebar(store: store, runner: runner, showAgent: $showAgent)
+            sidebarPane(weight: .overlay)
+                .shadow(color: .black.opacity(palette.isDark ? 0.45 : 0.16), radius: 24, x: 4)
+                .padding(.leading, Theme.gutter)
+                .padding(.bottom, Theme.gutter)
                 .frame(width: store.sidebarWidth)
                 .frame(maxHeight: .infinity)
-                .background {
-                    WindowCanvas()
-                        .clipShape(shape)
-                        .shadow(color: .black.opacity(palette.isDark ? 0.5 : 0.2), radius: 22, x: 4)
-                }
-                .overlay(shape.strokeBorder(palette.hairline))
-                .transition(.move(edge: .leading))
+                .transition(.move(edge: .leading).combined(with: .opacity))
         }
     }
 
@@ -173,8 +179,10 @@ private struct Shell: View {
             .foregroundStyle(palette.ink)
             .padding(.horizontal, 12)
             .frame(height: 30)
-            .background(showAgent ? palette.selection : palette.hover,
-                        in: RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous))
+            .background {
+                let shape = Capsule()
+                if showAgent { GlassBead(shape: shape) } else { GlassPlate(shape: shape, lifted: false) }
+            }
         }
         .buttonStyle(.plain)
         .help(showAgent ? "Hide the agent (⌘K)" : "Ask the agent (⌘K)")
@@ -213,7 +221,7 @@ private struct ThemeButton: View {
 }
 
 /// The page in a card: its toolbar on top in the top layout and in a split (the sidebar
-/// carries navigation otherwise), a hairline of progress while it loads, the find bar over it,
+/// carries navigation otherwise), the bookmarks bar under it, a hairline of progress while it loads, the find bar over it,
 /// the agent's ring round it while the agent works in it, and the accent's edge on the pane in
 /// use of a split. While a tab is dragged, its right edge takes it to open a split.
 struct PageCard: View {
@@ -221,13 +229,18 @@ struct PageCard: View {
     @ObservedObject var store: TabStore
     var showsToolbar: Bool
     var focused = false
+    @ObservedObject private var settings = BrowserSettings.shared
     @Environment(\.palette) private var palette
-    @State private var splitTargeted = false
+    private var splitTargeted: Bool { store.isDropTargeted(.split(tab.id)) }
 
     var body: some View {
         VStack(spacing: 0) {
             // In the sidebar layout the window's top row carries navigation and the address.
             if showsToolbar { PageToolbar(tab: tab, store: store) }
+            if settings.showBookmarksBar && !tab.isDriven {
+                BookmarksBar(tab: tab, store: store)
+                    .transition(.opacity)
+            }
             ZStack(alignment: .top) {
                 BrowserPane(view: tab.view)
                 // The page stays underneath, so the agent can take the tab at any moment;
@@ -270,6 +283,7 @@ struct PageCard: View {
             if store.draggedTab != nil && store.shownSplit == nil { splitDropZone }
         }
         .animation(Theme.layout, value: tab.isDriven)
+        .animation(Theme.layout, value: settings.showBookmarksBar)
     }
 
     private var splitDropZone: some View {
@@ -284,7 +298,7 @@ struct PageCard: View {
             .frame(width: 220)
             .padding(Theme.Space.s)
             .contentShape(Rectangle())
-            .onDrop(of: [TabDrag.type], delegate: SplitDropDelegate(store: store, host: tab, targeted: $splitTargeted))
+            .tabDropTarget(.split(tab.id), store: store)
             .transition(.opacity)
     }
 }

@@ -31,8 +31,8 @@ Hard constraints, from CLAUDE.md and the code:
   agent is driving" state must come from `AgentDriver.attach()`/`detach()`.
 - `build.sh` compiles `Sources/App/*.swift`, which is not recursive, so new Swift files stay
   flat in `Sources/App/`.
-- Commits carry both Co-Authored-By lines from CLAUDE.md. Work happens on
-  `claude/exciting-brown-ta8b7y` and reaches `main` through a PR.
+- Commits carry both Co-Authored-By lines from CLAUDE.md. Each phase is a branch named by the
+  rules in CLAUDE.md and reaches `main` through a PR.
 
 ## Design direction
 
@@ -260,8 +260,8 @@ Browser
 
 ## Tabs: drag and drop, grouping, ungrouping (new `TabDrag.swift`; `TabStore.swift`, `TabStrip.swift`, `Sidebar.swift`)
 
-- Every tab row and pill is `.onDrag` with its id. A `TabDropDelegate` reads where the drop
-  lands on the target, along the main axis:
+- Every tab row and pill takes a drag gesture; each drop target registers its frame, and the
+  target under the pointer decides, along the main axis:
   - **Outer 25% at either end:** reorder, inserting before or after the target.
   - **Middle 50% of a tab:** group the two tabs. A new group appears with a highlight pulse, and
     the name field focuses.
@@ -315,7 +315,10 @@ Browser
   processes.
 - When idle, no animation runs and no timer ticks. The agent glow runs only while the agent
   drives, and pauses when the window is not key.
-- There is one material or gradient per window, with no per-row blur. Grain is one cached tile.
+- The canvas is one gradient over one behind-window blur, and its glows are static gradients.
+  The glass panes (sidebar, page card, agent panel, and what floats: the command bar, the find
+  bar, suggestions) are the only blurs, a handful per window; rows and tabs get no blur (the one
+  in use is a `GlassBead`, a fill with a lit rim). Grain is one cached tile.
 - Long lists (history, the command bar, many tabs) use `LazyVStack`. Favicons stay per tab.
 - Stores write JSON debounced and off the main thread. Nothing loads at launch beyond the theme,
   and history loads lazily on the first command bar or History open.

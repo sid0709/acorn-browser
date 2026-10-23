@@ -4,7 +4,7 @@ import AppKit
 /// The tabs down the left of the window, Arc's way, below the window's top row (which holds the
 /// window's buttons, navigation and the address): pinned tabs as tiles, the agent's tab, then
 /// groups as folders and the open tabs, with the theme, the agent toggle, extensions, the menu
-/// and a new tab along the bottom. It sits on the canvas itself rather than in a card.
+/// and a new tab along the bottom. It floats on its own pane of glass (`Shell`).
 struct Sidebar: View {
     @ObservedObject var store: TabStore
     @ObservedObject var runner: AgentRunner
@@ -12,8 +12,6 @@ struct Sidebar: View {
     @Environment(\.palette) private var palette
     @State private var choosingTheme = false
     @State private var showingMenu = false
-    @State private var pinTargeted = false
-    @State private var releaseTargeted = false
 
     private var favorites: [BrowserModel] { store.tabs.filter { $0.isPinned && !store.isAgentTab($0) } }
 
@@ -62,20 +60,16 @@ struct Sidebar: View {
                     }
                     // Open space below the tabs: a tab dropped here leaves its group or pin.
                     RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous)
-                        .fill(releaseTargeted ? palette.accent.opacity(0.1) : .clear)
+                        .fill(store.isDropTargeted(.release) ? palette.accent.opacity(0.1) : .clear)
                         .frame(height: 64)
                         .contentShape(Rectangle())
-                        .onDrop(of: [TabDrag.type],
-                                delegate: SpaceDropDelegate(kind: .release, store: store, targeted: $releaseTargeted))
+                        .tabDropTarget(.release, store: store)
                 }
             }
             .scrollIndicators(.never)
             footer
         }
-        .padding(.leading, Theme.Space.s + 2)
-        .padding(.trailing, Theme.Space.xs)
-        .padding(.top, Theme.Space.xs)
-        .padding(.bottom, Theme.Space.s)
+        .padding(Theme.Space.s - 2)
     }
 
     private var favoritesGrid: some View {
@@ -84,7 +78,7 @@ struct Sidebar: View {
         return LazyVGrid(columns: columns, spacing: Theme.Space.s) {
             ForEach(favorites, id: \.id) { tab in FavoriteTile(tab: tab, store: store) }
         }
-        .onDrop(of: [TabDrag.type], delegate: SpaceDropDelegate(kind: .pin, store: store, targeted: $pinTargeted))
+        .tabDropTarget(.pin, store: store)
     }
 
     /// Where a tab is dropped to pin it, while there are no pinned tabs to drop it among.
@@ -94,13 +88,13 @@ struct Sidebar: View {
             Text("Drop here to pin")
         }
         .font(Theme.Text.secondary)
-        .foregroundStyle(pinTargeted ? palette.accent : palette.inkTertiary)
+        .foregroundStyle(store.isDropTargeted(.pin) ? palette.accent : palette.inkTertiary)
         .frame(maxWidth: .infinity)
         .frame(height: 44)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous)
-            .strokeBorder(pinTargeted ? palette.accent : palette.inkTertiary, style: StrokeStyle(lineWidth: 1.2, dash: [4, 3])))
+            .strokeBorder(store.isDropTargeted(.pin) ? palette.accent : palette.inkTertiary, style: StrokeStyle(lineWidth: 1.2, dash: [4, 3])))
         .contentShape(Rectangle())
-        .onDrop(of: [TabDrag.type], delegate: SpaceDropDelegate(kind: .pin, store: store, targeted: $pinTargeted))
+        .tabDropTarget(.pin, store: store)
         .transition(.opacity)
     }
 
@@ -138,8 +132,6 @@ private struct FavoriteTile: View {
     @ObservedObject var store: TabStore
     @Environment(\.palette) private var palette
     @State private var hovering = false
-    @State private var zone: DropZone?
-    @State private var width: CGFloat = 0
 
     private var isActive: Bool { store.activeID == tab.id }
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous) }
@@ -148,7 +140,9 @@ private struct FavoriteTile: View {
         TabIcon(tab: tab, size: 18)
             .frame(maxWidth: .infinity)
             .frame(height: 44)
-            .background(shape.fill(isActive ? palette.selection : palette.selection.opacity(hovering ? 0.75 : 0.45)))
+            .background {
+                if isActive { GlassBead(shape: shape) } else { shape.fill(palette.selection.opacity(hovering ? 0.6 : 0.32)) }
+            }
             .overlay(shape.strokeBorder(palette.accent.opacity(isActive ? 0.9 : 0), lineWidth: 1.5))
             .contentShape(shape)
             .onTapGesture { store.select(tab) }
@@ -156,11 +150,9 @@ private struct FavoriteTile: View {
             .animation(Theme.hover, value: hovering)
             .help(tab.title)
             .contextMenu { TabContextMenu(tab: tab, store: store) }
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .tabDraggable(tab, store: store)
-            .onDrop(of: [TabDrag.type], delegate: TabDropDelegate(target: tab, store: store, axis: .horizontal,
-                                                                 extent: width, groups: false, zone: $zone))
-            .dropIndicator(zone, axis: .horizontal, color: palette.accent, radius: Theme.Radius.tile)
+            .tabDropTarget(.tab(tab.id), store: store)
+            .dropIndicator(store.dropZone(on: tab), axis: .horizontal, color: palette.accent, radius: Theme.Radius.tile)
     }
 }
 
@@ -248,9 +240,8 @@ private struct SidebarTabRow: View {
         .help(tab.title)
         .contextMenu { TabContextMenu(tab: tab, store: store) }
         .tabDraggable(tab, store: store)
-        .onDrop(of: [TabDrag.type], delegate: TabDropDelegate(target: tab, store: store, axis: .vertical,
-                                                             extent: Self.height, zone: $zone))
-        .dropIndicator(zone, axis: .vertical, color: palette.accent)
+        .tabDropTarget(.tab(tab.id), store: store, vertical: true, groups: true)
+        .dropIndicator(store.dropZone(on: tab), axis: .vertical, color: palette.accent)
     }
 }
 
@@ -360,8 +351,8 @@ private struct SidebarFolder: View {
             Button("Rename\u{2026}") { startRenaming() }
             GroupContextMenu(group: group, store: store)
         }
-        .onDrop(of: [TabDrag.type], delegate: GroupDropDelegate(groupID: group.id, store: store, targeted: $targeted))
-        .dropIndicator(targeted ? .into : nil, axis: .vertical, color: group.color)
+        .tabDropTarget(.group(group.id), store: store, vertical: true)
+        .dropIndicator(store.isDropTargeted(.group(group.id)) ? .into : nil, axis: .vertical, color: group.color)
         .onAppear { renameIfJustMade() }
         .onChange(of: store.renamingGroup) { _, _ in renameIfJustMade() }
     }
@@ -387,18 +378,19 @@ private struct SidebarFolder: View {
     }
 }
 
-/// The fill under a sidebar row: a raised white (or, in dark, a lighter) pill while it is the
-/// one shown, a faint one under the pointer.
+/// The fill under a sidebar row: a drop of glass while it is the one shown, a faint wash under
+/// the pointer.
 private struct SidebarRowBackground: View {
     let active: Bool
     let hovering: Bool
     @Environment(\.palette) private var palette
 
     var body: some View {
-        RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous)
-            .fill(active ? palette.selection : hovering ? palette.hover : .clear)
-            .shadow(color: .black.opacity(active && !palette.isDark ? 0.06 : 0), radius: 2, y: 1)
-            .animation(Theme.hover, value: hovering)
+        let shape = RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous)
+        ZStack {
+            if active { GlassBead(shape: shape) } else { shape.fill(hovering ? palette.hover : .clear) }
+        }
+        .animation(Theme.hover, value: hovering)
     }
 }
 

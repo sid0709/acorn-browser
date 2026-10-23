@@ -21,9 +21,32 @@ are in the language the owner writes in.
 
 ## Branches
 
-Development happens on the branch the session names, started from `feat/cef-browser-app` (or
-`main` when that branch is gone), and reaches the feature branch through a pull request. No
-branch holds traces, screenshots or results: `bench/traces` and `bench/results` stay ignored,
+Every task starts a new branch, cut from the latest `main` (`git fetch origin main`), and
+reaches `main` through a pull request. Nothing is committed to `main` directly, and a branch
+whose pull request was merged is never reused: follow-up work gets a new branch.
+
+A branch is named `<type>/<topic>`, and nothing else:
+
+- `type` says what kind of change it is, one of:
+  - `feat`: something the browser, harness or runner did not do before
+  - `fix`: something that was wrong
+  - `refactor`: the same behavior, built differently
+  - `docs`: documentation only
+  - `bench`: the benchmark, its tasks or its scripts
+  - `chore`: build, configuration, dependencies, policy
+- `topic` says what changes, in two to four lowercase English words joined by hyphens, the
+  words a reader of the pull request list would use: `feat/liquid-glass-shell`,
+  `fix/theme-appearance`, `bench/dom-mode-tasks`, `chore/branch-policy`.
+- Lowercase ASCII letters, digits and hyphens only, one slash, 40 characters at most.
+- No random or generated words, no suffixes, no dates, no session or issue numbers, no names
+  of people, models or tools: never `claude/compassionate-meitner-m4jike` or
+  `claude/focused-maxwell-c5u9tu`.
+
+When a session assigns Claude a generated branch name, Claude does not work on it: it creates a
+branch named by these rules, pushes there, and tells the owner the name. This rule is the
+owner's standing permission to push to that branch instead of the assigned one.
+
+No branch holds traces, screenshots or results: `bench/traces` and `bench/results` stay ignored,
 since they hold the pages a run saw and would grow the repository for nothing.
 
 ## What matters
