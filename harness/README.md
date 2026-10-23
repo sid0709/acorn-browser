@@ -48,6 +48,15 @@ The harness holds no credentials. Sign-ins are the browser side's business.
         └──────────────────────── observe(survey) / act(actions) ◄───────────────────┘
 ```
 
+### Intake (`intake.rs`)
+
+A request in plain words names neither where to start nor what "done" looks like. Before the
+run, the driving model is asked once, with no screenshot, for the sheet the run works from: the
+site the request means (`start_url`), what the screen will show when it is done (`done_when`),
+what the request itself permits among the actions that cannot be taken back, and whether to
+push through whatever comes. It fills only what the task was not given; the goal stays in the
+person's words. The runner and the kit call it when a task has no `url:` or `done_when:` line.
+
 ### Ports (`ports.rs`)
 
 The three traits the core is written against, each replaceable, none naming a provider or a
@@ -99,8 +108,8 @@ The kinds of action: `click`, `double_click`, `triple_click`, `right_click`, `ho
 optional held `modifiers`), `drag` along a `path` of points (a slider, a card to another column,
 a sweep over text, a stroke on a canvas), `type` into the focused control, `key` (one key or a
 chord, `Enter`, `Control+a`), `scroll`, `upload` (the browser intercepts the file picker and the
-harness names the task's file), `wait`, and `survey` (a request to the harness, not the
-browser: the next look is the whole page).
+harness names the task's file), `wait`, `navigate` to an address and `back`, and `survey` (a
+request to the harness, not the browser: the next look is the whole page).
 
 ### Verification (`verify.rs`, `review.rs`, `pointcheck.rs`)
 
@@ -190,7 +199,7 @@ the prompt.
 | `ports` | The `Model`, `Decider` and `Browser` traits, messages, verdicts, errors |
 | `run` | `Agent`, `Config`, `Step`, the step loop, `drive` |
 | `session` | One run's state: task, profile, memory, plan, counters, questions |
-| `task`, `profile` | What was asked and who the run acts as |
+| `task`, `profile`, `intake` | What was asked, who the run acts as, and the sheet read from a plain request |
 | `observe`, `action` | What the browser reports and what it is asked to do |
 | `prompt`, `model`, `recover`, `openrouter` | Talking to the driving model |
 | `memory`, `change` | The history, and telling a changed page from noise |

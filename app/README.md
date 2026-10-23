@@ -52,8 +52,12 @@ Tests/agent_smoke.py        # drives it over the socket and checks 19 things
 
 Type a task in the sidebar (or paste a task file with `url:`, `done_when:`, `steps:` lines, like
 the ones in `kit/tasks`). The app writes it to a task file, starts `acorn-runner` (the harness,
-in `../runner`), and shows each step in the chat. The stop button ends a run. A task without a
-`url:` line starts on the page the browser shows. The button in the sidebar's header picks the
+in `../runner`), and shows each step in the chat. The stop button ends a run. A request in
+plain words, with no `url:` or `done_when:` line, is read by the model first: the site it means,
+what the screen will show when it is done, what it permits (send, pay, post, delete, sign up),
+and how hard to push; the chat shows what was understood before the first step. A request about
+"this page" starts where the browser is. The model can also go to an address on its own
+(`navigate`) when the task needs another site. The button in the sidebar's header picks the
 model that drives the page (`gpt-6-luna` by default) from every model OpenRouter lists, with a
 search field. The chosen model's inputs and outputs, context, reasoning efforts and every price
 are shown beneath the list, and a model that cannot read the screenshots is flagged. The list
@@ -75,8 +79,16 @@ Each run keeps a folder under `~/Library/Application Support/com.acorn.browser/r
 
 `AcornBrowser --run-task <file>` submits a task file at launch, for trying it without typing.
 
+A native dropdown (`<select>`) opens the system's own menu, which waits for the person's mouse:
+a click on one gives it the focus instead, and the model chooses by keys from the options the
+focus information lists. A control inside a frame of another site (a payment form) cannot be
+described; typing goes to it all the same.
+
 Known limits: Chromium only paints a visible window, so the window is brought on screen when
 a picture is needed; there is one tab, so a window the page opens takes this tab's place.
+
+The missions in `../bench` measure the whole: `bench/run.py` runs each plain request against
+the running app and keeps the score.
 
 ```text
 Sources/App/        SwiftUI: window, toolbar, chat sidebar, one tab's state

@@ -31,6 +31,7 @@ use std::process::exit;
 use std::time::Instant;
 
 use harness::action::Kind;
+use harness::intake;
 use harness::openrouter::{OpenRouter, UreqTransport};
 use harness::ports::Browser;
 use harness::profile::Profile;
@@ -163,13 +164,21 @@ fn run() -> Result<i32, String> {
     if options.bench {
         return bench(&options, &key);
     }
-    let loaded = taskfile::load(&options.task)?;
+    let mut loaded = taskfile::load(&options.task)?;
     let facts = std::fs::read_to_string(&options.profile).unwrap_or_else(|_| DEFAULT_FACTS.to_string());
-    let start_url = loaded.task.start_url.clone().ok_or("the task file needs a url: line")?;
 
     let model_meter = Meter::default();
     let check_meter = Meter::default();
     let model = Metered { inner: OpenRouter::new(key.clone(), options.model.clone(), OPENROUTER_URL, options.reasoning.clone(), Box::new(UreqTransport::default())), meter: model_meter.clone() };
+    // A task with no url: or done_when: line is read by the model first, as a chat request is.
+    if intake::needed(&loaded.task) {
+        let sheet = intake::understand(&model, &loaded.task.goal, &Profile::new(facts.clone())).map_err(|e| format!("the request could not be understood: {e}"))?;
+        intake::apply(&sheet, &mut loaded.task);
+        println!("understood: {}", sheet.summary);
+        println!("  start at {}", loaded.task.start_url.as_deref().unwrap_or("(the page the browser shows)"));
+        println!("  done when {}", loaded.task.done_when);
+    }
+    let start_url = loaded.task.start_url.clone().ok_or("the task names no site to start on: add a url: line")?;
     let mut agent = Agent::new(Config::default(), Box::new(model)).with_trace_dir(&options.trace);
     if let Some(decider) = &options.decider {
         let (decision_key, url) = match options.decisions {
@@ -320,6 +329,8 @@ fn describe(action: &harness::action::Action) -> String {
         Kind::Key { keys } => format!("key {keys}"),
         Kind::Scroll { dy, .. } => format!("scroll {dy:+.0}"),
         Kind::Wait { ms } => format!("wait {ms}ms"),
+        Kind::Navigate { url } => format!("go to {url}"),
+        Kind::Back => "go back".to_string(),
         Kind::Survey => "survey".to_string(),
         other => {
             let name = serde_json::to_value(other).ok().and_then(|v| v["kind"].as_str().map(str::to_string)).unwrap_or_default();

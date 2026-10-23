@@ -197,6 +197,10 @@ fn focus_line(focus: Option<&Focus>) -> String {
         format!("the control labelled {:?}", focus.label.trim())
     };
     let mut line = format!("Keyboard focus: {name}.\n");
+    if focus.tag.eq_ignore_ascii_case("iframe") {
+        line.push_str("It is inside an embedded frame of another site, whose controls the page cannot describe: typing goes to the control you clicked in it; judge by the screenshot.\n");
+        return line;
+    }
     if focus.tag.eq_ignore_ascii_case("select") && !focus.options.is_empty() {
         let several = if focus.multiple { " (several may be chosen)" } else { "" };
         line.push_str(&format!(

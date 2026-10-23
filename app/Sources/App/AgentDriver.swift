@@ -24,7 +24,7 @@ final class AgentDriver {
     nonisolated private static let settleCap = 5.0
     nonisolated private static let scrollSettleCap = 1.0
     nonisolated private static let openCap = 30.0
-    nonisolated private static let maxWaitMs = 10_000.0
+    nonisolated private static let maxWaitMs = 30_000.0
     nonisolated private static let jpegQuality = 80
     nonisolated private static let evaluateRetries = 5
     nonisolated private static let maxLabel = 80
@@ -316,12 +316,32 @@ final class AgentDriver {
         await settled(cap: Self.scrollSettleCap)
     }
 
-    /// Whether a control has the keyboard: typing goes somewhere.
+    /// The focused element, following the focus into embedded frames. A frame of another site
+    /// cannot be looked into: the frame itself is the answer then, `sealed`.
+    nonisolated private static let deepActive = """
+        const deepActive = () => {
+          let a = document.activeElement;
+          while (a && a.tagName === 'IFRAME') {
+            let inner = null;
+            try { inner = a.contentDocument && a.contentDocument.activeElement; } catch (e) {}
+            if (!inner || inner === a) return { element: a, sealed: true };
+            a = inner;
+          }
+          if (!a || a === document.body || a === document.documentElement) return { element: null, sealed: false };
+          if (a.ownerDocument && (a === a.ownerDocument.body || a === a.ownerDocument.documentElement)) return { element: null, sealed: false };
+          return { element: a, sealed: false };
+        };
+        """
+
+    /// Whether a control has the keyboard: typing goes somewhere. In a frame of another site
+    /// the control cannot be seen, so the typing is let through.
     private func hasFocus() async -> Bool {
         let value = try? await evaluate("""
         (() => {
-          const a = document.activeElement;
-          if (!a || a === document.body || a === document.documentElement) return false;
+          \(Self.deepActive)
+          const { element: a, sealed } = deepActive();
+          if (sealed) return true;
+          if (!a) return false;
           return a.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName);
         })()
         """)
@@ -332,12 +352,17 @@ final class AgentDriver {
     private func focus() async -> [String: Any]? {
         let value = try? await evaluate("""
         (() => {
-          const a = document.activeElement;
-          if (!a || a === document.body || a === document.documentElement) return null;
+          \(Self.deepActive)
+          const { element: a, sealed } = deepActive();
+          if (!a) return null;
           const cut = (text, max) => (text || '').trim().replace(/\\s+/g, ' ').slice(0, max);
+          if (sealed) {
+            return { tag: 'iframe', type: '', label: cut(a.getAttribute('title') || a.getAttribute('aria-label') || a.getAttribute('name') || '', \(Self.maxLabel)) };
+          }
+          const doc = a.ownerDocument || document;
           const byId = a.getAttribute('aria-labelledby');
           const label = (a.labels && a.labels[0] && a.labels[0].innerText) || a.getAttribute('aria-label') ||
-            (byId && document.getElementById(byId) && document.getElementById(byId).innerText) ||
+            (byId && doc.getElementById(byId) && doc.getElementById(byId).innerText) ||
             a.getAttribute('placeholder') || a.getAttribute('title') || a.getAttribute('name') || '';
           const tag = a.tagName.toLowerCase();
           const type = (a.type || '').toLowerCase();
@@ -491,6 +516,9 @@ final class AgentDriver {
         do { flags = try KeyPress.flags(named: action["modifiers"] as? String ?? "") } catch { throw ActionFailure(message: "\(error)") }
         switch action["kind"] as? String {
         case "click":
+            // A dropdown's list is the system's own menu, which waits for the person's mouse:
+            // the click gives the dropdown the focus instead, and keys choose from it.
+            if flags.isEmpty, await focusDropdown(x, y) { break }
             try await click(x, y, count: 1, flags: flags)
         case "double_click":
             try await click(x, y, count: 2, flags: flags)
@@ -531,11 +559,41 @@ final class AgentDriver {
             let ms = min((action["ms"] as? NSNumber)?.doubleValue ?? 1000, Self.maxWaitMs)
             try? await Task.sleep(for: .milliseconds(Int(ms)))
             return [:]
+        case "navigate":
+            let url = action["url"] as? String ?? ""
+            guard !url.isEmpty else { throw ActionFailure(message: "there is no address to go to") }
+            await open(url)
+            return [:]
+        case "back":
+            view.goBack()
+            await settled(cap: Self.openCap)
+            return [:]
         case let kind:
             throw ActionFailure(message: "the browser cannot do an action of kind \(kind ?? "(none)")")
         }
         await settled()
         return [:]
+    }
+
+    /// When a native dropdown (a select) is at the point, gives it the focus the way its click
+    /// would, without opening its menu, and says so.
+    private func focusDropdown(_ x: Double, _ y: Double) async -> Bool {
+        let value = try? await evaluate("""
+        (() => {
+          let el = document.elementFromPoint(\(x), \(y));
+          while (el && el.tagName === 'IFRAME') {
+            let inner = null;
+            try { const r = el.getBoundingClientRect(); inner = el.contentDocument && el.contentDocument.elementFromPoint(\(x) - r.left, \(y) - r.top); } catch (e) {}
+            if (!inner) return false;
+            el = inner;
+          }
+          const select = el && el.closest ? el.closest('select') : null;
+          if (!select || select.disabled) return false;
+          select.focus();
+          return true;
+        })()
+        """)
+        return (value as? Bool) ?? false
     }
 
     /// Clicks what opens the file picker, and hands the page the task's file in its place.

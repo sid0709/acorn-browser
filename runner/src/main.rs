@@ -32,6 +32,7 @@ use std::process::exit;
 use std::time::Instant;
 
 use harness::action::{Action, Kind};
+use harness::intake;
 use harness::openrouter::{OpenRouter, UreqTransport};
 use harness::ports::Browser;
 use harness::profile::Profile;
@@ -173,12 +174,23 @@ fn run() -> Result<i32, String> {
         )
     })?;
 
-    let loaded = taskfile::load(&options.task)?;
+    let mut loaded = taskfile::load(&options.task)?;
     let facts = std::fs::read_to_string(&options.profile).unwrap_or_else(|_| DEFAULT_FACTS.to_string());
 
     let model_meter = Meter::default();
     let check_meter = Meter::default();
     let model = Metered { inner: OpenRouter::new(key.clone(), options.model.clone(), OPENROUTER_URL, options.reasoning.clone(), Box::new(UreqTransport::default())), meter: model_meter.clone() };
+
+    // A request in plain words names neither where to start nor what "done" looks like: the
+    // model reads them from it before the run, and the person sees what it understood.
+    if intake::needed(&loaded.task) {
+        let sheet = intake::understand(&model, &loaded.task.goal, &Profile::new(facts.clone())).map_err(|e| format!("The request could not be understood: {e}"))?;
+        intake::apply(&sheet, &mut loaded.task);
+        emit(json!({
+            "event": "understood", "summary": sheet.summary, "startUrl": loaded.task.start_url,
+            "doneWhen": loaded.task.done_when, "relentless": sheet.relentless,
+        }));
+    }
     let mut agent = Agent::new(Config::default(), Box::new(model)).with_trace_dir(&options.trace);
     if let Some(decider) = &options.decider {
         let (decision_key, url) = match options.decisions {
@@ -248,6 +260,8 @@ fn describe(action: &Action) -> String {
         Kind::Key { keys } => format!("press {keys}"),
         Kind::Scroll { dy, .. } => format!("scroll {dy:+.0}"),
         Kind::Wait { ms } => format!("wait {ms}ms"),
+        Kind::Navigate { url } => format!("go to {url}"),
+        Kind::Back => "go back".to_string(),
         Kind::Survey => "look over the whole page".to_string(),
         other => {
             let name = serde_json::to_value(other).ok().and_then(|v| v["kind"].as_str().map(str::to_string)).unwrap_or_default().replace('_', " ");
