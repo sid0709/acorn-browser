@@ -167,6 +167,24 @@ pub fn observation_text(step: u32, max_steps: u32, obs: &Observation, results: &
     out
 }
 
+/// What the page reports beside a screenshot, for a checker that reads the picture: the page,
+/// what has focus, what became of the last actions, and the browser's notes. A focus, a closed
+/// menu or a key the page took are not in any picture; this is where they are.
+pub fn evidence_text(obs: &Observation, results: &[ActionResult]) -> String {
+    let mut out = format!("Page: {} ({})\n", or_none(&obs.title), or_none(&obs.url));
+    out.push_str(&focus_line(obs.focus.as_ref()));
+    if !results.is_empty() {
+        out.push_str("What became of the last actions:\n");
+        for result in results {
+            out.push_str(&format!("- {}\n", result_line(result)));
+        }
+    }
+    for note in &obs.notes {
+        out.push_str(&format!("Note: {}\n", note.trim()));
+    }
+    out
+}
+
 /// How much of the page lies off screen, so the model knows whether to scroll.
 fn scroll_line(v: &Viewport) -> String {
     if v.page_height <= 0.0 {

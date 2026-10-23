@@ -16,6 +16,9 @@ use harness::ports::{Browser, Error, ErrorKind};
 use harness::run::Step;
 use serde_json::{Value, json};
 
+/// The version of the line protocol this runner speaks; the app must speak the same.
+pub const PROTOCOL: u64 = 2;
+
 /// How long one request may take before the app is taken to be stuck. A look waits for the page
 /// to settle (a few seconds) and a survey scrolls the whole page, so this is generous.
 const REPLY_WAIT: Duration = Duration::from_secs(120);
@@ -40,7 +43,25 @@ impl AppBrowser {
         })?;
         stream.set_read_timeout(Some(REPLY_WAIT)).map_err(|e| Error::new(ErrorKind::Browser, e.to_string()))?;
         let reader = stream.try_clone().map_err(|e| Error::new(ErrorKind::Browser, e.to_string()))?;
-        Ok(AppBrowser { writer: stream, reader: BufReader::new(reader), next_id: 0, focus: Vec::new(), settled: None, resources: HashMap::new() })
+        let mut browser = AppBrowser { writer: stream, reader: BufReader::new(reader), next_id: 0, focus: Vec::new(), settled: None, resources: HashMap::new() };
+        browser.handshake()?;
+        Ok(browser)
+    }
+
+    /// Makes sure the app speaks the same protocol as this runner: an app built before a kind
+    /// of action was added would refuse it mid-run, and look like a page that does not work.
+    fn handshake(&mut self) -> Result<(), Error> {
+        let reply = self.call(json!({"cmd": "hello", "protocol": PROTOCOL})).map_err(|e| {
+            Error::new(ErrorKind::Browser, format!("the app did not answer the greeting ({e}): it is older than this runner; rebuild it with app/scripts/build.sh"))
+        })?;
+        let spoken = reply["protocol"].as_u64().unwrap_or(0);
+        if spoken != PROTOCOL {
+            return Err(Error::new(
+                ErrorKind::Browser,
+                format!("the app speaks protocol {spoken} and this runner protocol {PROTOCOL}: rebuild both with app/scripts/build.sh"),
+            ));
+        }
+        Ok(())
     }
 
     /// Gives the browser the files the task may upload, by id.

@@ -120,6 +120,8 @@ pub struct TracedAction {
 pub struct CheckTrace {
     pub expect: String,
     pub matches: f64,
+    #[serde(default)]
+    pub contradicted: f64,
     pub blocked: f64,
     pub loading: f64,
     pub outcome: String,

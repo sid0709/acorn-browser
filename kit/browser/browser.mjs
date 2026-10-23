@@ -416,6 +416,9 @@ for await (const line of lines) {
       case 'act':
         reply = { ok: true, results: await act(request.actions || []) };
         break;
+      case 'hello':
+        reply = { ok: true, protocol: 2 };
+        break;
       case 'close':
         reply = { ok: true };
         break;

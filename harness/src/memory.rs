@@ -166,6 +166,7 @@ pub(crate) fn describe(action: &Action) -> String {
         Kind::Navigate { url } => format!("go to {url}"),
         Kind::Back => "go back".to_string(),
         Kind::Survey => "survey".to_string(),
+        Kind::Resume => "resume the kept plan".to_string(),
         Kind::Upload { x, y, file_name, .. } if !file_name.is_empty() => format!("upload {file_name} at {x:.0},{y:.0}"),
         other => {
             let name = match other {

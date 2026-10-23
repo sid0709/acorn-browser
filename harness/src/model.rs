@@ -282,6 +282,7 @@ fn fill(input: &RawAction, vp: &Viewport) -> Result<Kind, String> {
         }
         "back" => Kind::Back,
         "survey" => Kind::Survey,
+        "resume" => Kind::Resume,
         _ => return Err("that is not an action the harness can send".to_string()),
     })
 }
@@ -418,6 +419,7 @@ pub fn reply_schema(survey: bool, checks: bool) -> Value {
         object(vec![("kind", kind_enum(&["wait"])), ("ms", json!({"type": "integer"}))]),
         plain("navigate", vec![("url", string.clone())]),
         plain("back", vec![]),
+        object(vec![("kind", kind_enum(&["resume"]))]),
     ];
     if survey {
         shapes.push(object(vec![("kind", kind_enum(&["survey"]))]));

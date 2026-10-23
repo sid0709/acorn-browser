@@ -21,6 +21,13 @@ the harness cannot tell this browser from the Playwright one.
   type, key chords (`Enter`, `Meta+a`), scroll, wait, upload (the file picker is intercepted and
   the task's file handed to the page; a plain click that opens the picker reports
   `opened: file_picker`).
+- **Typing is measured, not predicted.** Where keys go is not guessed from the page's idea of
+  focus (a canvas, a game, an editor of its own, a frame of another site all take keys without
+  it): the page counts the keys it gets, the keys it handled, and the text that went into a
+  control, and the screen is glimpsed before and after. The first character is a probe: when it
+  did nothing at all, the rest is not typed and the action reports it reached nothing. A
+  survey point is refused only when the page shrank or could not be scrolled to where the
+  point was measured; a page that grew below (a list that loaded more) is acted on.
 - **The agent has a pointer and keyboard of its own.** Its events are built as the system
   builds them from the hardware (`NSEvent`) and handed to Chromium's view the way the window
   hands them over, not injected through DevTools: a drag is a button held through a path of
@@ -78,6 +85,10 @@ Each run keeps a folder under `~/Library/Application Support/com.acorn.browser/r
 `events.jsonl` (what the agent said and did), and the harness's trace (every screenshot).
 
 `AcornBrowser --run-task <file>` submits a task file at launch, for trying it without typing.
+
+The runner greets the app first (`hello`, with the protocol version each speaks) and refuses to
+run against an app built before this runner: an older app would refuse a kind of action mid-run
+and look like a page that does not work. Rebuild both with `scripts/build.sh`.
 
 A native dropdown (`<select>`) opens the system's own menu, which waits for the person's mouse:
 a click on one gives it the focus instead, and the model chooses by keys from the options the

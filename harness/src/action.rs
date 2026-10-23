@@ -154,6 +154,8 @@ pub enum Kind {
     Back,
     /// Not sent to the browser: the model asks for the next look to be a survey of the whole page.
     Survey,
+    /// Not sent to the browser: the model asks for the rest of its kept plan to run as planned.
+    Resume,
 }
 
 impl Kind {
@@ -175,7 +177,7 @@ impl Kind {
 
     /// Whether the browser carries this action out. The rest are requests to the harness.
     pub fn is_for_browser(&self) -> bool {
-        !matches!(self, Kind::Survey)
+        !matches!(self, Kind::Survey | Kind::Resume)
     }
 }
 
