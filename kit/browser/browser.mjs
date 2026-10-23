@@ -25,7 +25,7 @@ const SETTLE_CAP_MS = 5000; // the longest a look waits for the page to settle
 const SCROLL_SETTLE_CAP_MS = 1000; // the longest a scroll waits for what it brought into view
 const OPEN_MS = 30000; // how long opening the start page may take
 const CHOOSER_MS = 3000; // how long an upload waits for the file picker
-const MAX_WAIT_MS = 10000; // the longest one wait action may be
+const MAX_WAIT_MS = 30000; // the longest one wait action may be
 const JPEG_QUALITY = 80;
 const EVALUATE_RETRIES = 5; // how many times a page function is tried again across a navigation
 const RETRY_MS = 150; // between those tries
@@ -157,26 +157,46 @@ async function scrollTo(y) {
 }
 
 /// Whether a control has the keyboard: typing goes somewhere.
+/// The focused element, following the focus into embedded frames; a frame of another site
+/// cannot be looked into, and is the answer itself then.
+function deepActive() {
+  let a = document.activeElement;
+  while (a && a.tagName === 'IFRAME') {
+    let inner = null;
+    try { inner = a.contentDocument && a.contentDocument.activeElement; } catch (e) {}
+    if (!inner || inner === a) return { element: a, sealed: true };
+    a = inner;
+  }
+  if (!a || a === document.body || a === document.documentElement) return { element: null, sealed: false };
+  if (a.ownerDocument && (a === a.ownerDocument.body || a === a.ownerDocument.documentElement)) return { element: null, sealed: false };
+  return { element: a, sealed: false };
+}
+
 async function hasFocus() {
-  return evaluate(() => {
-    const a = document.activeElement;
-    if (!a || a === document.body || a === document.documentElement) return false;
+  return evaluate(`(${deepActive.toString()}, (() => {
+    const { element: a, sealed } = deepActive();
+    if (sealed) return true;
+    if (!a) return false;
     return a.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName);
-  });
+  })())`);
 }
 
 /// The focused control as the page describes it, or null.
 async function focus() {
   return evaluate(
-    ({ maxLabel, maxValue }) => {
-      const a = document.activeElement;
-      if (!a || a === document.body || a === document.documentElement) return null;
+    ({ maxLabel, maxValue, deep }) => {
+      const { element: a, sealed } = new Function(`return (${deep})()`)();
+      if (!a) return null;
       const cut = (text, max) => (text || '').trim().replace(/\s+/g, ' ').slice(0, max);
+      if (sealed) {
+        return { tag: 'iframe', type: '', label: cut(a.getAttribute('title') || a.getAttribute('aria-label') || a.getAttribute('name') || '', maxLabel) };
+      }
+      const doc = a.ownerDocument || document;
       const byId = a.getAttribute('aria-labelledby');
       const label =
         (a.labels && a.labels[0] && a.labels[0].innerText) ||
         a.getAttribute('aria-label') ||
-        (byId && document.getElementById(byId) && document.getElementById(byId).innerText) ||
+        (byId && doc.getElementById(byId) && doc.getElementById(byId).innerText) ||
         a.getAttribute('placeholder') ||
         a.getAttribute('title') ||
         a.getAttribute('name') ||
@@ -199,7 +219,7 @@ async function focus() {
       if (typeof a.checkValidity === 'function' && !a.checkValidity()) out.invalid = cut(a.validationMessage, maxValue);
       return out;
     },
-    { maxLabel: MAX_LABEL_CHARS, maxValue: MAX_VALUE_CHARS },
+    { maxLabel: MAX_LABEL_CHARS, maxValue: MAX_VALUE_CHARS, deep: deepActive.toString() },
   );
 }
 
@@ -349,6 +369,14 @@ async function doAction(action) {
     case 'wait':
       await page.waitForTimeout(Math.min(action.ms ?? 1000, MAX_WAIT_MS));
       return {};
+    case 'navigate':
+      if (!action.url) throw new Error('there is no address to go to');
+      await open(action.url);
+      return {};
+    case 'back':
+      await page.goBack({ waitUntil: 'load', timeout: OPEN_MS }).catch((error) => notes.push(`Going back did not finish: ${error.message}`));
+      await settled();
+      return {};
     default:
       throw new Error(`the browser cannot do an action of kind ${action.kind}`);
   }
@@ -387,6 +415,9 @@ for await (const line of lines) {
         break;
       case 'act':
         reply = { ok: true, results: await act(request.actions || []) };
+        break;
+      case 'hello':
+        reply = { ok: true, protocol: 2 };
         break;
       case 'close':
         reply = { ok: true };

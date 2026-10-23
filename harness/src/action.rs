@@ -148,8 +148,14 @@ pub enum Kind {
         file_name: String,
     },
     Wait { ms: u64 },
+    /// Go to an address: another site, or another page of this one, when no link leads there.
+    Navigate { url: String },
+    /// Go back to the page before this one.
+    Back,
     /// Not sent to the browser: the model asks for the next look to be a survey of the whole page.
     Survey,
+    /// Not sent to the browser: the model asks for the rest of its kept plan to run as planned.
+    Resume,
 }
 
 impl Kind {
@@ -171,7 +177,7 @@ impl Kind {
 
     /// Whether the browser carries this action out. The rest are requests to the harness.
     pub fn is_for_browser(&self) -> bool {
-        !matches!(self, Kind::Survey)
+        !matches!(self, Kind::Survey | Kind::Resume)
     }
 }
 

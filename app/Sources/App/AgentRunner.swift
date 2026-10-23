@@ -171,6 +171,12 @@ final class AgentRunner: ObservableObject {
         switch event["event"] as? String {
         case "start":
             break
+        case "understood":
+            let summary = event["summary"] as? String ?? ""
+            var detail: [String] = []
+            if let url = event["startUrl"] as? String, !url.isEmpty { detail.append("Starting at \(url)") }
+            if let done = event["doneWhen"] as? String, !done.isEmpty { detail.append("Done when \(done)") }
+            messages.append(ChatMessage(kind: .agent, text: summary.isEmpty ? "Understood." : summary, detail: detail.joined(separator: "\n")))
         case "step":
             let number = event["number"] as? Int ?? 0
             let message = event["message"] as? String ?? ""

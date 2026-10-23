@@ -14,6 +14,7 @@ pub mod action;
 pub mod change;
 pub mod focus;
 pub mod gate;
+pub mod intake;
 pub mod map;
 pub mod mark;
 pub mod memory;

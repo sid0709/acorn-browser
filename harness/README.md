@@ -48,6 +48,15 @@ The harness holds no credentials. Sign-ins are the browser side's business.
         └──────────────────────── observe(survey) / act(actions) ◄───────────────────┘
 ```
 
+### Intake (`intake.rs`)
+
+A request in plain words names neither where to start nor what "done" looks like. Before the
+run, the driving model is asked once, with no screenshot, for the sheet the run works from: the
+site the request means (`start_url`), what the screen will show when it is done (`done_when`),
+what the request itself permits among the actions that cannot be taken back, and whether to
+push through whatever comes. It fills only what the task was not given; the goal stays in the
+person's words. The runner and the kit call it when a task has no `url:` or `done_when:` line.
+
 ### Ports (`ports.rs`)
 
 The three traits the core is written against, each replaceable, none naming a provider or a
@@ -99,24 +108,33 @@ The kinds of action: `click`, `double_click`, `triple_click`, `right_click`, `ho
 optional held `modifiers`), `drag` along a `path` of points (a slider, a card to another column,
 a sweep over text, a stroke on a canvas), `type` into the focused control, `key` (one key or a
 chord, `Enter`, `Control+a`), `scroll`, `upload` (the browser intercepts the file picker and the
-harness names the task's file), `wait`, and `survey` (a request to the harness, not the
-browser: the next look is the whole page).
+harness names the task's file), `wait`, `navigate` to an address and `back`, and `survey` (a
+request to the harness, not the browser: the next look is the whole page).
 
 ### Verification (`verify.rs`, `review.rs`, `pointcheck.rs`)
 
 - **Checkpoint.** After a batch, the decision model reads the screenshot against the batch's
-  `check`. When it holds, the next batch goes out without the driving model; when it does not, or
-  the page is still loading (a wait, then a look), the driving model looks. A fill the checker
-  says went wrong aborts the rest of the plan, since it would go on to send what is wrong.
+  `check`, together with what the page itself reports (the focused control, the address, what
+  became of the actions, the browser's notes): a focus or a key the page took is in no picture.
+  It answers two questions apart: does the screen show what was expected, and does it show
+  otherwise. When it shows what was expected, the next batch goes out without the driving model;
+  when the page is still loading, a wait, then a look; when it shows otherwise, the plan is given
+  up and the driving model looks, with every withheld action on the step's record (`dropped`);
+  when the checker can tell neither way, the driving model looks with the rest of the plan kept,
+  and may answer `resume` to run it as planned, or plan afresh. Not seeing is not seeing otherwise.
+  A fill the reviews say went wrong aborts the rest of the plan, since it would go on to send
+  what is wrong.
 - **Zone reviews.** A plan made from a survey is carried out zone by zone (a zone is the actions
   measured on one survey screen). When a zone's last action is done the browser photographs the
-  page; the decision model is asked, on a thread, for each field filled in that zone, whether it
-  shows what was typed, while the next zone runs. What the reviews found wrong is told to the
-  model once, with the survey that follows.
+  page; the decision model is asked, on a thread, for each field filled in that zone so far (the
+  actions that went out, never the plan's unsent rest), whether it shows what was typed, while
+  the next zone runs. What the reviews found wrong is told to the model once, with the survey
+  that follows.
 - **Point check.** Before a survey plan runs, each point that has a label is drawn, numbered, on
   its screen (`mark.rs`), and the decision model is asked whether it sits on the control the
   label belongs to. The check never overrides the model; a doubted point is acted on and the
-  doubt is told to the model with its next look.
+  doubt is told to the model with its next look, once: a point the model chooses again having
+  read the doubt is its answer, and raises neither the doubt nor another survey.
 
 ### Memory (`memory.rs`)
 
@@ -190,7 +208,7 @@ the prompt.
 | `ports` | The `Model`, `Decider` and `Browser` traits, messages, verdicts, errors |
 | `run` | `Agent`, `Config`, `Step`, the step loop, `drive` |
 | `session` | One run's state: task, profile, memory, plan, counters, questions |
-| `task`, `profile` | What was asked and who the run acts as |
+| `task`, `profile`, `intake` | What was asked, who the run acts as, and the sheet read from a plain request |
 | `observe`, `action` | What the browser reports and what it is asked to do |
 | `prompt`, `model`, `recover`, `openrouter` | Talking to the driving model |
 | `memory`, `change` | The history, and telling a changed page from noise |

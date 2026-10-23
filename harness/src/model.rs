@@ -19,7 +19,9 @@ const MAX_KEY_TOKENS: usize = 12;
 /// The most points a drag's path may have: a long stroke is many close points.
 const MAX_PATH_POINTS: usize = 400;
 const MIN_WAIT_MS: u64 = 100;
-const MAX_WAIT_MS: u64 = 10_000;
+const MAX_WAIT_MS: u64 = 30_000;
+/// The longest address the model may go to.
+const MAX_URL_CHARS: usize = 2000;
 const MAX_SCROLL_PAGES: f64 = 3.0;
 const MAX_CHECK_CHARS: usize = 300;
 const MAX_LABEL_CHARS: usize = 80;
@@ -116,6 +118,9 @@ pub struct RawAction {
     /// A drag's points, in order.
     #[serde(default)]
     pub path: Option<Vec<RawPoint>>,
+    /// Where to go, for a navigate.
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 /// A point of a drag's path as the model writes it.
@@ -129,6 +134,11 @@ pub struct RawPoint {
 
 /// Reads the model's answer. The answer may carry text before the JSON; it is skipped.
 pub fn parse_reply(content: &str) -> Result<Reply, String> {
+    parse_json(content)
+}
+
+/// Reads a JSON object of any shape from a model's answer, past any text before it.
+pub fn parse_json<T: serde::de::DeserializeOwned>(content: &str) -> Result<T, String> {
     let content = content.trim();
     if content.is_empty() {
         return Err("the model sent an empty answer".to_string());
@@ -256,7 +266,23 @@ fn fill(input: &RawAction, vp: &Viewport) -> Result<Kind, String> {
             }
         }
         "wait" => Kind::Wait { ms: input.ms.unwrap_or(DEFAULT_WAIT_MS).clamp(MIN_WAIT_MS, MAX_WAIT_MS) },
+        "navigate" => {
+            let url = input.url.as_deref().unwrap_or("").trim().to_string();
+            if url.is_empty() {
+                return Err("there is no address to go to".to_string());
+            }
+            if url.chars().count() > MAX_URL_CHARS {
+                return Err("the address is too long".to_string());
+            }
+            let lower = url.to_ascii_lowercase();
+            if !(lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("file://")) {
+                return Err(format!("{url:?} is not a web address: write it whole, starting with https://"));
+            }
+            Kind::Navigate { url }
+        }
+        "back" => Kind::Back,
         "survey" => Kind::Survey,
+        "resume" => Kind::Resume,
         _ => return Err("that is not an action the harness can send".to_string()),
     })
 }
@@ -391,6 +417,9 @@ pub fn reply_schema(survey: bool, checks: bool) -> Value {
         plain("key", vec![("keys", string.clone())]),
         plain("scroll", vec![("x", null_number.clone()), ("y", null_number.clone()), ("dx", number.clone()), ("dy", number.clone())]),
         object(vec![("kind", kind_enum(&["wait"])), ("ms", json!({"type": "integer"}))]),
+        plain("navigate", vec![("url", string.clone())]),
+        plain("back", vec![]),
+        object(vec![("kind", kind_enum(&["resume"]))]),
     ];
     if survey {
         shapes.push(object(vec![("kind", kind_enum(&["survey"]))]));
@@ -462,10 +491,15 @@ mod tests {
             raw(r#"{"kind":"drag","screen":1,"path":[{"x":10,"y":10},{"x":50,"y":60}],"modifiers":"shift+cmd","label":"Brush"}"#),
             raw(r#"{"kind":"drag","path":[{"x":10,"y":10}]}"#),
             raw(r#"{"kind":"click","x":5,"y":5,"modifiers":"Hyper"}"#),
+            raw(r#"{"kind":"navigate","url":"https://example.test/a"}"#),
+            raw(r#"{"kind":"navigate","url":"example.test"}"#),
+            raw(r#"{"kind":"back"}"#),
         ];
         let (valid, dropped) = check_actions(3, raw, &vp, 30, &[0.0, 500.0]);
         let ids: Vec<&str> = valid.iter().map(|a| a.id.as_str()).collect();
-        assert_eq!(ids, vec!["s3a1", "s3a3", "s3a4", "s3a6", "s3a8"]);
+        assert_eq!(ids, vec!["s3a1", "s3a3", "s3a4", "s3a6", "s3a8", "s3a11", "s3a13"]);
+        assert_eq!(valid[5].kind, Kind::Navigate { url: "https://example.test/a".to_string() });
+        assert_eq!(valid[6].kind, Kind::Back);
         assert_eq!(valid[4].kind, Kind::Drag { path: vec![Point { x: 10.0, y: 10.0 }, Point { x: 50.0, y: 60.0 }], modifiers: "Shift+Meta".to_string() });
         assert_eq!(valid[4].zone, 1);
         assert_eq!(valid[4].label, "Brush");
@@ -476,7 +510,7 @@ mod tests {
         assert_eq!(valid[1].kind, Kind::Wait { ms: 100 });
         assert_eq!(valid[2].kind, Kind::Scroll { x: Some(400.0), y: Some(300.0), dx: 0.0, dy: 1800.0 });
         assert_eq!(valid[3].kind, Kind::Survey);
-        assert_eq!(dropped.len(), 5);
+        assert_eq!(dropped.len(), 6);
     }
 
     #[test]

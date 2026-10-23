@@ -528,11 +528,14 @@ fn or_none(text: &str) -> &str {
 /// What the checker sees: the screenshot, or every screen of the survey when the look is one, so
 /// what is anywhere on the page counts.
 pub(crate) fn page_state(obs: &Observation) -> Vec<Part> {
-    if obs.survey.is_empty() {
-        return vec![Part::Text("A screenshot of a web page the browser is on.".to_string()), Part::Image(obs.screenshot.clone())];
-    }
-    let mut parts = vec![Part::Text("Screenshots of a web page the browser is on, from its top to its bottom.".to_string())];
-    parts.extend(obs.survey.iter().map(|screen| Part::Image(screen.screenshot.clone())));
+    let mut parts = if obs.survey.is_empty() {
+        vec![Part::Text("A screenshot of a web page the browser is on.".to_string()), Part::Image(obs.screenshot.clone())]
+    } else {
+        let mut parts = vec![Part::Text("Screenshots of a web page the browser is on, from its top to its bottom.".to_string())];
+        parts.extend(obs.survey.iter().map(|screen| Part::Image(screen.screenshot.clone())));
+        parts
+    };
+    parts.push(Part::Text(format!("What the page itself reports, which the pictures may not show:\n{}", prompt::evidence_text(obs, &obs.results))));
     parts
 }
 

@@ -24,7 +24,9 @@ final class AgentDriver {
     nonisolated private static let settleCap = 5.0
     nonisolated private static let scrollSettleCap = 1.0
     nonisolated private static let openCap = 30.0
-    nonisolated private static let maxWaitMs = 10_000.0
+    nonisolated private static let maxWaitMs = 30_000.0
+    /// The version of the line protocol this driver speaks; the runner checks it on connecting.
+    nonisolated private static let protocolVersion = 2
     nonisolated private static let jpegQuality = 80
     nonisolated private static let evaluateRetries = 5
     nonisolated private static let maxLabel = 80
@@ -127,6 +129,9 @@ final class AgentDriver {
             // A page's own drag (a card to another column) would otherwise become a drag of
             // the system's, which follows the person's mouse, not the agent's pointer.
             _ = try await call("Input.setInterceptDrags", ["enabled": true])
+            // The page counts the keys it gets and the text that goes in, on every document.
+            _ = try await call("Page.addScriptToEvaluateOnNewDocument", ["source": Self.keyCounter])
+            _ = try? await evaluate(Self.keyCounter)
             domainsOn = true
         } catch {
             // Without a browser yet (the window is still opening) there is nothing to enable;
@@ -173,6 +178,8 @@ final class AgentDriver {
         do {
             await attach()
             switch request["cmd"] as? String {
+            case "hello":
+                reply = ["ok": true, "protocol": Self.protocolVersion]
             case "open":
                 guard let url = request["url"] as? String else { throw AgentError("open needs a url") }
                 await open(url)
@@ -280,8 +287,43 @@ final class AgentDriver {
             try? await Task.sleep(for: .milliseconds(300))
             result = try await call("Page.captureScreenshot", params)
         }
-        guard let data = result["data"] as? String else { throw AgentError("the browser returned no picture") }
+        guard var data = result["data"] as? String else { throw AgentError("the browser returned no picture") }
+        // The picture must be one pixel to a CSS pixel, whatever the page did to the scale (an
+        // old page in quirks mode has come back at twice the size): a picture of another size
+        // is taken again at the corrected scale, and failing that, resampled.
+        let wanted = (width: Int(number(size["width"]).rounded()), height: Int(number(size["height"]).rounded()))
+        if let got = Self.jpegSize(data), got.width != wanted.width || got.height != wanted.height, wanted.width > 0 {
+            var corrected = params
+            if var clip = params["clip"] as? [String: Any] {
+                clip["scale"] = (1 / max(number(size["ratio"]), 1)) * Double(wanted.width) / Double(got.width)
+                corrected["clip"] = clip
+            }
+            if let again = try? await call("Page.captureScreenshot", corrected), let next = again["data"] as? String,
+               let size = Self.jpegSize(next), size.width == wanted.width && size.height == wanted.height {
+                data = next
+            } else if let resampled = Self.resampled(data, to: wanted) {
+                data = resampled
+            }
+        }
         return "data:image/jpeg;base64," + data
+    }
+
+    /// The pixel size of a base64 JPEG, when it can be read.
+    nonisolated private static func jpegSize(_ base64: String) -> (width: Int, height: Int)? {
+        guard let bytes = Data(base64Encoded: base64), let rep = NSBitmapImageRep(data: bytes) else { return nil }
+        return (rep.pixelsWide, rep.pixelsHigh)
+    }
+
+    /// The same picture at another size, as base64 JPEG.
+    nonisolated private static func resampled(_ base64: String, to size: (width: Int, height: Int)) -> String? {
+        guard let bytes = Data(base64Encoded: base64), let image = NSBitmapImageRep(data: bytes), let source = image.cgImage else { return nil }
+        guard let context = CGContext(data: nil, width: size.width, height: size.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(source, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
+        guard let drawn = context.makeImage() else { return nil }
+        let rep = NSBitmapImageRep(cgImage: drawn)
+        return rep.representation(using: .jpeg, properties: [.compressionFactor: Double(jpegQuality) / 100])?.base64EncodedString()
     }
 
     /// Waits until the page has settled: no change to its DOM for a quarter second, no request
@@ -316,28 +358,89 @@ final class AgentDriver {
         await settled(cap: Self.scrollSettleCap)
     }
 
-    /// Whether a control has the keyboard: typing goes somewhere.
-    private func hasFocus() async -> Bool {
-        let value = try? await evaluate("""
+    /// The focused element, following the focus into embedded frames. A frame of another site
+    /// cannot be looked into: the frame itself is the answer then, `sealed`.
+    nonisolated private static let deepActive = """
+        const deepActive = () => {
+          let a = document.activeElement;
+          while (a && a.tagName === 'IFRAME') {
+            let inner = null;
+            try { inner = a.contentDocument && a.contentDocument.activeElement; } catch (e) {}
+            if (!inner || inner === a) return { element: a, sealed: true };
+            a = inner;
+          }
+          if (!a || a === document.body || a === document.documentElement) return { element: null, sealed: false };
+          if (a.ownerDocument && (a === a.ownerDocument.body || a === a.ownerDocument.documentElement)) return { element: null, sealed: false };
+          return { element: a, sealed: false };
+        };
+        """
+
+    /// Installed on every document: counts the keys the page gets (whatever has focus, a key
+    /// reaches the document), the keys the page handled (it called preventDefault, as a canvas
+    /// or a game does), and the text that went into a control (`input` events). Read before
+    /// and after typing, the counts say what the keys did, with no guess about where they go.
+    nonisolated private static let keyCounter = """
         (() => {
-          const a = document.activeElement;
-          if (!a || a === document.body || a === document.documentElement) return false;
-          return a.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName);
+          if (window.__acornKeys) return;
+          const c = window.__acornKeys = { keys: 0, handled: 0, inputs: 0 };
+          document.addEventListener('keydown', (e) => {
+            c.keys += 1;
+            setTimeout(() => { if (e.defaultPrevented) c.handled += 1; }, 0);
+          }, true);
+          document.addEventListener('input', () => { c.inputs += 1; }, true);
         })()
-        """)
-        return (value as? Bool) ?? false
+        """
+
+    /// What the page has counted so far: keys, handled keys, text inputs.
+    private func keyCounts() async -> (keys: Int, handled: Int, inputs: Int) {
+        let value = try? await evaluate("window.__acornKeys ? [window.__acornKeys.keys, window.__acornKeys.handled, window.__acornKeys.inputs] : [0, 0, 0]")
+        let numbers = (value as? [Any])?.compactMap { ($0 as? NSNumber)?.intValue } ?? []
+        guard numbers.count == 3 else { return (0, 0, 0) }
+        return (numbers[0], numbers[1], numbers[2])
+    }
+
+    /// A small picture of the screen, to tell whether typing changed it.
+    private func glimpse() async -> Data? {
+        guard let m = try? await metrics() else { return nil }
+        let params: [String: Any] = [
+            "format": "jpeg", "quality": 50, "fromSurface": true,
+            "clip": ["x": number(m["scrollX"]), "y": number(m["scrollY"]), "width": number(m["width"]), "height": number(m["height"]),
+                     "scale": 0.25 / max(number(m["ratio"]), 1)],
+        ]
+        guard let result = try? await call("Page.captureScreenshot", params), let data = result["data"] as? String else { return nil }
+        return Data(base64Encoded: data)
+    }
+
+    /// Whether two glimpses differ beyond JPEG noise: a caret, a character, a menu.
+    nonisolated private static func differ(_ a: Data?, _ b: Data?) -> Bool {
+        guard let a, let b, let ra = NSBitmapImageRep(data: a), let rb = NSBitmapImageRep(data: b),
+              ra.pixelsWide == rb.pixelsWide, ra.pixelsHigh == rb.pixelsHigh,
+              let pa = ra.bitmapData, let pb = rb.bitmapData else { return a != b }
+        let count = min(ra.bytesPerRow * ra.pixelsHigh, rb.bytesPerRow * rb.pixelsHigh)
+        var moved = 0
+        var i = 0
+        while i < count {
+            if abs(Int(pa[i]) - Int(pb[i])) > 40 { moved += 1 }
+            i += 7
+        }
+        return moved > count / 7 / 400
     }
 
     /// The focused control as the page describes it, or nil.
     private func focus() async -> [String: Any]? {
         let value = try? await evaluate("""
         (() => {
-          const a = document.activeElement;
-          if (!a || a === document.body || a === document.documentElement) return null;
+          \(Self.deepActive)
+          const { element: a, sealed } = deepActive();
+          if (!a) return null;
           const cut = (text, max) => (text || '').trim().replace(/\\s+/g, ' ').slice(0, max);
+          if (sealed) {
+            return { tag: 'iframe', type: '', label: cut(a.getAttribute('title') || a.getAttribute('aria-label') || a.getAttribute('name') || '', \(Self.maxLabel)) };
+          }
+          const doc = a.ownerDocument || document;
           const byId = a.getAttribute('aria-labelledby');
           const label = (a.labels && a.labels[0] && a.labels[0].innerText) || a.getAttribute('aria-label') ||
-            (byId && document.getElementById(byId) && document.getElementById(byId).innerText) ||
+            (byId && doc.getElementById(byId) && doc.getElementById(byId).innerText) ||
             a.getAttribute('placeholder') || a.getAttribute('title') || a.getAttribute('name') || '';
           const tag = a.tagName.toLowerCase();
           const type = (a.type || '').toLowerCase();
@@ -446,12 +549,20 @@ final class AgentDriver {
             }
             do {
                 if let target = action["scrollTo"] as? NSNumber {
-                    let m = try await metrics()
+                    var m = try await metrics()
                     let pageHeight = number(action["pageHeight"])
-                    if pageHeight > 0 && abs(number(m["pageHeight"]) - pageHeight) > 12 {
+                    // A page that grew below the point (a list that loaded more) still has the
+                    // point where it was measured; one that shrank may not.
+                    if pageHeight > 0 && number(m["pageHeight"]) < pageHeight - 12 {
                         throw ActionFailure(message: "the page is \(Int(number(m["pageHeight"]))) px tall now and was \(Int(pageHeight)) px when the point was measured")
                     }
-                    if abs(number(m["scrollY"]) - target.doubleValue) > 1 { try await scrollTo(target.doubleValue) }
+                    if abs(number(m["scrollY"]) - target.doubleValue) > 1 {
+                        try await scrollTo(target.doubleValue)
+                        m = try await metrics()
+                        if abs(number(m["scrollY"]) - target.doubleValue) > 1 {
+                            throw ActionFailure(message: "the page could not be scrolled to \(Int(target.doubleValue)) px, where the point was measured; it is at \(Int(number(m["scrollY"]))) px")
+                        }
+                    }
                 }
                 chooser = nil
                 var result: [String: Any] = ["id": id, "ok": true]
@@ -491,6 +602,9 @@ final class AgentDriver {
         do { flags = try KeyPress.flags(named: action["modifiers"] as? String ?? "") } catch { throw ActionFailure(message: "\(error)") }
         switch action["kind"] as? String {
         case "click":
+            // A dropdown's list is the system's own menu, which waits for the person's mouse:
+            // the click gives the dropdown the focus instead, and keys choose from it.
+            if flags.isEmpty, await focusDropdown(x, y) { break }
             try await click(x, y, count: 1, flags: flags)
         case "double_click":
             try await click(x, y, count: 2, flags: flags)
@@ -507,10 +621,9 @@ final class AgentDriver {
             guard path.count >= 2 else { throw ActionFailure(message: "a drag needs a path of at least two points") }
             try await drag(path, flags: flags)
         case "type":
-            guard await hasFocus() else {
-                throw ActionFailure(message: "nothing has focus, so there is nowhere to type", unreached: true)
-            }
-            try await type(action["text"] as? String ?? "")
+            let typed = try await type(action["text"] as? String ?? "")
+            await settled()
+            return typed
         case "key":
             let keys = (action["keys"] as? String ?? "").split(whereSeparator: \.isWhitespace).map(String.init)
             for name in keys {
@@ -531,11 +644,41 @@ final class AgentDriver {
             let ms = min((action["ms"] as? NSNumber)?.doubleValue ?? 1000, Self.maxWaitMs)
             try? await Task.sleep(for: .milliseconds(Int(ms)))
             return [:]
+        case "navigate":
+            let url = action["url"] as? String ?? ""
+            guard !url.isEmpty else { throw ActionFailure(message: "there is no address to go to") }
+            await open(url)
+            return [:]
+        case "back":
+            view.goBack()
+            await settled(cap: Self.openCap)
+            return [:]
         case let kind:
             throw ActionFailure(message: "the browser cannot do an action of kind \(kind ?? "(none)")")
         }
         await settled()
         return [:]
+    }
+
+    /// When a native dropdown (a select) is at the point, gives it the focus the way its click
+    /// would, without opening its menu, and says so.
+    private func focusDropdown(_ x: Double, _ y: Double) async -> Bool {
+        let value = try? await evaluate("""
+        (() => {
+          let el = document.elementFromPoint(\(x), \(y));
+          while (el && el.tagName === 'IFRAME') {
+            let inner = null;
+            try { const r = el.getBoundingClientRect(); inner = el.contentDocument && el.contentDocument.elementFromPoint(\(x) - r.left, \(y) - r.top); } catch (e) {}
+            if (!inner) return false;
+            el = inner;
+          }
+          const select = el && el.closest ? el.closest('select') : null;
+          if (!select || select.disabled) return false;
+          select.focus();
+          return true;
+        })()
+        """)
+        return (value as? Bool) ?? false
     }
 
     /// Clicks what opens the file picker, and hands the page the task's file in its place.
@@ -707,31 +850,54 @@ final class AgentDriver {
         await releaseHeld()
     }
 
-    /// Types into the focused control a key at a time, like a person. A run of characters a
-    /// keyboard cannot type (Chinese, say) is handed over the way an input method commits it.
-    private func type(_ text: String) async throws {
-        var run = ""
-        func flush() throws {
-            guard !run.isEmpty else { return }
-            guard view.insertText(run) else { throw ActionFailure(message: "the page took no text") }
-            run = ""
-        }
-        for character in text {
-            if character.isNewline {
-                try flush()
-                try await tap(KeyPress.parse("Enter"))
-            } else if character == "\t" {
-                try flush()
-                try await tap(KeyPress.parse("Tab"))
-            } else if let press = try? KeyPress(character: character) {
-                try flush()
-                try await tap(press)
+    /// Types into whatever has the keyboard, a key at a time, like a person, and measures what
+    /// the keys did rather than guessing where they would go: a control took text, the page
+    /// handled the keys itself (a canvas, an editor of its own), or the screen changed. The
+    /// first character is a probe: when it did nothing at all, the rest is not typed and the
+    /// action reports that it reached nothing, so a page's shortcuts are not played on.
+    private func type(_ text: String) async throws -> [String: Any] {
+        guard !text.isEmpty else { return [:] }
+        let before = await keyCounts()
+        let glimpseBefore = await glimpse()
+        var rest = text[...]
+        let first = rest.removeFirst()
+        try await typeCharacter(first)
+        await pause(Self.afterKeyMs)
+        let after = await keyCounts()
+        let took = (inputs: after.inputs > before.inputs, handled: after.handled > before.handled, keys: after.keys > before.keys)
+        var how = took.inputs ? "a control took the text" : took.handled ? "the page handled the keys itself" : ""
+        if how.isEmpty {
+            let glimpseAfter = await glimpse()
+            if Self.differ(glimpseBefore, glimpseAfter) {
+                how = "the screen changed as it was typed"
             } else {
-                run.append(character)
+                throw ActionFailure(
+                    message: took.keys
+                        ? "the typing reached nothing: the page got the key but no control took it, nothing handled it, and the screen did not change"
+                        : "the typing reached nothing: no key reached the page",
+                    unreached: true)
             }
         }
-        try flush()
+        for character in rest {
+            try await typeCharacter(character)
+        }
         await pause(Self.afterKeyMs)
+        return ["detail": how]
+    }
+
+    /// One character as the keyboard sends it, or as an input method commits it when no key
+    /// types it (Chinese, say).
+    private func typeCharacter(_ character: Character) async throws {
+        if character.isNewline {
+            try await tap(KeyPress.parse("Enter"))
+        } else if character == "\t" {
+            try await tap(KeyPress.parse("Tab"))
+        } else if let press = try? KeyPress(character: character) {
+            try await tap(press)
+        } else {
+            guard view.insertText(String(character)) else { throw ActionFailure(message: "the page took no text") }
+            await pause(Self.keyMs)
+        }
     }
 }
 
