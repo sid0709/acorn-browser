@@ -1,26 +1,52 @@
 # bench
 
-The missions the agent is measured on: requests in plain words, as a person types them in the
-sidebar, with no `url:` or `done_when:` line. The runner reads those from the request first
-(the harness's intake), then does the task in the app's browser.
+How the agent is measured, modelled on Online-Mind2Web (300 tasks on 136 live sites, the
+benchmark Aside, Browser Use and the model vendors report on): a task names the site it starts
+on and asks for something a person would ask for there, without a sign-in; a judge model grades
+the run from the screenshots and the actions, not from what the agent says at the end.
 
 ```bash
 cd app && scripts/build.sh run       # the browser must be running
-cd .. && bench/run.py                # every mission once
-bench/run.py --only excalidraw-flowchart jspaint-circle --repeat 3
+cd .. && bench/run.py                # the five levels, once
+bench/run.py --only L4-govuk-visa --repeat 2
+bench/run.py --missions bench/missions/basics --no-judge
 ```
 
-Each run prints what the runner understood (the site and what "done" looks like), its steps,
-and how it ended; the table at the end, with the number done out of all, is written to
-`bench/results/<stamp>.md`. Every run's trace (the screenshots the model saw, what it was told,
-what it decided, the cost) is under `bench/traces/<stamp>/<mission>/`. Results and traces are
-not committed: they hold the pages the run saw.
+## The missions
 
-The missions cover what an agent browser must manage without a sign-in: finding a site from the
-request alone, searching, reading and reporting a fact, filling and ticking things in a web app,
-drawing on a canvas with the mouse, and switching a page's language. Add a mission as a `.md`
-file with the request in it; keep it to what a screenshot can confirm at the end, since that is
-what the harness checks a "done" against.
+`missions/levels/` holds one mission per level, written like the benchmark's tasks:
 
-A failure's trace is what to read next: `timeline.txt` for the run at a glance, then the step
-where it went wrong, with its screenshot and what the model answered.
+| Level | Like the benchmark's | What it takes | Mission |
+| --- | --- | --- | --- |
+| 1 | easy, 2 to 3 steps | one page, one fact | the economy baggage allowance on Qatar Airways |
+| 2 | easy, 4 to 5 steps | a search and a choice | a nut-free gluten-free cookie recipe on Cookpad |
+| 3 | medium, 6 to 10 steps | find a section, compare, open | the most-replied community discussion on FlightAware |
+| 4 | hard, 10 or more steps | a form of several questions | the GOV.UK visa check for a US healthcare worker |
+| 5 | long, with an unusual control | a calendar, a date, an archived page | the Wayback Machine copy of apple.com nearest 2005 |
+
+Each mission file is the request in plain words, then an HTML comment with `level`, `site` (where
+the run starts, as the benchmark gives it) and `judge` (the key points the judge must see). The
+request itself goes to the runner as a person would type it; the runner reads what "done" looks
+like from it. With `--no-site` the runner is not told the site either and must find it from the
+request, which is how the app's sidebar is used.
+
+`missions/basics/` holds the earlier, simpler set (search, to-do, drawing, language switch),
+with no sites or key points; run it with `--no-judge`.
+
+## The score
+
+For each run the table shows the agent's own verdict (`done`, `need_person`, `stuck`), the
+judge's verdict (`pass` or `fail`, with its reason), the steps, the time and the cost. The
+judge is given the request, the key points, up to eight screenshots spread over the run with
+the last one always in, and the timeline of actions; it needs `OPENROUTER_API_KEY` (from the
+environment, the app's `.env`, or `kit/.env`). The judge's pass rate is the number to compare
+with the benchmark's leaders; Aside reports 99.0% over all 300 tasks with GPT-5.5 (100% easy,
+99.3% medium, 97.4% hard) in its own grading.
+
+The table is written to `bench/results/<stamp>.md`; every run's trace (the screenshots the
+model saw, what it was told, what it decided, the cost) is under `bench/traces/<stamp>/<mission>/`.
+Results and traces are not committed: they hold the pages the run saw. A failure's trace is what
+to read next: `timeline.txt` for the run at a glance, then the step where it went wrong.
+
+The sites are live, so a mission can become impossible (a page or an offer gone); the benchmark
+marks such tasks impossible rather than failed, and so should a reading of these results.
