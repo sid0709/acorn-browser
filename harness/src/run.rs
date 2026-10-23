@@ -156,6 +156,10 @@ pub struct Step {
     pub status: Status,
     /// One line for the person.
     pub message: String,
+    /// With a status that ends the run: the answer to what the task asks, in words read from
+    /// the page, or what was found so far when the run stops short.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop: Option<StopInfo>,
     /// Run in order; then the browser sends a new look.
@@ -712,6 +716,7 @@ impl Agent {
         let step = Step {
             status: reply.status,
             message: s.message.clone(),
+            answer: if reply.status == Status::Working { None } else { reply.answer.as_deref().map(str::trim).filter(|a| !a.is_empty()).map(str::to_string) },
             stop: if reply.status == Status::Working { None } else { reply.stop.clone() },
             actions,
             number,
@@ -734,6 +739,7 @@ impl Agent {
         entry.memo = s.memo.clone();
         entry.status = step.status;
         entry.message = step.message.clone();
+        entry.answer = step.answer.clone();
         entry.stop = step.stop.clone();
         entry.dropped = step.dropped.clone();
         entry.check = s.last_check.take();

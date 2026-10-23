@@ -128,6 +128,12 @@ impl Agent {
             *planned = vec![Action::new(format!("s{number}a1"), Kind::Wait { ms: PASS_WAIT_MS })];
             s.notes.push(note);
         }
+        if let Some(note) = hold_for_answer(s, reply) {
+            reply.status = Status::Working;
+            reply.message = ANSWER_PASS_MESSAGE.to_string();
+            *planned = vec![Action::new(format!("s{number}a1"), Kind::Wait { ms: PASS_WAIT_MS })];
+            s.notes.push(note);
+        }
         if let Some(note) = self.hold_stop(s, obs, reply) {
             reply.status = Status::Working;
             reply.message = STOP_PASS_MESSAGE.to_string();
@@ -401,6 +407,19 @@ impl Agent {
     }
 }
 
+const ANSWER_PASS_MESSAGE: &str = "Writing down the answer.";
+
+/// Holds a "done" that carries no answer in words, once: the person asked for something and
+/// sees the answer, not the page, so a run that ends with "it is on the screen" has not told
+/// them. The model looks again and writes it; a second "done" without one is let through.
+fn hold_for_answer(s: &mut Session, reply: &Reply) -> Option<String> {
+    if reply.status != Status::Done || s.answer_asked || reply.answer.as_deref().map(str::trim).is_some_and(|a| !a.is_empty()) {
+        return None;
+    }
+    s.answer_asked = true;
+    Some("You reported done without an \"answer\". The person sees your answer, not the page: write in \"answer\" what the task asks for, read from this page (the figures, the names, the conclusion), or, for a task that asks for a state, one sentence saying what was done and what the page shows; then report done again.".to_string())
+}
+
 /// Asks whether the screen shows the task complete, in the task's own terms, and in the light of
 /// what the model named as the proof when it named one.
 fn done_question(task: &Task, proof: &str) -> BTreeMap<String, Question> {
@@ -629,6 +648,23 @@ mod tests {
         let third = agent.step(&id, look(false, &["s2a2"])).unwrap();
         assert!(seen.lock().unwrap()[2].contains("the leaving action was not run"));
         assert!(third.actions.iter().any(|a| matches!(a.kind, Kind::Back)));
+    }
+
+    #[test]
+    fn a_done_without_an_answer_is_sent_back_once_and_the_answer_reaches_the_step() {
+        let bare = r#"{"status":"done","message":"Open.","proof":"the row shows 25 kg","actions":[]}"#;
+        let answered = r#"{"status":"done","message":"Open.","proof":"the row shows 25 kg","answer":"Economy Classic: 25 kg","actions":[]}"#;
+        let (model, seen) = Sequenced::new(&[bare, answered]);
+        let (decider, _) = Asked::of(&[(ASK_DONE, 0.95)]);
+        let agent = Agent::new(Config { max_stale: 100, ..Config::default() }, model).with_decider(decider);
+        let id = agent.start(Task::new("find the checked baggage weight"), Profile::default());
+        let first = agent.step(&id, look(false, &[])).unwrap();
+        assert_eq!(first.status, Status::Working);
+        assert_eq!(first.message, ANSWER_PASS_MESSAGE);
+        let second = agent.step(&id, look(false, &[])).unwrap();
+        assert!(seen.lock().unwrap()[1].contains("without an \"answer\""));
+        assert_eq!(second.status, Status::Done);
+        assert_eq!(second.answer.as_deref(), Some("Economy Classic: 25 kg"));
     }
 
     #[test]

@@ -95,7 +95,7 @@ def run_mission(runner, task_file, trace_dir, extra):
     command = [str(runner), str(task_file), "--trace", str(trace_dir)] + extra
     started = datetime.datetime.now()
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    row = {"status": "crashed", "message": "", "seconds": 0.0, "cost": 0.0, "steps": 0, "understood": "", "run": "", "mode": ""}
+    row = {"status": "crashed", "message": "", "answer": "", "seconds": 0.0, "cost": 0.0, "steps": 0, "understood": "", "run": "", "mode": ""}
     for line in process.stdout:
         line = line.strip()
         if not line:
@@ -122,6 +122,7 @@ def run_mission(runner, task_file, trace_dir, extra):
         elif kind == "end":
             row["status"] = event.get("status", "")
             row["message"] = event.get("message", "")
+            row["answer"] = event.get("answer", "") or ""
             row["seconds"] = float(event.get("seconds", 0))
             row["cost"] = float(event.get("cost", 0))
         elif kind == "error":
@@ -191,13 +192,14 @@ def pick_shots(shots, values, limit):
     return [shots[i] for i in sorted(chosen)]
 
 
-def judge(key, request, key_points, shots, actions):
+def judge(key, request, key_points, shots, actions, answer):
     """Grades a run as WebJudge does: from the request, the key points, the screenshots and the
-    actions. Returns (verdict, reason)."""
+    actions; and, apart from that, the agent's answer in words against what the screenshots
+    show. Returns (verdict, reason, answer_verdict, answer_reason)."""
     if not key:
-        return "no key", "OPENROUTER_API_KEY is not set"
+        return "no key", "OPENROUTER_API_KEY is not set", "", ""
     if not shots:
-        return "no trace", "no screenshots were found in the trace"
+        return "no trace", "no screenshots were found in the trace", "", ""
     content = [{
         "type": "text",
         "text": (
@@ -205,8 +207,14 @@ def judge(key, request, key_points, shots, actions):
             "and the actions it took. Judge only what the screenshots and actions show; what the agent claimed at the end is not evidence. "
             "The task is complete only when every key point is visibly satisfied on the screenshots; a task that reached a results list when "
             "a single item was asked for, or that applied some of the requested criteria but not all, or that ended on an error or an unrelated "
-            "page, is a fail. Answer with one JSON object: {\"verdict\": \"pass\" or \"fail\", \"reason\": one sentence}.\n\n"
-            f"Task: {request}\n\nKey points: {key_points}\n\nActions:\n{actions or '(none recorded)'}"
+            "page, is a fail.\n\n"
+            "Apart from that, grade the agent's answer in words, as a person who asked would read it: \"pass\" when it answers what the task "
+            "asks, correctly and completely, with the figures, names or conclusion that the screenshots show; \"fail\" when it is wrong, leaves "
+            "out what was asked, or states something the screenshots do not support; \"none\" when the agent gave no answer. A task that asks "
+            "for a state rather than a fact (open a page, fill a form) is answered by one sentence saying what was done.\n\n"
+            "Answer with one JSON object: {\"verdict\": \"pass\" or \"fail\", \"reason\": one sentence, "
+            "\"answer_verdict\": \"pass\", \"fail\" or \"none\", \"answer_reason\": one sentence}.\n\n"
+            f"Task: {request}\n\nKey points: {key_points}\n\nThe agent's answer in words: {answer or '(none)'}\n\nActions:\n{actions or '(none recorded)'}"
         ),
     }]
     for shot in shots:
@@ -225,23 +233,39 @@ def judge(key, request, key_points, shots, actions):
     )
     try:
         with urllib.request.urlopen(req, timeout=180) as response:
-            answer = json.loads(response.read())
-        text = answer["choices"][0]["message"]["content"]
+            reply = json.loads(response.read())
+        text = reply["choices"][0]["message"]["content"]
         verdict = json.loads(text[text.find("{"):])
-        return verdict.get("verdict", "fail"), verdict.get("reason", "")
+        return verdict.get("verdict", "fail"), verdict.get("reason", ""), verdict.get("answer_verdict", ""), verdict.get("answer_reason", "")
     except Exception as error:  # noqa: BLE001 - the judge failing is a row, not a crash
-        return "judge error", str(error)[:200]
+        return "judge error", str(error)[:200], "", ""
+
+
+def clean(text, limit=140):
+    return (text or "").replace("|", "/").replace("\n", " ")[:limit]
 
 
 def table(rows, judged):
-    head = "| mission | level | mode | agent | judge | steps | seconds | cost | note |"
-    lines = [head, "| --- | ---: | --- | --- | --- | ---: | ---: | ---: | --- |"]
+    """The score table: the judge's verdict on the screen, its verdict on the answer in words,
+    the steps, the seconds (everything the person waited for, from the runner's start), and the
+    cost; then each run's answer, since that is what the person gets."""
+    head = "| mission | level | mode | agent | judge | answer | steps | seconds | cost | note |"
+    lines = [head, "| --- | ---: | --- | --- | --- | --- | ---: | ---: | ---: | --- |"]
     for r in rows:
-        note = (r["judge_reason"] if judged else r["message"]).replace("|", "/").replace("\n", " ")[:140]
-        lines.append(f"| {r['mission']} | {r['level']} | {r.get('mode', '')} | {r['status']} | {r['judge']} | {r['steps']} | {r['seconds']:.0f} | ${r['cost']:.3f} | {note} |")
+        note = clean(r["judge_reason"] if judged else r["message"])
+        lines.append(f"| {r['mission']} | {r['level']} | {r.get('mode', '')} | {r['status']} | {r['judge']} | {r.get('answer_judge', '')} | {r['steps']} | {r['seconds']:.0f} | ${r['cost']:.3f} | {note} |")
     passed = sum(1 for r in rows if (r["judge"] if judged else r["status"]) in ("pass", "done"))
+    answered = sum(1 for r in rows if r.get("answer_judge") == "pass")
     lines.append("")
-    lines.append(f"**{passed} of {len(rows)} {'passed' if judged else 'done'}** · {sum(r['seconds'] for r in rows):.0f} s · ${sum(r['cost'] for r in rows):.2f}")
+    summary = f"**{passed} of {len(rows)} {'passed' if judged else 'done'}**"
+    if judged:
+        summary += f" · {answered} of {len(rows)} answers right"
+    lines.append(f"{summary} · {sum(r['seconds'] for r in rows):.0f} s · ${sum(r['cost'] for r in rows):.2f}")
+    lines.append("")
+    lines.append("Answers:")
+    for r in rows:
+        verdict = f" ({r['answer_judge']}: {clean(r.get('answer_reason', ''), 200)})" if judged and r.get("answer_judge") else ""
+        lines.append(f"- {r['mission']}: {clean(r.get('answer', ''), 400) or '(no answer)'}{verdict}")
     return "\n".join(lines)
 
 
@@ -292,13 +316,15 @@ def main():
                 task_file.unlink(missing_ok=True)
             row["mission"] = name
             row["level"] = meta.get("level", "")
-            row["judge"], row["judge_reason"] = "", ""
+            row["judge"], row["judge_reason"], row["answer_judge"], row["answer_reason"] = "", "", "", ""
             if key:
                 shots, actions = trace_evidence(trace_dir, row["run"])
-                row["judge"], row["judge_reason"] = judge(key, request, meta.get("judge", ""), shots, actions)
+                row["judge"], row["judge_reason"], row["answer_judge"], row["answer_reason"] = judge(key, request, meta.get("judge", ""), shots, actions, row["answer"])
             print(f"  -> agent: {row['status']} in {row['seconds']:.0f} s, ${row['cost']:.3f}: {row['message']}")
+            print(f"  -> answer: {row['answer'] or '(none)'}")
             if key:
                 print(f"  -> judge: {row['judge']}: {row['judge_reason']}")
+                print(f"  -> judge of the answer: {row['answer_judge']}: {row['answer_reason']}")
             rows.append(row)
 
     report = table(rows, bool(key))

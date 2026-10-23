@@ -214,8 +214,13 @@ final class AgentRunner: ObservableObject {
 
     private func finalMessage(_ event: [String: Any]) -> ChatMessage {
         let status = event["status"] as? String ?? ""
-        let message = event["message"] as? String ?? ""
+        var message = event["message"] as? String ?? ""
         var detail: [String] = []
+        // The answer in words is what the person asked for; the status line goes under it.
+        if let answer = event["answer"] as? String, !answer.isEmpty {
+            if !message.isEmpty { detail.append(message) }
+            message = answer
+        }
         if let stop = event["stop"] as? [String: Any] {
             let problem = stop["problem"] as? String ?? ""
             let action = stop["action"] as? String ?? ""

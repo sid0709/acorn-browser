@@ -94,6 +94,9 @@ pub struct StepTrace {
     pub memo: String,
     pub status: Status,
     pub message: String,
+    /// The answer in words, on the step that ends the run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<StopInfo>,
     pub actions: Vec<TracedAction>,
@@ -369,6 +372,9 @@ fn timeline_line(entry: &StepTrace, actions: &[Action], calls: &[ModelCall]) -> 
         line.push_str(&format!(" ERROR: {}", model::clip_text(&entry.error, TIMELINE_ERROR_CHARS)));
     }
     line.push_str(&format!(" | {}", model::clip_text(&entry.message, TIMELINE_MESSAGE_CHARS)));
+    if let Some(answer) = &entry.answer {
+        line.push_str(&format!(" | ANSWER: {}", model::clip_text(answer, TIMELINE_MESSAGE_CHARS)));
+    }
     if !actions.is_empty() {
         line.push_str(&format!(" | {}", actions.iter().map(memory::describe).collect::<Vec<_>>().join("; ")));
     }

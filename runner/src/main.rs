@@ -165,6 +165,9 @@ fn status_name(status: Status) -> String {
 }
 
 fn run() -> Result<i32, String> {
+    // The clock runs from here: everything the person waits for counts, the reading of the
+    // request and the opening of the site included.
+    let started = Instant::now();
     let options = options()?;
     if let Some(file) = &options.env_file {
         load_dotenv(file);
@@ -226,7 +229,6 @@ fn run() -> Result<i32, String> {
         "checker": options.decider, "maxSteps": max_steps, "trace": options.trace.join(&id).display().to_string(),
     }));
 
-    let started = Instant::now();
     let mut results = Vec::new();
     let mut survey = false;
     let last = loop {
@@ -295,6 +297,9 @@ fn end_event(last: &Step, elapsed: f64, model: Tally, checks: Tally) -> Value {
         "seconds": elapsed,
         "cost": model.usage.cost + checks.usage.cost,
     });
+    if let Some(answer) = &last.answer {
+        event["answer"] = json!(answer);
+    }
     if let Some(stop) = &last.stop {
         event["stop"] = json!({"problem": stop.problem, "action": stop.action});
     }
