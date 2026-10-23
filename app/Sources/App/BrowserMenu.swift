@@ -66,6 +66,7 @@ struct BrowserMenu: View {
             }
 
             section("Browser") {
+                row("Start Page", "house") { tab.view.loadURL(BrowserModel.startURL) }
                 row("Bookmarks", "star.square.on.square", chevron: true, closes: false) { page = .bookmarks }
                 row("History", "clock.arrow.circlepath", chevron: true, closes: false) { page = .history }
                 row("Tab", "square.on.square", chevron: true, closes: false) { page = .tab }

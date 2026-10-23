@@ -153,6 +153,134 @@ final class BookmarkStore: ObservableObject {
     }
 }
 
+// MARK: - Favicons
+
+/// Sites' icons, kept as small PNGs beside the runs whenever a tab shows one, so the start page
+/// can show them without asking the network.
+@MainActor
+final class FaviconCache {
+    static let shared = FaviconCache()
+
+    private let folder = AgentRunner.appDirectory.appendingPathComponent("favicons")
+    private var images: [String: NSImage] = [:]
+    private var missing: Set<String> = []
+
+    /// "https://www.youtube.com/watch" as "youtube.com".
+    static func host(of url: String) -> String? {
+        guard let host = URL(string: url)?.host(), !host.isEmpty else { return nil }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    func image(forHost host: String) -> NSImage? {
+        if let image = images[host] { return image }
+        if missing.contains(host) { return nil }
+        if let image = NSImage(contentsOf: folder.appendingPathComponent(host + ".png")) {
+            images[host] = image
+            return image
+        }
+        missing.insert(host)
+        return nil
+    }
+
+    func image(forURL url: String) -> NSImage? { Self.host(of: url).flatMap(image(forHost:)) }
+
+    /// Keeps a site's icon, once per launch.
+    func remember(_ image: NSImage, forURL url: String) {
+        guard let host = Self.host(of: url), images[host] == nil else { return }
+        images[host] = image
+        missing.remove(host)
+        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else { return }
+        let file = folder.appendingPathComponent(host + ".png")
+        let folder = folder
+        libraryQueue.async {
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? png.write(to: file, options: .atomic)
+        }
+    }
+}
+
+// MARK: - Shortcuts
+
+/// A site on the start page's speed dial.
+struct Shortcut: Codable, Identifiable, Hashable, Sendable {
+    var title: String
+    var url: String
+    var id: String { url }
+    var host: String { FaviconCache.host(of: url) ?? url }
+}
+
+/// The start page's speed dial: the sites the person added, then the sites they visit most,
+/// then a few well-known ones while there is room, less any they removed.
+@MainActor
+final class ShortcutStore: ObservableObject {
+    static let shared = ShortcutStore()
+
+    struct Saved: Codable, Sendable {
+        var added: [Shortcut] = []
+        var hidden: [String] = []
+    }
+
+    private let file = JSONFile<Saved>("shortcuts.json")
+    @Published private(set) var saved: Saved
+
+    static let starters: [Shortcut] = [
+        Shortcut(title: "Google", url: "https://www.google.com"),
+        Shortcut(title: "YouTube", url: "https://www.youtube.com"),
+        Shortcut(title: "Gmail", url: "https://mail.google.com"),
+        Shortcut(title: "GitHub", url: "https://github.com"),
+        Shortcut(title: "Wikipedia", url: "https://www.wikipedia.org"),
+    ]
+
+    private init() { saved = file.load() ?? Saved() }
+
+    func tiles(limit: Int) -> [Shortcut] {
+        var result: [Shortcut] = []
+        var hosts = Set(saved.hidden)
+        func offer(_ shortcut: Shortcut) {
+            guard result.count < limit, hosts.insert(shortcut.host).inserted else { return }
+            result.append(shortcut)
+        }
+        saved.added.forEach(offer)
+        for entry in HistoryStore.shared.matches([], limit: 80) {
+            guard let full = URL(string: entry.url)?.host(), let host = FaviconCache.host(of: entry.url) else { continue }
+            offer(Shortcut(title: Self.name(for: host), url: "https://" + full))
+        }
+        Self.starters.forEach(offer)
+        return result
+    }
+
+    func add(title: String, url: String) {
+        let address = BrowserSettings.shared.resolve(url.trimmingCharacters(in: .whitespacesAndNewlines))
+        let shortcut = Shortcut(title: title.isEmpty ? Self.name(for: FaviconCache.host(of: address) ?? address) : title,
+                                url: address)
+        saved.hidden.removeAll { $0 == shortcut.host }
+        saved.added.removeAll { $0.host == shortcut.host }
+        saved.added.append(shortcut)
+        file.save(saved, after: 0.3)
+    }
+
+    func remove(_ shortcut: Shortcut) {
+        saved.added.removeAll { $0.host == shortcut.host }
+        if !saved.hidden.contains(shortcut.host) { saved.hidden.append(shortcut.host) }
+        file.save(saved, after: 0.3)
+    }
+
+    func reset() {
+        saved = Saved()
+        file.save(saved, after: 0.3)
+    }
+
+    /// "news.ycombinator.com" as "Ycombinator", "bbc.co.uk" as "Bbc": the site's own name.
+    static func name(for host: String) -> String {
+        let parts = host.split(separator: ".").map(String.init)
+        guard parts.count >= 2 else { return host.capitalized }
+        var name = parts[parts.count - 2]
+        if parts.count >= 3, name.count <= 3 { name = parts[parts.count - 3] }
+        return name.prefix(1).uppercased() + name.dropFirst()
+    }
+}
+
 // MARK: - Settings
 
 enum SearchEngine: String, CaseIterable, Identifiable {

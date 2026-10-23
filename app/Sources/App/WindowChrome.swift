@@ -166,7 +166,7 @@ struct AddressPill: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
-            if hovering && !tab.address.isEmpty {
+            if hovering && !tab.isStart {
                 Button(action: copyLink) {
                     Image(systemName: copied ? "checkmark" : "link").font(.system(size: 11, weight: .medium))
                 }
@@ -174,7 +174,7 @@ struct AddressPill: View {
                 .help("Copy link (⇧⌘C)")
                 .transition(.opacity)
             }
-            if (hovering || isBookmarked) && !tab.address.isEmpty && !tab.isIncognito {
+            if (hovering || isBookmarked) && !tab.isStart && !tab.isIncognito {
                 Button { bookmarks.toggle(url: tab.address, title: tab.title) } label: {
                     Image(systemName: isBookmarked ? "star.fill" : "star")
                         .font(.system(size: 11, weight: .medium))
@@ -200,6 +200,7 @@ struct AddressPill: View {
 
     /// "en.wikipedia.org/wiki/Acorn" as "en.wikipedia.org"; "www." is dropped.
     private var host: String {
+        if tab.isStart { return "" }
         guard let url = URL(string: tab.address), let host = url.host(), !host.isEmpty else { return tab.address }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }

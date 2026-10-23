@@ -175,6 +175,13 @@ window has the agent. An incognito window's tabs share one in-memory profile
 (`ChromiumBrowserView initWithURL:incognito:`), which goes when the last of them does; it wears
 a fixed dark theme and writes no history.
 
+The app opens on a start page (`StartPage.swift`) instead of a website: a greeting, a search
+that suggests what the command bar does, a dial of the sites visited most (with their icons
+cached from earlier visits, so it needs no network and looks the same offline), and a way to
+ask the agent. It is drawn by the app over an empty page (`about:blank`), which stays mounted
+underneath, so the harness can navigate the tab at any moment; it goes as soon as the tab goes
+anywhere. The ⋮ menu and the command bar bring it back; ⌘T still opens the command bar.
+
 The first tab is the agent's: it is marked with a sparkle, cannot be closed, and is the page
 `AgentDriver` and the harness work in. While the harness has it (from its first request to the
 end of the connection) its card wears a slowly turning ring in the agent's colors, and, if it is

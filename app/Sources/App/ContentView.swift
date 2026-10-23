@@ -60,6 +60,7 @@ private struct Shell: View {
             }
         }
         .animation(.easeOut(duration: 0.15), value: store.commandBar)
+        .environmentObject(runner)
         .sheet(isPresented: $store.showingHistory) { HistoryView(store: store) }
         .sheet(item: $store.boostTarget) { BoostEditor(host: $0.host) }
         .focusedSceneObject(store)
@@ -211,6 +212,11 @@ struct PageCard: View {
             if showsToolbar { PageToolbar(tab: tab, store: store) }
             ZStack(alignment: .top) {
                 BrowserPane(view: tab.view)
+                // The page stays underneath, so the agent can take the tab at any moment;
+                // the start page goes as soon as the tab goes anywhere, or the agent has it.
+                if tab.isStart && !tab.isDriven {
+                    StartPage(tab: tab, store: store).transition(.opacity)
+                }
                 Rectangle()
                     .fill(palette.accent)
                     .frame(height: 2)

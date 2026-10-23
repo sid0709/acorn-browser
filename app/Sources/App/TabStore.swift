@@ -115,7 +115,7 @@ final class TabStore: ObservableObject {
         self.kind = kind
         let first = kind == .main
             ? BrowserModel.shared
-            : BrowserModel(url: BrowserSettings.shared.searchEngine.home, incognito: kind == .incognito)
+            : BrowserModel(url: BrowserModel.startURL, incognito: kind == .incognito)
         tabs = [first]
         activeID = first.id
         showAgent = kind == .main

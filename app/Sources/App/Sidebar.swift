@@ -239,7 +239,7 @@ private struct SidebarTabRow: View {
     var body: some View {
         HStack(spacing: 9) {
             TabIcon(tab: tab)
-            Text(tab.title.isEmpty ? "New Tab" : tab.title)
+            Text(tab.displayTitle)
                 .font(isActive ? Theme.Text.bodyStrong : Theme.Text.body)
                 .foregroundStyle(isActive ? palette.ink : palette.ink.opacity(0.82))
                 .lineLimit(1)
@@ -297,7 +297,7 @@ private struct SidebarSplitRow: View {
     private func half(_ tab: BrowserModel) -> some View {
         HStack(spacing: 7) {
             TabIcon(tab: tab, size: 14)
-            Text(tab.title.isEmpty ? "New Tab" : tab.title)
+            Text(tab.displayTitle)
                 .font(store.activeID == tab.id ? Theme.Text.bodyStrong : Theme.Text.body)
                 .foregroundStyle(store.activeID == tab.id ? palette.ink : palette.inkSecondary)
                 .lineLimit(1)

@@ -149,7 +149,7 @@ private struct TabPill: View {
                         .foregroundStyle(palette.inkTertiary)
                         .help("In a split view")
                 }
-                Text(tab.title.isEmpty ? "New Tab" : tab.title)
+                Text(tab.displayTitle)
                     .font(isActive ? Theme.Text.bodyStrong : Theme.Text.body)
                     .foregroundStyle(isActive ? palette.ink : palette.inkSecondary)
                     .lineLimit(1)

@@ -3,8 +3,19 @@ import SwiftUI
 /// One tab: the Chromium view and the state the toolbar shows.
 @MainActor
 final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegate {
-    /// The one tab, until there are several.
-    static let shared = BrowserModel(url: "https://www.wikipedia.org")
+    /// The agent's tab, the first of the main window. It opens on the start page, which needs
+    /// no network; the harness navigates it wherever a task begins.
+    static let shared = BrowserModel(url: startURL)
+
+    /// A tab here shows the start page, drawn by the app over an empty page.
+    static let startURL = "about:blank"
+    var isStart: Bool { address.isEmpty || address == Self.startURL }
+
+    /// The tab's name in the strip and the sidebar.
+    var displayTitle: String {
+        if isStart { return "Start Page" }
+        return title.isEmpty ? "New Tab" : title
+    }
 
     let view: ChromiumBrowserView
     let id = UUID()
@@ -116,6 +127,8 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
         canGoForward = browserView.canGoForward
         progress = browserView.loadingProgress
         favicon = browserView.favicon
+        // Once the load is done, so the icon is this page's and not the last one's.
+        if let favicon, !isLoading, !isIncognito { FaviconCache.shared.remember(favicon, forURL: address) }
         noteInHistory()
         if wasLoading && !isLoading { BoostStore.shared.apply(to: self) }
         wasLoading = isLoading
