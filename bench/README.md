@@ -42,8 +42,11 @@ step; `dom`: the page map and no picture, see `docs/dom-mode-plan.md`), the agen
 reason), the judge's verdict on the agent's answer in words (`pass`, `fail`, or `none` when it
 gave none: the same call grades it against what the screenshots show), the steps, the time and
 the cost. The time is everything the person waited for, from the runner's start: the reading of
-the request and the opening of the site included, not only the steps. The answers themselves
-are listed under the table, since they are what the person gets. `--mode both` runs every mission both ways, one after the other,
+the request and the opening of the site included, not only the steps. Beside it, the part of
+that time spent waiting on the models (`model s`): the rest is the browser's and the harness's
+own, which a change to them is judged by, since a provider's latency varies from one run to the
+next by a factor of five. The answers themselves are listed under the table, since they are
+what the person gets. `--mode both` runs every mission both ways, one after the other,
 so the two columns of the comparison come from the same sites on the same day. The
 judge is given the request, the key points, up to eight screenshots (the last one always, the
 ones where a focused field had just changed its value, since a wrong pick in a dropdown and its

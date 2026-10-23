@@ -57,6 +57,25 @@ pub fn decode_data_url(data_url: &str) -> Result<Vec<u8>, String> {
     Ok(raw)
 }
 
+/// The signature of a page known by its text alone (a look the browser could not photograph,
+/// in DOM mode): the text's hash spread over the grid as full-contrast cells, so two texts that
+/// differ differ in some cell by far more than the threshold, and the same text is the same.
+pub fn text_signature(text: &str) -> Signature {
+    let cells = GRID_SIZE * GRID_SIZE;
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut out = Vec::with_capacity(cells);
+    for byte in text.bytes().chain(std::iter::repeat(0).take(cells)) {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+        if out.len() < cells && (hash >> 32) & 1 == 1 {
+            out.push(255);
+        } else if out.len() < cells {
+            out.push(0);
+        }
+    }
+    out
+}
+
 /// Whether two signatures show the same page. An empty or mismatched signature never does.
 pub fn unchanged(a: &[u8], b: &[u8]) -> bool {
     !a.is_empty() && a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.abs_diff(*y) < UNCHANGED_BELOW)
@@ -112,5 +131,15 @@ mod tests {
         assert!(!unchanged(&plain, &marked));
         assert!(!unchanged(&[], &[]));
         assert!(signature("not a data url").is_err());
+    }
+
+    #[test]
+    fn a_text_signature_tells_texts_apart_and_is_the_same_for_the_same_text() {
+        let a = text_signature("VIEW y=0..800\nbutton[1] \"Go\"");
+        let same = text_signature("VIEW y=0..800\nbutton[1] \"Go\"");
+        let b = text_signature("VIEW y=0..800\nbutton[1] \"Stop\"");
+        assert_eq!(a.len(), GRID_SIZE * GRID_SIZE);
+        assert!(unchanged(&a, &same));
+        assert!(!unchanged(&a, &b));
     }
 }

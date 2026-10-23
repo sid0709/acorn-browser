@@ -63,6 +63,9 @@ pub struct Session {
     pub leave_held: bool,
     /// Set once a "done" without an answer in words was sent back: the second is let through.
     pub answer_asked: bool,
+    /// Whether the last actions sent only read the page (`read`), which leaves it as it was:
+    /// the look after them is not a page that failed to change.
+    pub last_plan_read_only: bool,
     /// The click that sends the page, as the last plan kept it; how many times a send was held
     /// on this page for the to-do list; and that the page refused the last send, so the next is
     /// held for one look.
@@ -187,6 +190,7 @@ impl Session {
             field_hold: FieldHold::default(),
             leave_held: false,
             answer_asked: false,
+            last_plan_read_only: false,
             commit: CommitState::default(),
             list_hold: ListHold::default(),
             send_refused: false,

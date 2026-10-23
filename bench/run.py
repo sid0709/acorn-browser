@@ -95,7 +95,7 @@ def run_mission(runner, task_file, trace_dir, extra):
     command = [str(runner), str(task_file), "--trace", str(trace_dir)] + extra
     started = datetime.datetime.now()
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    row = {"status": "crashed", "message": "", "answer": "", "seconds": 0.0, "cost": 0.0, "steps": 0, "understood": "", "run": "", "mode": ""}
+    row = {"status": "crashed", "message": "", "answer": "", "seconds": 0.0, "model_seconds": 0.0, "cost": 0.0, "steps": 0, "understood": "", "run": "", "mode": ""}
     for line in process.stdout:
         line = line.strip()
         if not line:
@@ -124,6 +124,7 @@ def run_mission(runner, task_file, trace_dir, extra):
             row["message"] = event.get("message", "")
             row["answer"] = event.get("answer", "") or ""
             row["seconds"] = float(event.get("seconds", 0))
+            row["model_seconds"] = float(event.get("modelSeconds", 0))
             row["cost"] = float(event.get("cost", 0))
         elif kind == "error":
             row["status"] = "error"
@@ -231,14 +232,18 @@ def judge(key, request, key_points, shots, actions, answer):
         data=json.dumps(body).encode(),
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=180) as response:
-            reply = json.loads(response.read())
-        text = reply["choices"][0]["message"]["content"]
-        verdict = json.loads(text[text.find("{"):])
-        return verdict.get("verdict", "fail"), verdict.get("reason", ""), verdict.get("answer_verdict", ""), verdict.get("answer_reason", "")
-    except Exception as error:  # noqa: BLE001 - the judge failing is a row, not a crash
-        return "judge error", str(error)[:200], "", ""
+    error = None
+    # A dropped connection is the network's, not the run's: the judge is asked again once.
+    for _ in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=180) as response:
+                reply = json.loads(response.read())
+            text = reply["choices"][0]["message"]["content"]
+            verdict = json.loads(text[text.find("{"):])
+            return verdict.get("verdict", "fail"), verdict.get("reason", ""), verdict.get("answer_verdict", ""), verdict.get("answer_reason", "")
+        except Exception as caught:  # noqa: BLE001 - the judge failing is a row, not a crash
+            error = caught
+    return "judge error", str(error)[:200], "", ""
 
 
 def clean(text, limit=140):
@@ -249,18 +254,20 @@ def table(rows, judged):
     """The score table: the judge's verdict on the screen, its verdict on the answer in words,
     the steps, the seconds (everything the person waited for, from the runner's start), and the
     cost; then each run's answer, since that is what the person gets."""
-    head = "| mission | level | mode | agent | judge | answer | steps | seconds | cost | note |"
-    lines = [head, "| --- | ---: | --- | --- | --- | --- | ---: | ---: | ---: | --- |"]
+    head = "| mission | level | mode | agent | judge | answer | steps | seconds | model s | cost | note |"
+    lines = [head, "| --- | ---: | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |"]
     for r in rows:
         note = clean(r["judge_reason"] if judged else r["message"])
-        lines.append(f"| {r['mission']} | {r['level']} | {r.get('mode', '')} | {r['status']} | {r['judge']} | {r.get('answer_judge', '')} | {r['steps']} | {r['seconds']:.0f} | ${r['cost']:.3f} | {note} |")
+        lines.append(f"| {r['mission']} | {r['level']} | {r.get('mode', '')} | {r['status']} | {r['judge']} | {r.get('answer_judge', '')} | {r['steps']} | {r['seconds']:.0f} | {r.get('model_seconds', 0):.0f} | ${r['cost']:.3f} | {note} |")
     passed = sum(1 for r in rows if (r["judge"] if judged else r["status"]) in ("pass", "done"))
     answered = sum(1 for r in rows if r.get("answer_judge") == "pass")
     lines.append("")
     summary = f"**{passed} of {len(rows)} {'passed' if judged else 'done'}**"
     if judged:
         summary += f" · {answered} of {len(rows)} answers right"
-    lines.append(f"{summary} · {sum(r['seconds'] for r in rows):.0f} s · ${sum(r['cost'] for r in rows):.2f}")
+    seconds = sum(r["seconds"] for r in rows)
+    model_seconds = sum(r.get("model_seconds", 0) for r in rows)
+    lines.append(f"{summary} · {seconds:.0f} s, of which {model_seconds:.0f} s waiting on the models · ${sum(r['cost'] for r in rows):.2f}")
     lines.append("")
     lines.append("Answers:")
     for r in rows:
@@ -320,7 +327,7 @@ def main():
             if key:
                 shots, actions = trace_evidence(trace_dir, row["run"])
                 row["judge"], row["judge_reason"], row["answer_judge"], row["answer_reason"] = judge(key, request, meta.get("judge", ""), shots, actions, row["answer"])
-            print(f"  -> agent: {row['status']} in {row['seconds']:.0f} s, ${row['cost']:.3f}: {row['message']}")
+            print(f"  -> agent: {row['status']} in {row['seconds']:.0f} s ({row['model_seconds']:.0f} s on the models), ${row['cost']:.3f}: {row['message']}")
             print(f"  -> answer: {row['answer'] or '(none)'}")
             if key:
                 print(f"  -> judge: {row['judge']}: {row['judge_reason']}")

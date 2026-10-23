@@ -101,13 +101,15 @@ function layoutIndex(snap) {
   return by;
 }
 
-/** Whether a laid-out node can be seen at all. */
-function visible(l) {
+/** Whether a laid-out node can be seen at all. A node that is only transparent (`opacity: 0`)
+ * is kept when `transparent` says so: a radio or a checkbox styled through its label sits
+ * see-through over the drawn circle or box, named by the label, and takes the click. */
+function visible(l, transparent = false) {
   if (!l || !l.box) return false;
   const [, , w, h] = l.box;
   if (w <= 0 || h <= 0) return false;
   if (l.display === 'none' || l.visibility === 'hidden' || l.visibility === 'collapse') return false;
-  if (l.opacity !== undefined && Number(l.opacity) === 0) return false;
+  if (!transparent && l.opacity !== undefined && Number(l.opacity) === 0) return false;
   // Parked off the page (left: -9999px) or clipped to a dot (screen-reader-only text).
   const [x, y] = l.box;
   if (x + w <= 0 || y + h <= 0) return false;
@@ -154,7 +156,7 @@ export function buildPageMap(ax, snap, viewport, trees = new Map()) {
 
     // A hidden node and everything under it is not on the page a person sees.
     if (l && l.box === null && role !== 'RootWebArea' && axNode.backendDOMNodeId && l.nodeType === 1 && (l.display === 'none')) { stats.hidden++; return; }
-    if (l && l.box && !visible(l) && role !== 'RootWebArea') { stats.hidden++; return; }
+    if (l && l.box && !visible(l, CONTROL_ROLES.has(role)) && role !== 'RootWebArea') { stats.hidden++; return; }
 
     const named = !axNode.ignored && (role === 'generic' || role === 'none') && name && !CONTROL_ROLES.has(role);
     if (!axNode.ignored && (!SKIP_ROLES.has(role) || named)) {

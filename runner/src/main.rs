@@ -290,11 +290,15 @@ fn describe(action: &Action) -> String {
 
 /// The end of the run, for the app: the outcome, the report, and what it cost.
 fn end_event(last: &Step, elapsed: f64, model: Tally, checks: Tally) -> Value {
+    // The time spent waiting on the models, apart: what is left is the browser's and the
+    // harness's own, which a change to them is judged by whatever the provider's mood.
     let mut event = json!({
         "event": "end",
         "status": status_name(last.status),
         "message": last.message,
         "seconds": elapsed,
+        "modelSeconds": (model.waited + checks.waited).as_secs_f64(),
+        "modelCalls": model.calls + checks.calls,
         "cost": model.usage.cost + checks.usage.cost,
     });
     if let Some(answer) = &last.answer {

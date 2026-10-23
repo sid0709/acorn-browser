@@ -409,6 +409,11 @@ impl Agent {
         }
         let (sig, width, height) = match change::signature(&obs.screenshot) {
             Ok(read) => read,
+            // A look the browser could not photograph still carries the page in DOM mode: the
+            // map stands in for the picture, for telling a page that did not change.
+            Err(_) if obs.screenshot.is_empty() && s.task.dom_mode() && obs.page.is_some() => {
+                (change::text_signature(&obs.page.as_ref().map(|page| page.text(&obs.viewport)).unwrap_or_default()), obs.viewport.width, obs.viewport.height)
+            }
             Err(why) => return Err(self.refuse(s, &obs, why)),
         };
         // The model measures coordinates in the image it is shown. If the image is not the size
@@ -456,9 +461,10 @@ impl Agent {
         }
         // A page that did not move after actions is evidence the model needs, and a run that
         // never moves is not worth more model calls. A survey scrolls the page and comes back:
-        // the same screen again is expected, not a stall.
+        // the same screen again is expected, not a stall; so is the page after actions that
+        // only read it.
         let mut stale = 0;
-        if s.step > 0 && obs.survey.is_empty() && change::unchanged(&sig, s.last_signature.as_deref().unwrap_or(&[])) {
+        if s.step > 0 && obs.survey.is_empty() && !s.last_plan_read_only && change::unchanged(&sig, s.last_signature.as_deref().unwrap_or(&[])) {
             stale = s.stale + 1;
         }
         if stale >= self.config.max_stale {
@@ -713,6 +719,7 @@ impl Agent {
         withheld.append(&mut dropped);
         let dropped = withheld;
         let survey = reply.status == Status::Working && self.survey_next(s, survey_asked);
+        s.last_plan_read_only = !actions.is_empty() && actions.iter().all(|a| matches!(a.kind, Kind::Read));
         let step = Step {
             status: reply.status,
             message: s.message.clone(),
@@ -927,6 +934,52 @@ mod tests {
         assert!(matches!(agent.step(&id, wrong), Err(StepError::BadObservation(_))));
     }
 
+    /// A run read the options of a form one by one, six `read` actions in a row, and the stale
+    /// count ended it as a page that stopped responding: a read leaves the page as it was.
+    #[test]
+    fn actions_that_only_read_the_page_do_not_count_as_a_page_that_never_changes() {
+        use crate::page::{PageMap, PageNode};
+        let reply = r#"{"status":"working","message":"Reading.","actions":[{"kind":"read","target":2}]}"#;
+        let agent = Agent::new(Config { max_stale: 2, ..Config::default() }, Box::new(Fixed(reply)));
+        let mut task = Task::new("read the options");
+        task.mode = crate::task::Mode::Dom;
+        let id = agent.start(task, Profile::default());
+        let page = PageMap {
+            nodes: vec![
+                PageNode { id: 1, role: "button".into(), name: "Go".into(), x: 10.0, y: 10.0, w: 20.0, h: 10.0, ..Default::default() },
+                PageNode { id: 2, role: "text".into(), name: "A paragraph cut short…".into(), y: 30.0, w: 50.0, h: 10.0, ..Default::default() },
+            ],
+        };
+        for _ in 0..4 {
+            let mut obs = look();
+            obs.page = Some(page.clone());
+            let step = agent.step(&id, obs).unwrap();
+            assert_eq!(step.status, Status::Working);
+            assert!(matches!(step.actions[0].kind, Kind::Read), "{:?}", step.actions);
+        }
+    }
+
+    /// The browser could not photograph a page mid-navigation and the run ended with an error:
+    /// in DOM mode the map carries the look, so it goes on; in image mode nothing does.
+    #[test]
+    fn a_look_without_a_picture_goes_on_in_dom_mode_and_is_refused_in_image_mode() {
+        use crate::page::{PageMap, PageNode};
+        let reply = r#"{"status":"working","message":"","actions":[{"kind":"wait","ms":100}]}"#;
+        let agent = Agent::new(Config::default(), Box::new(Fixed(reply)));
+        let mut task = Task::new("wait");
+        task.mode = crate::task::Mode::Dom;
+        let id = agent.start(task, Profile::default());
+        let mut obs = look();
+        obs.screenshot = String::new();
+        obs.page = Some(PageMap { nodes: vec![PageNode { id: 1, role: "button".into(), name: "Go".into(), x: 10.0, y: 10.0, w: 20.0, h: 10.0, ..Default::default() }] });
+        assert_eq!(agent.step(&id, obs).unwrap().status, Status::Working);
+        let agent = Agent::new(Config::default(), Box::new(Fixed(reply)));
+        let id = agent.start(Task::new("wait"), Profile::default());
+        let mut obs = look();
+        obs.screenshot = String::new();
+        assert!(matches!(agent.step(&id, obs), Err(StepError::BadObservation(_))));
+    }
+
     #[test]
     fn a_step_names_the_actions_and_drops_points_off_screen() {
         let reply = r#"{"observation":"a form","memo":"first look","status":"working","message":"Filling the form.","stop":null,
@@ -1066,7 +1119,7 @@ mod tests {
 
     #[test]
     fn a_done_reply_ends_the_run() {
-        let reply = r#"{"status":"done","message":"Sent."}"#;
+        let reply = r#"{"status":"done","message":"Sent.","answer":"The form was sent."}"#;
         let agent = Agent::new(Config::default(), Box::new(Fixed(reply)));
         let id = agent.start(Task::new("send it"), Profile::default());
         assert_eq!(agent.step(&id, look()).unwrap().status, Status::Done);

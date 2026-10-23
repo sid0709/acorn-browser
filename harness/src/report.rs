@@ -94,7 +94,7 @@ mod tests {
 
     #[test]
     fn the_end_report_carries_what_was_assumed_and_asked() {
-        let reply = r#"{"status":"done","message":"Ordered.","assumed":["Chose standard delivery"," Chose standard delivery ","Left the gift note empty"],"question":"Did you want a gift note?","actions":[]}"#;
+        let reply = r#"{"status":"done","message":"Ordered.","answer":"A kettle was ordered with standard delivery.","assumed":["Chose standard delivery"," Chose standard delivery ","Left the gift note empty"],"question":"Did you want a gift note?","actions":[]}"#;
         let (model, _) = Replying::new(reply);
         let agent = Agent::new(Config::default(), model);
         let id = agent.start(Task::new("buy a kettle"), Profile::default());

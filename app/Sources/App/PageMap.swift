@@ -107,11 +107,15 @@ extension AgentDriver {
 
         /// Whether the node can be seen at all: laid out with a size, not hidden by style, not
         /// parked off the page (`left: -9999px`), not clipped to a dot (screen-reader-only text).
-        var visible: Bool {
+        /// A node that is only transparent (`opacity: 0`) is kept when `transparent` says so: a
+        /// radio or a checkbox styled through its label (GOV.UK's, and most design systems')
+        /// sits see-through over the drawn circle or box, named by the label, and takes the
+        /// click; dropped, it leaves nameless labels behind.
+        func visible(transparent: Bool) -> Bool {
             guard let box else { return false }
             if box.w <= 0 || box.h <= 0 { return false }
             if display == "none" || visibility == "hidden" || visibility == "collapse" { return false }
-            if let o = Double(opacity), o == 0 { return false }
+            if let o = Double(opacity), o == 0, !transparent { return false }
             if box.x + box.w <= 0 || box.y + box.h <= 0 { return false }
             if box.w <= 1 && box.h <= 1 { return false }
             return true
@@ -347,7 +351,7 @@ extension AgentDriver {
             let backendId = (ax["backendDOMNodeId"] as? NSNumber)?.intValue ?? -1
             let laid = snap.laid[backendId]
             // A hidden node and everything under it is not on the page a person sees.
-            if let laid, laid.box != nil, !laid.visible, role != "RootWebArea" { return }
+            if let laid, laid.box != nil, !laid.visible(transparent: AgentDriver.controlRoles.contains(role)), role != "RootWebArea" { return }
 
             var props: [String: Any] = [:]
             for p in (ax["properties"] as? [[String: Any]]) ?? [] {
@@ -398,7 +402,7 @@ extension AgentDriver {
                     }
                 }
             }
-            if line == nil, let laid, laid.clickable, laid.nodeType == 1, laid.cursor == "pointer" || laid.attrs["onclick"] != nil, laid.visible {
+            if line == nil, let laid, laid.clickable, laid.nodeType == 1, laid.cursor == "pointer" || laid.attrs["onclick"] != nil, laid.visible(transparent: false) {
                 // A div made into a button: the tree calls it generic, the page says it is
                 // pressed. Kept only when no descendant turns out to be a control of its own.
                 emit("clickable", name) { node in node.hint = AgentDriver.readableClasses(laid.attrs) }

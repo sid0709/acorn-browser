@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn a_done_the_screen_does_not_show_is_sent_back_then_ends_unconfirmed() {
-        let reply = r#"{"status":"done","message":"Sent.","actions":[]}"#;
+        let reply = r#"{"status":"done","message":"Sent.","answer":"The form was sent.","actions":[]}"#;
         let (model, seen) = Replying::new(reply);
         let agent = Agent::new(Config { done_passes: 1, max_stale: 100, ..Config::default() }, model).with_decider(Sure::of(&[(ASK_DONE, 0.2)]));
         let id = agent.start(Task::new("send the form"), Profile::default());

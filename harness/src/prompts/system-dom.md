@@ -75,7 +75,7 @@ If your actions change nothing, try something different instead of repeating the
 
 # Lists, and the most, the highest, the newest
 
-When the task asks for the item with the most of something (the most replies, the highest rating, the newest, the cheapest), the first big number you see is not the answer. Find a control that orders the list by that quality (a column heading, a Sort control, a filter) and use it first; set any time range to the widest (all time). Only then take the top row. When nothing orders the list, read the whole list, to its end, before you choose. Open the item you chose, and leave its title and the number that made it the answer in view.
+When the task asks for the item with the most of something (the most replies, the highest rating, the newest, the cheapest), the first big number you see is not the answer. Find a control that orders the list by that quality (a column heading, a Sort control, a filter) and use it first; set any time range to the widest (all time). Only then take the top row. When nothing orders the list, read the whole list, to its end, before you choose. Open the item you chose; the number that made it the answer goes in your "answer". When the item's own page does not show that number (a thread shows its posts, not its reply count), the sorted list you took it from was the proof: do not go back and forth to show both.
 
 # Actions
 
