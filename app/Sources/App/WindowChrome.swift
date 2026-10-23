@@ -416,22 +416,44 @@ struct AddressField: View {
     }
 }
 
-/// Above the page in the sidebar layout: the page's title and site, centered, across the top
-/// of its card. A click edits the address in place.
-struct PageHeader: View {
-    @ObservedObject var tab: BrowserModel
+/// The sidebar layout's top row, the same whether the sidebar is shown or put away: the
+/// window's buttons, the sidebar toggle and back, forward and reload on the left (as wide as
+/// the sidebar while it shows, so they sit over it), and the page's title and site centered over
+/// the page, which a click opens for editing. In a split each pane carries its own address, so
+/// the row leaves the middle empty.
+struct SidebarTopBar: View {
     @ObservedObject var store: TabStore
-    @Environment(\.palette) private var palette
+    /// The sidebar shows beneath, so the controls take its width.
+    var sidebarShown: Bool
+    /// Room kept on the right (the agent panel's column), so the address centers on the page.
+    var trailingInset: CGFloat = 0
 
     var body: some View {
-        AddressField(tab: tab, store: store, filled: false)
-            .frame(maxWidth: 640)
-            .padding(.horizontal, Theme.Space.m)
-            .frame(maxWidth: .infinity)
-            .frame(height: 38)
-            .background(palette.card)
-            .overlay(alignment: .bottom) { Rectangle().fill(palette.hairline).frame(height: 1) }
-            .zIndex(1)
+        HStack(spacing: 0) {
+            HStack(spacing: Theme.Space.xs) {
+                WindowButtonsSpace()
+                Button { store.toggleSidebar() } label: { Image(systemName: "sidebar.left") }
+                    .buttonStyle(.chrome)
+                    .help(store.sidebarHidden ? "Show the sidebar (⌘S)" : "Hide the sidebar (⌘S)")
+                if store.isIncognito { IncognitoBadge(compact: true) }
+                if sidebarShown { Spacer(minLength: 0) }
+                NavigationButtons(tab: store.active).id(store.activeID)
+            }
+            .padding(.trailing, sidebarShown ? Theme.Space.xs : Theme.Space.m)
+            .frame(width: sidebarShown ? store.sidebarWidth : nil, alignment: .leading)
+
+            if store.shownSplit == nil {
+                AddressField(tab: store.active, store: store, filled: false)
+                    .id(store.activeID)
+                    .frame(maxWidth: 640)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, Theme.gutter)
+                    .padding(.trailing, trailingInset)
+            } else {
+                Spacer(minLength: 0)
+            }
+        }
+        .frame(height: WindowConfigurator.headerHeight)
     }
 }
 

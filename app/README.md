@@ -132,13 +132,14 @@ Needs Xcode (for `swiftc` and `clang++`), no CMake.
 
 The window is a tinted canvas behind rounded cards: the page in one, the agent panel in another
 (⌘K). The tabs go either across the top, where the page's card carries navigation and the
-address, or down a sidebar on the left, Arc's way (the layout is chosen in the ⋮ menu): window
-controls and navigation, the address, pinned tabs as tiles, the agent's tab, then groups as
-folders and the open tabs. ⌘S puts the sidebar away; the window's left edge brings it back over
-the page while the pointer is on it. The window's close, minimize and zoom buttons are the
-system's own, moved by `WindowConfigurator` into the header row (the sidebar's top row, or the
-tab row) and kept there through resizing and full screen; they go away with a hidden sidebar. The address shows the site's name only (with copy-link and
-a bookmark star under the pointer).
+address, or down a sidebar on the left, Arc's way (the layout is chosen in the ⋮ menu): pinned
+tabs as tiles, the agent's tab, then groups as folders and the open tabs. In that layout one row
+runs along the window's top whether the sidebar shows or not (`SidebarTopBar`): the window's
+buttons, the sidebar toggle and back, forward and reload on the left, and the page's title and
+site centered over the page, which a click or ⌘L opens for editing in place, with suggestions.
+⌘S puts the sidebar away; the window's left edge brings it out below that row while the pointer
+is near. The window's close, minimize and zoom buttons are the system's own, moved by
+`WindowConfigurator` into the top row and kept there through resizing and full screen.
 
 The command bar (`CommandBar.swift`) is how anything is opened: ⌘T for a new tab, ⌘L or a click
 on the address for the tab shown. It ranks, from what the browser already knows, the address or

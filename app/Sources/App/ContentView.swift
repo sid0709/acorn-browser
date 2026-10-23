@@ -42,9 +42,6 @@ private struct Shell: View {
     /// aside: the page the agent sees stays as wide as it was before there was a sidebar.
     private var agentHoldsPage: Bool { store.hasAgent && agentTab.isDriven && store.isShowing(agentTab) }
     private var showsSidebar: Bool { store.verticalLayout && !store.sidebarHidden && !agentHoldsPage }
-    /// The window's buttons live in the sidebar's top row, so they go away with it, and come
-    /// back while it peeks out.
-    private var buttonsVisible: Bool { !store.verticalLayout || showsSidebar || peeking }
     /// The sidebar is put away, and the window's left edge brings it out.
     private var peekable: Bool { store.verticalLayout && !showsSidebar }
 
@@ -69,7 +66,7 @@ private struct Shell: View {
         }
         .frame(minWidth: 960, minHeight: 580)
         .background(WindowDragArea())
-        .background(WindowConfigurator(buttonsVisible: buttonsVisible) { window = $0 })
+        .background(WindowConfigurator { window = $0 })
         .background(WindowShortcuts(store: store))
         .overlay {
             if let mode = store.commandBar {
@@ -96,26 +93,31 @@ private struct Shell: View {
 
     // MARK: Sidebar layout
 
+    /// The top row (the window's buttons, navigation, the page's title and address) stays put
+    /// whether the sidebar shows or not; the sidebar, the page and the agent panel sit below it.
     private var sidebarLayout: some View {
-        HStack(spacing: 0) {
-            if showsSidebar {
-                Sidebar(store: store, runner: runner, showAgent: $showAgent)
-                    .frame(width: store.sidebarWidth)
-                    .overlay(alignment: .trailing) { SidebarResizeHandle(store: store).offset(x: 3) }
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+        VStack(spacing: 0) {
+            SidebarTopBar(store: store, sidebarShown: showsSidebar,
+                          trailingInset: showAgent && store.hasAgent ? Self.agentPanelWidth + Theme.gutter : 0)
+            HStack(spacing: 0) {
+                if showsSidebar {
+                    Sidebar(store: store, runner: runner, showAgent: $showAgent)
+                        .frame(width: store.sidebarWidth)
+                        .overlay(alignment: .trailing) { SidebarResizeHandle(store: store).offset(x: 3) }
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                }
+                pagesAndAgent(toolbar: false)
+                    .padding([.horizontal, .bottom], Theme.gutter)
+                    .padding(.leading, showsSidebar ? -Theme.Space.xs : 0)
             }
-            pagesAndAgent(toolbar: false)
-                .padding(Theme.gutter)
-                .padding(.leading, showsSidebar ? -Theme.Space.xs : 0)
-        }
-        .overlay(alignment: .leading) {
-            if !showsSidebar { peekingSidebar }
+            .overlay(alignment: .leading) {
+                if !showsSidebar { peekingSidebar }
+            }
         }
     }
 
-    /// The sidebar out over the page: in the very place it sits when shown (flush with the
-    /// window's left, top and bottom), so the window's buttons, back while it is out, sit in its
-    /// first row as they always do; rounded and shadowed only on its open side.
+    /// The sidebar out over the page, below the top row: in the very place it sits when shown,
+    /// flush with the window's left edge and bottom, rounded and shadowed only on its open side.
     @ViewBuilder
     private var peekingSidebar: some View {
         if peeking {
@@ -224,11 +226,8 @@ struct PageCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if showsToolbar {
-                PageToolbar(tab: tab, store: store)
-            } else {
-                PageHeader(tab: tab, store: store)
-            }
+            // In the sidebar layout the window's top row carries navigation and the address.
+            if showsToolbar { PageToolbar(tab: tab, store: store) }
             ZStack(alignment: .top) {
                 BrowserPane(view: tab.view)
                 // The page stays underneath, so the agent can take the tab at any moment;

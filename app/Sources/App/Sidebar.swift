@@ -1,10 +1,10 @@
 import SwiftUI
 import AppKit
 
-/// The tabs down the left of the window, Arc's way: the window's own controls and navigation,
-/// the address, pinned tabs as tiles, the agent's tab, then groups as folders and the open
-/// tabs, with the theme, the agent toggle, the menu and a new tab along the bottom. It sits on
-/// the canvas itself rather than in a card.
+/// The tabs down the left of the window, Arc's way, below the window's top row (which holds the
+/// window's buttons, navigation and the address): pinned tabs as tiles, the agent's tab, then
+/// groups as folders and the open tabs, with the theme, the agent toggle, extensions, the menu
+/// and a new tab along the bottom. It sits on the canvas itself rather than in a card.
 struct Sidebar: View {
     @ObservedObject var store: TabStore
     @ObservedObject var runner: AgentRunner
@@ -39,7 +39,6 @@ struct Sidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
-            topRow
             if !favorites.isEmpty { favoritesGrid } else if store.draggedTab != nil { pinPlaceholder }
             if store.hasAgent { AgentRow(agentTab: BrowserModel.shared, store: store, runner: runner) }
             Rectangle().fill(palette.hairline).frame(height: 1).padding(.horizontal, Theme.Space.xs)
@@ -75,24 +74,8 @@ struct Sidebar: View {
         }
         .padding(.leading, Theme.Space.s + 2)
         .padding(.trailing, Theme.Space.xs)
+        .padding(.top, Theme.Space.xs)
         .padding(.bottom, Theme.Space.s)
-    }
-
-    /// The window's controls, the sidebar toggle, and navigation for the active tab.
-    private var topRow: some View {
-        HStack(spacing: Theme.Space.xs) {
-            WindowButtonsSpace(inset: Theme.Space.s + 2)
-            Button { withAnimation(Theme.layout) { store.sidebarHidden.toggle() } } label: {
-                Image(systemName: "sidebar.left")
-            }
-            .buttonStyle(.chrome)
-            .help("Hide the sidebar (⌘S)")
-            if store.isIncognito { IncognitoBadge(compact: true) }
-            Spacer(minLength: 0)
-            NavigationButtons(tab: store.active).id(store.activeID)
-        }
-        .frame(height: 40)
-        .padding(.top, 2)
     }
 
     private var favoritesGrid: some View {
