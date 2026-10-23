@@ -53,8 +53,12 @@ The last lines of a run say what it cost and where the time went, from what the 
 reported: the driving model's calls and the checks, each with calls, seconds waited, tokens and
 dollars, and the rest, which is the browser and the harness.
 
-Other options: `--model <id>`, `--reasoning none|low|medium|high`, `--profile <file>`,
+Other options: `--model <id>`, `--reasoning none|low|medium|high` (default none), `--profile <file>`,
 `--trace <dir>`, `--viewport 1280x720`.
+
+`cargo run -- --bench` runs no task: it times three small calls to the driving model and three
+to the checker, with one small screenshot, and prints each with its tokens and cost. The first
+call pays the connection; the others show how the provider is doing right now.
 
 The tasks: `todomvc.md` adds items on Playwright's TodoMVC demo, `wikipedia.md` finds an
 article and reads a fact, `wikipedia-chinese.md` finds an article and switches it to Chinese,

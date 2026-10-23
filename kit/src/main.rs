@@ -9,7 +9,8 @@
 //!                            on OpenRouter; none turns the checks off)
 //!   --decisions openrouter | openai
 //!                            whose Decisions API answers (OpenAI's needs OPENAI_API_KEY; default openrouter)
-//!   --reasoning <effort>     none, low, medium or high for the driving model (default low)
+//!   --reasoning <effort>     none, low, medium or high for the driving model (default none)
+//!   --bench                  no task: time a few small calls to each model, to see how the provider is doing
 //!   --profile <file>         who the run acts as (default profile.md beside this crate)
 //!   --trace <dir>            where to write the run's trace (default traces/ beside this crate)
 //!   --viewport <WxH>         the window size (default 1280x720)
@@ -41,13 +42,14 @@ use crate::decide::{Decisions, Meter, Metered, Tally, Wire};
 
 const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL: &str = "openai/gpt-6-luna";
-const DEFAULT_REASONING: &str = "low";
+const DEFAULT_REASONING: &str = "none";
 const DEFAULT_VIEWPORT: (u32, u32) = (1280, 720);
 /// The facts the run acts on when no profile file is given or found.
 const DEFAULT_FACTS: &str = "The person gave no details about themselves.";
 
 struct Options {
     task: PathBuf,
+    bench: bool,
     headed: bool,
     model: String,
     decider: Option<String>,
@@ -66,6 +68,7 @@ fn options() -> Result<Options, String> {
     let mut args = std::env::args().skip(1);
     let mut out = Options {
         task: PathBuf::new(),
+        bench: false,
         headed: false,
         model: DEFAULT_MODEL.to_string(),
         decider: None,
@@ -80,6 +83,7 @@ fn options() -> Result<Options, String> {
         let mut value = |name: &str| args.next().ok_or_else(|| format!("{name} needs a value"));
         match arg.as_str() {
             "--headed" => out.headed = true,
+            "--bench" => out.bench = true,
             "--model" => out.model = value("--model")?,
             "--decider" => {
                 let named = value("--decider")?;
@@ -106,7 +110,7 @@ fn options() -> Result<Options, String> {
             other => out.task = PathBuf::from(other),
         }
     }
-    if out.task.as_os_str().is_empty() {
+    if out.task.as_os_str().is_empty() && !out.bench {
         return Err(USAGE.to_string());
     }
     if !decider_named {
@@ -118,7 +122,7 @@ fn options() -> Result<Options, String> {
     Ok(out)
 }
 
-const USAGE: &str = "usage: harness-kit <task.md> [--headed] [--model <id>] [--decider <id>|none] [--decisions openrouter|openai] [--reasoning <effort>] [--profile <file>] [--trace <dir>] [--viewport <WxH>]";
+const USAGE: &str = "usage: harness-kit <task.md> | --bench [--headed] [--model <id>] [--decider <id>|none] [--decisions openrouter|openai] [--reasoning <effort>] [--profile <file>] [--trace <dir>] [--viewport <WxH>]";
 
 fn main() {
     match run() {
@@ -156,6 +160,9 @@ fn run() -> Result<i32, String> {
         .ok()
         .filter(|k| !k.trim().is_empty())
         .ok_or("set OPENROUTER_API_KEY in the environment or in kit/.env (see .env.example)")?;
+    if options.bench {
+        return bench(&options, &key);
+    }
     let loaded = taskfile::load(&options.task)?;
     let facts = std::fs::read_to_string(&options.profile).unwrap_or_else(|_| DEFAULT_FACTS.to_string());
     let start_url = loaded.task.start_url.clone().ok_or("the task file needs a url: line")?;
@@ -203,6 +210,65 @@ fn run() -> Result<i32, String> {
     };
     conclude(&last, started.elapsed().as_secs_f64(), model_meter.read(), check_meter.read());
     Ok(if last.status == Status::Done { 0 } else { 1 })
+}
+
+/// How many calls the bench makes to each model.
+const BENCH_CALLS: usize = 3;
+
+/// Times a few small calls to the driving model and the decision model, with one small
+/// screenshot, and prints each: the first call pays the connection, the rest show the provider.
+fn bench(options: &Options, key: &str) -> Result<i32, String> {
+    use harness::ports::{Decider, Decision, Message, Model, ModelRequest, Question, Role};
+    let image = tiny_screenshot();
+    println!("bench: {BENCH_CALLS} calls each, one {}x{} screenshot", BENCH_SIZE.0, BENCH_SIZE.1);
+    let model = OpenRouter::new(key, options.model.clone(), OPENROUTER_URL, options.reasoning.clone(), Box::new(UreqTransport::default()));
+    println!("model {} ({}):", options.model, options.reasoning);
+    for n in 1..=BENCH_CALLS {
+        let request = ModelRequest {
+            messages: vec![
+                Message { role: Role::System, text: "Answer with the JSON object asked for.".into(), ..Default::default() },
+                Message { role: Role::User, text: "What colour is the picture? Reply {\"colour\": \"...\"}.".into(), images: vec![image.clone()], ..Default::default() },
+            ],
+            schema_name: "colour".into(),
+            schema: serde_json::json!({"type": "object", "additionalProperties": false, "required": ["colour"], "properties": {"colour": {"type": "string"}}}),
+        };
+        let started = Instant::now();
+        match model.complete(request) {
+            Ok(r) => println!("  call {n}: {:.2}s, {} in (cached {}), {} out, ${:.5}, {} http attempt(s), answered {}", started.elapsed().as_secs_f64(), r.usage.input_tokens, r.usage.cached_tokens, r.usage.output_tokens, r.usage.cost, r.attempts, r.content.trim()),
+            Err(e) => println!("  call {n}: failed after {:.2}s: {e}", started.elapsed().as_secs_f64()),
+        }
+    }
+    let Some(decider) = &options.decider else { return Ok(0) };
+    let (decision_key, url) = match options.decisions {
+        Wire::OpenRouter => (key.to_string(), decide::OPENROUTER_DECISIONS_URL),
+        Wire::OpenAI => (std::env::var("OPENAI_API_KEY").map_err(|_| "set OPENAI_API_KEY for --decisions openai")?, decide::OPENAI_DECISIONS_URL),
+    };
+    let checker = Decisions::new(&decision_key, decider, url, options.decisions);
+    println!("checker {decider} on {}:", if options.decisions == Wire::OpenAI { "openai" } else { "openrouter" });
+    for n in 1..=BENCH_CALLS {
+        let mut questions = std::collections::BTreeMap::new();
+        questions.insert("grey".to_string(), Question::yes_no("Is the picture a plain grey rectangle?"));
+        let decision = Decision { state: vec![harness::ports::Part::Text("A screenshot.".into()), harness::ports::Part::Image(image.clone())], questions };
+        let started = Instant::now();
+        match checker.decide(decision) {
+            Ok(v) => println!("  call {n}: {:.2}s, {} in, ${:.5}, grey={:.2}", started.elapsed().as_secs_f64(), v.usage.input_tokens, v.usage.cost, v.yes("grey").unwrap_or(0.0)),
+            Err(e) => println!("  call {n}: failed after {:.2}s: {e}", started.elapsed().as_secs_f64()),
+        }
+    }
+    Ok(0)
+}
+
+/// The size of the bench's screenshot.
+const BENCH_SIZE: (u32, u32) = (320, 200);
+
+/// A plain grey JPEG data URL, so the bench measures the provider and not a big upload.
+fn tiny_screenshot() -> String {
+    use harness::base64::Engine;
+    let (w, h) = BENCH_SIZE;
+    let mut jpeg = Vec::new();
+    let img = harness::image::RgbImage::from_pixel(w, h, harness::image::Rgb([200, 200, 200]));
+    harness::image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 80).encode_image(&img).expect("a jpeg");
+    format!("data:image/jpeg;base64,{}", harness::base64::engine::general_purpose::STANDARD.encode(jpeg))
 }
 
 fn announce(task: &Task, options: &Options) {

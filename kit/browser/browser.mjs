@@ -18,8 +18,8 @@ import { chromium } from 'playwright';
 const SURVEY_OVERLAP_PX = 120; // shared by neighbouring survey screens, so a control cut by one edge is whole on the next
 const FOCUS_NEAR_PX = 24; // a survey screen this close to a wanted one is the same screen
 const SETTLE_MS = 150; // what the page gets to settle after a scroll
-const AFTER_ACTION_MS = 200; // what the page gets to react after a click or a key
-const LOAD_MS = 2000; // how long a look waits for the network to go quiet
+const AFTER_ACTION_MS = 100; // what the page gets to react after a click or a key
+const LOAD_MS = 1000; // how long a look waits for the network to go quiet
 const OPEN_MS = 30000; // how long opening the start page may take
 const CHOOSER_MS = 3000; // how long an upload waits for the file picker
 const MAX_WAIT_MS = 10000; // the longest one wait action may be

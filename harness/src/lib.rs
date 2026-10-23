@@ -7,6 +7,9 @@
 //! observe -> stall check -> intervene -> memory -> model -> gate -> act -> verify -> todo/map
 //! ```
 
+pub use base64;
+pub use image;
+
 pub mod action;
 pub mod change;
 pub mod focus;
