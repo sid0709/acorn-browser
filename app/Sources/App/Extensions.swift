@@ -10,6 +10,9 @@ struct ExtensionInfo: Identifiable, Hashable {
     let id: String
     let name: String
     let version: String
+    /// The manifest's description, and what it asks to reach (its permissions and sites).
+    let summary: String
+    let permissions: [String]
     let icon: URL?
     /// The page its toolbar button opens, relative to the extension.
     let popup: String?
@@ -200,8 +203,15 @@ final class ExtensionStore: ObservableObject {
         let iconPath = icons.keys.compactMap(Int.init).filter { $0 <= 128 }.max().flatMap { icons[String($0)] }
             ?? icons.values.first
         let name = text("short_name").isEmpty ? text("name") : text("short_name")
+        var seen = Set<String>()
+        let permissions = ["permissions", "host_permissions", "optional_permissions"]
+            .flatMap { manifest[$0] as? [Any] ?? [] }
+            .compactMap { $0 as? String }
+            .filter { seen.insert($0).inserted }
         return ExtensionInfo(id: id, name: name.isEmpty ? id : name,
                              version: manifest["version"] as? String ?? "",
+                             summary: text("description"),
+                             permissions: permissions,
                              icon: iconPath.map { folder.appendingPathComponent($0) },
                              popup: action?["default_popup"] as? String,
                              source: source, folder: folder)
@@ -326,7 +336,7 @@ private struct CRX {
 // MARK: - Interface
 
 /// The puzzle piece beside the address: the extensions, each opening its popup, and the way to
-/// the Web Store and Chromium's own extensions page.
+/// the Web Store and the full extensions page (`acorn://extensions`).
 struct ExtensionsButton: View {
     @ObservedObject var store: TabStore
     @State private var showing = false
@@ -390,13 +400,11 @@ struct ExtensionsList: View {
                 store.newTab(url: "https://chromewebstore.google.com")
             } label: { Label("Chrome Web Store", systemImage: "bag") }
                 .buttonStyle(.row)
-            if support == .on {
-                Button {
-                    close()
-                    store.newTab(url: "chrome://extensions")
-                } label: { Label("Chromium's Extensions Page", systemImage: "gearshape") }
-                    .buttonStyle(.row)
-            }
+            Button {
+                close()
+                store.openPage(.extensions)
+            } label: { Label("Manage Extensions", systemImage: "gearshape") }
+                .buttonStyle(.row)
         }
         .frame(width: 320)
     }

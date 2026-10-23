@@ -170,8 +170,23 @@ search, open tabs, bookmarks, history and the window's commands, and offers the 
 agent as a task. History (⌘Y), bookmarks (⌘D) and the search engine and translate language are
 in `Library.swift`, kept as JSON beside the runs; pages the agent opens while it drives are not
 written to history. The menu bar lists every command; the keys are also held by
-`WindowShortcuts` inside the window, so they work with the page focused. Settings (⌘,) holds
-the theme, the layout, search, translation and clearing data.
+`WindowShortcuts` inside the window, so they work with the page focused.
+
+Settings and Extensions are pages in a tab, as in Chrome: `acorn://settings` and
+`acorn://extensions` (`AcornPages.swift`). Acorn's tabs are Alloy views on macOS, which have no
+`chrome://settings` or `chrome://extensions`, so those two addresses open Acorn's pages too.
+Chromium cannot load the `acorn` scheme: the tab loads an empty page marked with the page's name
+(`about:blank#acorn-settings/privacy`) and the app draws the page over it, as it does the start
+page, so back, forward, reload and duplicate work and the agent can still take the tab. ⌘, and
+the ⋮ menu open Settings (`SettingsPage.swift`): a sidebar of sections, each at its own address
+(`acorn://settings/privacy`), and a search over all of them. It holds the agent's model and key,
+the theme, tab layout and font sizes, the search engine (one's own too, with `%s`), the start
+page, clearing browsing data by time range, the choices kept per site, downloads, translation,
+the engine's state, a reset and the versions. A site's request (camera, location...) is
+remembered when "Remember for this site" stays ticked, and Site Settings lists and changes
+those choices. Downloads go to the folder Settings names (`downloadFolder`, read by the bridge)
+and may ask where to save each file, except while the harness is connected, so a run is never
+stopped by a save panel. The person's font sizes reach new tabs of theirs, never the agent's.
 
 The ⋮ menu follows Chromium's: New tab, New window and Incognito as tiles; zoom in place with full
 screen beside it, bookmark, pin, find, translate, print and copy link; then Bookmarks, History, Tab and Extensions,
@@ -183,9 +198,10 @@ button where it can install into this browser, and otherwise "Add to Acorn" in t
 extension's Store page, which fetches the Store's package, unpacks it beside the runs keeping
 the Store's id, and loads it at the next launch (`ChromiumEngine.extensionDirectories`, as
 `--load-extension`). The puzzle piece beside the address lists them and opens their popups;
-`chrome://extensions` manages the rest. Extensions also holds site boosts (`Boosts.swift`):
-styles and a script of the person's own put into a site's pages when they load, never into the
-agent's tab.
+`acorn://extensions` (`ExtensionsManager.swift`) manages them as Chrome's page does: a card each
+with its switch, a search, and a page of details (what it may reach, its id and folder). It
+also holds site boosts (`Boosts.swift`): styles and a script of the person's own put into a
+site's pages when they load, never into the agent's tab.
 
 Tabs are dragged (`TabDrag.swift`): onto either end of another tab to move there, taking its
 group and pin; onto its middle to make a group of the two (the new folder's name opens for

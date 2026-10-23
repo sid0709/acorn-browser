@@ -231,8 +231,11 @@ struct PageCard: View {
             ZStack(alignment: .top) {
                 BrowserPane(view: tab.view)
                 // The page stays underneath, so the agent can take the tab at any moment;
-                // the start page goes as soon as the tab goes anywhere, or the agent has it.
-                if tab.isStart && !tab.isDriven {
+                // the start page and the app's own pages go as soon as the tab goes anywhere,
+                // or the agent has it.
+                if !tab.isDriven, let location = tab.acornLocation {
+                    AcornPageView(tab: tab, store: store, location: location)
+                } else if tab.isStart && !tab.isDriven {
                     StartPage(tab: tab, store: store).transition(.opacity)
                 }
                 Rectangle()

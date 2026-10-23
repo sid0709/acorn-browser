@@ -210,7 +210,6 @@ struct AddressField: View {
     @EnvironmentObject private var runner: AgentRunner
     @ObservedObject private var bookmarks = BookmarkStore.shared
     @Environment(\.palette) private var palette
-    @Environment(\.openSettings) private var openSettings
     @State private var hovering = false
     @State private var copied = false
     @State private var showingTranslate = false
@@ -223,15 +222,15 @@ struct AddressField: View {
     private static let height: CGFloat = 30
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: Theme.Radius.row + 1, style: .continuous) }
 
-    private var isBookmarked: Bool { bookmarks.isBookmarked(tab.address) }
+    private var isBookmarked: Bool { bookmarks.isBookmarked(tab.shownAddress) }
     /// Chrome's translate offer: shown while the page is in another language, or translated.
     private var offersTranslation: Bool {
-        !tab.isStart && (tab.translation != .idle || Translator.shared.offers(tab))
+        !tab.isStart && tab.acornLocation == nil && (tab.translation != .idle || Translator.shared.offers(tab))
     }
 
     private var items: [CommandItem] {
-        guard editing, text != tab.address else { return [] }
-        return Suggestions(store: store, runner: runner, mode: .tab(tab.id), openSettings: { openSettings() })
+        guard editing, text != tab.shownAddress else { return [] }
+        return Suggestions(store: store, runner: runner, mode: .tab(tab.id))
             .items(for: text, historyWhenEmpty: false)
     }
 
@@ -266,7 +265,7 @@ struct AddressField: View {
             beginEditing()
         }
         .onDisappear { keys.stop() }
-        .help(editing ? "" : tab.address)
+        .help(editing ? "" : tab.shownAddress)
     }
 
     private var fill: Color {
@@ -280,11 +279,11 @@ struct AddressField: View {
     private var label: some View {
         HStack(spacing: 7) {
             Spacer(minLength: 0)
-            Image(systemName: tab.isStart ? "house" : tab.address.hasPrefix("https://") ? "lock.fill" : "globe")
+            Image(systemName: icon)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(palette.inkTertiary)
-            if tab.isStart {
-                Text("Start Page").font(Theme.Text.bodyStrong).foregroundStyle(palette.ink)
+            if tab.isStart || tab.acornLocation != nil {
+                Text(tab.displayTitle).font(Theme.Text.bodyStrong).foregroundStyle(palette.ink)
             } else {
                 // The title gives way first; the site always shows.
                 Text(tab.title.isEmpty ? host : tab.title)
@@ -331,7 +330,7 @@ struct AddressField: View {
             .popover(isPresented: $showingTranslate, arrowEdge: .bottom) { TranslatePopover(tab: tab) }
         }
         if (hovering || isBookmarked) && !tab.isStart && !tab.isIncognito {
-            Button { bookmarks.toggle(url: tab.address, title: tab.title) } label: {
+            Button { bookmarks.toggle(url: tab.shownAddress, title: tab.acornLocation == nil ? tab.title : tab.displayTitle) } label: {
                 Image(systemName: isBookmarked ? "star.fill" : "star")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(isBookmarked ? palette.accent : palette.inkSecondary)
@@ -340,6 +339,12 @@ struct AddressField: View {
             .help(isBookmarked ? "Remove bookmark (⌘D)" : "Bookmark this page (⌘D)")
             .transition(.opacity)
         }
+    }
+
+    private var icon: String {
+        if tab.isStart { return "house" }
+        if let location = tab.acornLocation { return location.page.icon }
+        return tab.address.hasPrefix("https://") ? "lock.fill" : "globe"
     }
 
     /// "en.wikipedia.org/wiki/Acorn" as "en.wikipedia.org"; "www." is dropped.
@@ -368,7 +373,7 @@ struct AddressField: View {
     }
 
     private func beginEditing() {
-        text = tab.isStart ? "" : tab.address
+        text = tab.isStart ? "" : tab.shownAddress
         selection = 0
         editing = true
         keys.start(
@@ -410,7 +415,7 @@ struct AddressField: View {
     }
 
     private func copyLink() {
-        copyToPasteboard(tab.address)
+        copyToPasteboard(tab.shownAddress)
         copied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
     }
@@ -534,6 +539,7 @@ struct WindowShortcuts: View {
             key("p") { store.active.printPage() }
             key("d") { store.toggleBookmark() }
             key("y") { store.showingHistory = true }
+            key(",") { store.openPage(.settings) }
             key("\\") { store.toggleSplit() }
             key("c", modifiers: [.command, .shift]) { store.copyLink() }
             key("=") { store.active.zoomIn() }

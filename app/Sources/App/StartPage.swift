@@ -11,7 +11,6 @@ struct StartPage: View {
     @ObservedObject private var shortcuts = ShortcutStore.shared
     @ObservedObject private var history = HistoryStore.shared
     @Environment(\.palette) private var palette
-    @Environment(\.openSettings) private var openSettings
     @AppStorage("startPage.greeting") private var showGreeting = true
     @AppStorage("startPage.shortcuts") private var showShortcuts = true
     @AppStorage("startPage.agent") private var showAgentChip = true
@@ -27,7 +26,7 @@ struct StartPage: View {
 
     private var items: [CommandItem] {
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
-        return Suggestions(store: store, runner: runner, mode: .tab(tab.id), openSettings: { openSettings() })
+        return Suggestions(store: store, runner: runner, mode: .tab(tab.id))
             .items(for: query, historyWhenEmpty: false)
     }
 
@@ -66,7 +65,7 @@ struct StartPage: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(palette.inkTertiary)
-            TextField("Search \(BrowserSettings.shared.searchEngine.title) or enter an address", text: $query)
+            TextField("Search \(BrowserSettings.shared.searchEngineName) or enter an address", text: $query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 17))
                 .foregroundStyle(palette.ink)

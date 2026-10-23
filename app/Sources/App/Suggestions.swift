@@ -32,7 +32,6 @@ struct Suggestions {
     let runner: AgentRunner
     /// Where what is chosen opens.
     let mode: CommandBarMode
-    let openSettings: () -> Void
 
     private var settings: BrowserSettings { .shared }
 
@@ -66,7 +65,7 @@ struct Suggestions {
             } else {
                 let url = settings.searchURL(text)
                 items.append(CommandItem(id: "search", section: .top, icon: "magnifyingglass",
-                                         title: text, hint: "Search \(settings.searchEngine.title)") {
+                                         title: text, hint: "Search \(settings.searchEngineName)") {
                     store.open(url, in: mode)
                 })
             }
@@ -120,7 +119,6 @@ struct Suggestions {
     private var commands: [CommandItem] {
         let store = self.store
         let tab = store.active
-        let openSettings = self.openSettings
         var list: [CommandItem] = [
             command("Start Page", "house") { tab.view.loadURL(BrowserModel.startURL) },
             command("Find in Page", "magnifyingglass", "⌘F") { tab.startFinding() },
@@ -138,7 +136,8 @@ struct Suggestions {
                     store.verticalLayout ? "menubar.rectangle" : "sidebar.left") {
                 withAnimation(Theme.layout) { store.verticalLayout.toggle() }
             },
-            command("Settings\u{2026}", "gearshape", "⌘,") { openSettings() },
+            command("Settings\u{2026}", "gearshape", "⌘,") { store.openPage(.settings) },
+            command("Extensions", "puzzlepiece.extension") { store.openPage(.extensions) },
         ]
         if store.hasAgent {
             list.append(command(store.showAgent ? "Hide Agent" : "Show Agent", "sparkles", "⌘K") { store.toggleAgent() })

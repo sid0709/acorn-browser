@@ -12,9 +12,17 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
     static let startURL = "about:blank"
     var isStart: Bool { address.isEmpty || address == Self.startURL }
 
+    /// The app's own page this tab shows (Settings, Extensions), drawn over its empty page.
+    var acornLocation: AcornLocation? { AcornPage.location(loaded: address) }
+
+    /// The address as the person reads, copies and bookmarks it: `acorn://settings` rather
+    /// than the empty page underneath.
+    var shownAddress: String { acornLocation?.address ?? address }
+
     /// The tab's name in the strip and the sidebar.
     var displayTitle: String {
         if isStart { return "Start Page" }
+        if let acornLocation { return acornLocation.page.title }
         return title.isEmpty ? "New Tab" : title
     }
 
@@ -83,11 +91,18 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
     /// them. The person's tabs have it (unless turned off in Settings); the agent's does not.
     init(url: String, incognito: Bool = false, chromeStyle: Bool? = nil) {
         isIncognito = incognito
-        view = ChromiumBrowserView(url: url, incognito: incognito)
+        let loaded = AcornPage.loadable(url)
+        view = ChromiumBrowserView(url: loaded, incognito: incognito)
         view.usesChromeStyle = chromeStyle ?? BrowserSettings.shared.chromeTabs
+        // The person's font sizes from Settings; the agent's tab keeps Chromium's own, so what
+        // the harness sees does not depend on them.
+        if chromeStyle == nil {
+            view.defaultFontSize = BrowserSettings.shared.defaultFontSize
+            view.minimumFontSize = BrowserSettings.shared.minimumFontSize
+        }
         // A page's own drag and drop (a card to another column) is part of using it.
         view.allowsDragAndDrop = true
-        address = url
+        address = loaded
         super.init()
         view.delegate = self
     }
@@ -97,7 +112,15 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
     func go(to text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        view.loadURL(BrowserSettings.shared.resolve(trimmed))
+        load(BrowserSettings.shared.resolve(trimmed))
+    }
+
+    /// Loads an address, the app's own `acorn://` pages among them. One of those shows at once:
+    /// the empty page underneath only needs its mark changed.
+    func load(_ url: String) {
+        let loadable = AcornPage.loadable(url)
+        if AcornPage.location(loaded: loadable) != nil { address = loadable }
+        view.loadURL(loadable)
     }
 
     /// The page's language, once told from its text, and how far translating it has got.

@@ -112,11 +112,21 @@ NSString *DescribePermissionRequest(uint32_t requested) {
   return JoinPhrases(phrases.array);
 }
 
+/// Where downloads go: the folder chosen in Settings (`downloadFolder`) while it is there,
+/// Downloads otherwise.
+NSURL *DownloadFolder() {
+  NSFileManager *fileManager = [NSFileManager defaultManager];
+  NSString *chosen = [NSUserDefaults.standardUserDefaults stringForKey:@"downloadFolder"];
+  BOOL isDirectory = NO;
+  if (chosen.length && [fileManager fileExistsAtPath:chosen isDirectory:&isDirectory] && isDirectory) {
+    return [NSURL fileURLWithPath:chosen isDirectory:YES];
+  }
+  return [fileManager URLsForDirectory:NSDownloadsDirectory inDomains:NSUserDomainMask].firstObject;
+}
+
 NSString *UniqueDownloadPath(NSString *suggestedName) {
   NSFileManager *fileManager = [NSFileManager defaultManager];
-  NSURL *downloads = [fileManager URLsForDirectory:NSDownloadsDirectory
-                                         inDomains:NSUserDomainMask]
-                         .firstObject;
+  NSURL *downloads = DownloadFolder();
   NSString *name = [suggestedName stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
   if (name.length == 0) {
     name = @"download";
@@ -165,6 +175,29 @@ void AllowExternalProtocol(NSString *host, NSString *scheme) {
   }
   allowList[host] = schemes;
   [NSUserDefaults.standardUserDefaults setObject:allowList forKey:kExternalProtocolAllowListKey];
+}
+
+NSString *const kSitePermissionsKey = @"browser.sitePermissions";
+
+/// A choice the person asked to keep, for a site and what it asked to do ("use your camera"):
+/// @YES, @NO, or nil when there is none. Settings lists and changes them.
+NSNumber *RememberedPermission(NSString *host, NSString *action) {
+  NSDictionary *permissions = [NSUserDefaults.standardUserDefaults dictionaryForKey:kSitePermissionsKey];
+  NSDictionary *site = permissions[host];
+  id allowed = [site isKindOfClass:NSDictionary.class] ? site[action] : nil;
+  return [allowed isKindOfClass:NSNumber.class] ? allowed : nil;
+}
+
+void RememberPermission(NSString *host, NSString *action, BOOL allowed) {
+  NSMutableDictionary *permissions =
+      [[NSUserDefaults.standardUserDefaults dictionaryForKey:kSitePermissionsKey] mutableCopy]
+          ?: [NSMutableDictionary dictionary];
+  NSMutableDictionary *site = [permissions[host] isKindOfClass:NSDictionary.class]
+                                  ? [permissions[host] mutableCopy]
+                                  : [NSMutableDictionary dictionary];
+  site[action] = @(allowed);
+  permissions[host] = site;
+  [NSUserDefaults.standardUserDefaults setObject:permissions forKey:kSitePermissionsKey];
 }
 
 NSHashTable<ChromiumBrowserView *> *LiveViews() {
@@ -487,7 +520,12 @@ class BrowserClient : public CefClient,
                         const CefString &suggested_name,
                         CefRefPtr<CefBeforeDownloadCallback> callback) override {
     NSString *path = UniqueDownloadPath(ToNSString(suggested_name));
-    callback->Continue(ToCefString(path), false);
+    // The save panel is for the person: while the harness is connected a download must not
+    // stop the run to ask, and goes straight to the folder.
+    ChromiumBrowserView *view = view_;
+    const bool ask = view && !view.downloadHandler &&
+                     [NSUserDefaults.standardUserDefaults boolForKey:@"askWhereToSave"];
+    callback->Continue(ToCefString(path), ask);
     [view_ cef_download:path.lastPathComponent finished:NO];
     return true;
   }
@@ -718,6 +756,12 @@ static BOOL gChromeStyleRefused = NO;
   windowInfo.runtime_style = wantsChrome ? CEF_RUNTIME_STYLE_CHROME : CEF_RUNTIME_STYLE_ALLOY;
 
   CefBrowserSettings browserSettings;
+  if (_defaultFontSize > 0) {
+    browserSettings.default_font_size = (int)_defaultFontSize;
+  }
+  if (_minimumFontSize > 0) {
+    browserSettings.minimum_font_size = (int)_minimumFontSize;
+  }
   CefRefPtr<CefRequestContext> context;
   if (_isIncognito) {
     if (!gIncognitoContext) {
@@ -1072,18 +1116,34 @@ static BOOL gChromeStyleRefused = NO;
                      origin:(NSString *)origin
                    promptID:(uint64_t)promptID
                  completion:(void (^)(BOOL allowed))completion {
+  NSString *site = [NSURL URLWithString:origin].host ?: origin;
+  // What the person decided before, when they asked for it to be kept. An incognito window
+  // keeps nothing, and is asked every time.
+  const BOOL incognito = self.isIncognito;
+  NSNumber *remembered = incognito ? nil : RememberedPermission(site, action);
+  if (remembered && !_destroyed) {
+    completion(remembered.boolValue);
+    return;
+  }
+
   NSWindow *window = self.window;
   if (!window || _destroyed) {
     completion(NO);
     return;
   }
 
-  NSString *site = [NSURL URLWithString:origin].host ?: origin;
   NSAlert *alert = [[NSAlert alloc] init];
   alert.messageText = [NSString stringWithFormat:@"%@ wants to %@", site, action];
-  alert.informativeText = @"Reload the page to be asked again.";
   [alert addButtonWithTitle:@"Allow"];
   [alert addButtonWithTitle:@"Block"];
+  if (incognito) {
+    alert.informativeText = @"Reload the page to be asked again.";
+  } else {
+    alert.informativeText = @"Kept choices can be changed in Settings, under Site Settings.";
+    alert.showsSuppressionButton = YES;
+    alert.suppressionButton.title = @"Remember for this site";
+    alert.suppressionButton.state = NSControlStateValueOn;
+  }
   alert.window.sharingType = NSWindowSharingNone;
 
   NSNumber *key = @(promptID);
@@ -1092,6 +1152,7 @@ static BOOL gChromeStyleRefused = NO;
   }
 
   __weak ChromiumBrowserView *weakSelf = self;
+  __weak NSAlert *weakAlert = alert;
   [alert beginSheetModalForWindow:window
                 completionHandler:^(NSModalResponse response) {
                   ChromiumBrowserView *strongSelf = weakSelf;
@@ -1102,7 +1163,14 @@ static BOOL gChromeStyleRefused = NO;
                     }
                     [strongSelf->_permissionAlerts removeObjectForKey:key];
                   }
-                  completion(response == NSAlertFirstButtonReturn);
+                  const BOOL answered =
+                      response == NSAlertFirstButtonReturn || response == NSAlertSecondButtonReturn;
+                  const BOOL allowed = response == NSAlertFirstButtonReturn;
+                  if (answered && !incognito &&
+                      weakAlert.suppressionButton.state == NSControlStateValueOn) {
+                    RememberPermission(site, action, allowed);
+                  }
+                  completion(allowed);
                 }];
 }
 

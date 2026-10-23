@@ -19,10 +19,6 @@ struct AcornBrowserApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1180, height: 780)
-
-        Settings {
-            SettingsView().themed()
-        }
     }
 }
 
@@ -34,6 +30,11 @@ struct BrowserCommands: Commands {
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
+        // Settings is a page in a tab (acorn://settings), as in Chrome, not a window of its own.
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings\u{2026}") { (store ?? TabStore.shared).openPage(.settings) }
+                .keyboardShortcut(",")
+        }
         CommandGroup(replacing: .newItem) {
             Button("New Tab") { store?.commandBar = .newTab }
                 .keyboardShortcut("t")
@@ -97,6 +98,10 @@ struct BrowserCommands: Commands {
         CommandMenu("History") {
             Button("Show All History") { store?.showingHistory = true }
                 .keyboardShortcut("y")
+        }
+        CommandGroup(after: .windowArrangement) {
+            Divider()
+            Button("Extensions") { (store ?? TabStore.shared).openPage(.extensions) }
         }
     }
 }
