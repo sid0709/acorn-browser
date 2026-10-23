@@ -2,8 +2,14 @@
 
 #include <crt_externs.h>
 #include <objc/runtime.h>
+#include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cstring>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "include/cef_app.h"
 #include "include/cef_application_mac.h"
@@ -45,6 +51,8 @@ void InstallCefAppProtocol(Class appClass) {
   auto original = reinterpret_cast<SendEventIMP>(method_getImplementation(method));
   IMP wrapped = imp_implementationWithBlock(^(id app, NSEvent *event) {
     CefScopedSendingEvent sendingEventScoper;
+    // Not timed on its own: a menu or a window drag runs its whole loop inside one event.
+    chromium::PerfScope scope("input event", false);
     original(app, sendEvent, event);
   });
   // Adds an override if sendEvent: is inherited; replaces it if the class defines it.
@@ -73,6 +81,8 @@ constexpr int64_t kTimerDelayPlaceholder = INT64_MAX;
 NSTimer *gPumpTimer = nil;
 bool gPumpActive = false;
 bool gPumpReentrant = false;
+// How many times the pump has run, for the hitch watcher to tell one long run from many.
+std::atomic<uint64_t> gPumpRuns{0};
 bool gRunning = false;
 bool gReady = false;
 bool gUsesSystemKeychain = true;
@@ -98,7 +108,11 @@ bool PerformPumpWork() {
     return false;
   }
   gPumpActive = true;
-  CefDoMessageLoopWork();
+  {
+    chromium::PerfScope scope("chromium pump");
+    CefDoMessageLoopWork();
+  }
+  gPumpRuns.fetch_add(1, std::memory_order_relaxed);
   gPumpActive = false;
 
   const bool reentrant = gPumpReentrant;
@@ -182,7 +196,8 @@ class ChromiumApp : public CefApp, public CefBrowserProcessHandler {
   IMPLEMENT_REFCOUNTING(ChromiumApp);
 };
 
-int gLiveBrowserCount = 0;
+// Read by the hitch watcher's thread as well.
+std::atomic<int> gLiveBrowserCount{0};
 
 NSString *ChromiumDataDirectory() {
   NSURL *support = [[NSFileManager defaultManager] URLsForDirectory:NSApplicationSupportDirectory
@@ -213,18 +228,172 @@ class CookieFlushCallback : public CefCompletionCallback {
 
 }  // namespace
 
+#pragma mark - Hitch watch
+
+namespace {
+
+constexpr useconds_t kPingIntervalUs = 100 * 1000;
+constexpr useconds_t kSampleIntervalUs = 10 * 1000;
+constexpr double kStallMs = 250;
+constexpr double kSlowSectionMs = 30;
+const char *const kNoSection = "AppKit/SwiftUI";
+
+/// The section the main thread is in now, read by the watcher's thread.
+std::atomic<const char *> gSection{nullptr};
+/// The last ping the main thread answered, and whether the app was frontmost then.
+std::atomic<uint64_t> gAnsweredPing{0};
+std::atomic<bool> gAppActive{true};
+/// perf.log and its clock, on the log's queue only.
+NSFileHandle *gPerfFile = nil;
+NSISO8601DateFormatter *gPerfStamp = nil;
+
+struct OpenSection {
+  const char *name;
+  CFAbsoluteTime start;
+  bool reportsSlow;
+};
+
+/// The sections the main thread is in, innermost last. Main thread only.
+std::vector<OpenSection> &SectionStack() {
+  static std::vector<OpenSection> stack;
+  return stack;
+}
+
+dispatch_queue_t PerfLogQueue() {
+  static dispatch_queue_t queue;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    queue = dispatch_queue_create("com.acorn.browser.perf-log", DISPATCH_QUEUE_SERIAL);
+  });
+  return queue;
+}
+
+/// To the system log, and to perf.log beside the Chromium folder (started afresh past 5 MB).
+void PerfLog(NSString *line) {
+  NSLog(@"[acorn-perf] %@", line);
+  NSDate *now = [NSDate date];
+  dispatch_async(PerfLogQueue(), ^{
+    if (!gPerfFile) {
+      NSString *path = [ChromiumDataDirectory().stringByDeletingLastPathComponent
+          stringByAppendingPathComponent:@"perf.log"];
+      NSFileManager *files = NSFileManager.defaultManager;
+      NSNumber *size = [files attributesOfItemAtPath:path error:nil][NSFileSize];
+      if (![files fileExistsAtPath:path] || size.unsignedLongLongValue > 5 * 1024 * 1024) {
+        [files createDirectoryAtPath:path.stringByDeletingLastPathComponent
+            withIntermediateDirectories:YES
+                             attributes:nil
+                                  error:nil];
+        [files createFileAtPath:path contents:nil attributes:nil];
+      }
+      gPerfFile = [NSFileHandle fileHandleForWritingAtPath:path];
+      [gPerfFile seekToEndOfFile];
+      gPerfStamp = [[NSISO8601DateFormatter alloc] init];
+      gPerfStamp.formatOptions =
+          NSISO8601DateFormatWithInternetDateTime | NSISO8601DateFormatWithFractionalSeconds;
+    }
+    NSString *entry = [NSString stringWithFormat:@"%@ %@\n", [gPerfStamp stringFromDate:now], line];
+    [gPerfFile writeData:[entry dataUsingEncoding:NSUTF8StringEncoding]];
+  });
+}
+
+void EnterSection(const char *name, bool reportsSlow = true) {
+  SectionStack().push_back({name, CFAbsoluteTimeGetCurrent(), reportsSlow});
+  gSection.store(name, std::memory_order_relaxed);
+}
+
+void LeaveSection() {
+  std::vector<OpenSection> &stack = SectionStack();
+  if (stack.empty()) {
+    return;
+  }
+  const OpenSection open = stack.back();
+  stack.pop_back();
+  gSection.store(stack.empty() ? nullptr : stack.back().name, std::memory_order_relaxed);
+  const double ms = (CFAbsoluteTimeGetCurrent() - open.start) * 1000;
+  if (open.reportsSlow && ms > kSlowSectionMs) {
+    PerfLog([NSString stringWithFormat:@"%s took %.0f ms (%d browsers)", open.name, ms,
+                                       chromium::LiveBrowserCount()]);
+  }
+}
+
+/// Swift's section names as C strings that live as long as the app. Main thread only.
+const char *InternSection(NSString *name) {
+  static NSMutableDictionary<NSString *, NSValue *> *names = [NSMutableDictionary dictionary];
+  NSValue *known = names[name];
+  if (known) {
+    return (const char *)known.pointerValue;
+  }
+  const char *copy = strdup(name.UTF8String ?: "?");
+  names[name] = [NSValue valueWithPointer:copy];
+  return copy;
+}
+
+/// The watcher: pings the main thread, and while an answer is late, notes which section the
+/// main thread is in every 10 ms.
+void WatchMainThread() {
+  uint64_t ping = 0;
+  for (;;) {
+    usleep(kPingIntervalUs);
+    const uint64_t mine = ++ping;
+    const CFAbsoluteTime sent = CFAbsoluteTimeGetCurrent();
+    const uint64_t pumpRunsBefore = gPumpRuns.load(std::memory_order_relaxed);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      gAppActive.store(NSApp.isActive, std::memory_order_relaxed);
+      gAnsweredPing.store(mine, std::memory_order_release);
+    });
+
+    std::unordered_map<const char *, int> samples;
+    while (gAnsweredPing.load(std::memory_order_acquire) < mine) {
+      usleep(kSampleIntervalUs);
+      const char *section = gSection.load(std::memory_order_relaxed);
+      samples[section ? section : kNoSection]++;
+    }
+
+    const double waited = (CFAbsoluteTimeGetCurrent() - sent) * 1000;
+    if (waited < kStallMs) {
+      continue;
+    }
+    std::vector<std::pair<const char *, int>> ranked(samples.begin(), samples.end());
+    std::sort(ranked.begin(), ranked.end(), [](const auto &a, const auto &b) { return a.second > b.second; });
+    int total = 0;
+    for (const auto &entry : ranked) {
+      total += entry.second;
+    }
+    NSMutableArray<NSString *> *shares = [NSMutableArray array];
+    for (const auto &entry : ranked) {
+      [shares addObject:[NSString stringWithFormat:@"%s %.0f ms", entry.first,
+                                                   waited * entry.second / std::max(total, 1)]];
+    }
+    const uint64_t pumpRuns = gPumpRuns.load(std::memory_order_relaxed) - pumpRunsBefore;
+    PerfLog([NSString stringWithFormat:@"main thread stuck %.0f ms (%d browsers, %llu pump runs%@): %@",
+                                       waited, chromium::LiveBrowserCount(), pumpRuns,
+                                       gAppActive.load(std::memory_order_relaxed) ? @"" : @", app in background",
+                                       [shares componentsJoinedByString:@", "]]);
+  }
+}
+
+}  // namespace
+
 namespace chromium {
 
 int LiveBrowserCount() {
-  return gLiveBrowserCount;
+  return gLiveBrowserCount.load(std::memory_order_relaxed);
 }
 
 void BrowserCreated() {
-  ++gLiveBrowserCount;
+  gLiveBrowserCount.fetch_add(1, std::memory_order_relaxed);
 }
 
 void BrowserClosed() {
-  gLiveBrowserCount = std::max(0, gLiveBrowserCount - 1);
+  gLiveBrowserCount.store(std::max(0, LiveBrowserCount() - 1), std::memory_order_relaxed);
+}
+
+PerfScope::PerfScope(const char *section, bool reportsSlow) {
+  EnterSection(section, reportsSlow);
+}
+
+PerfScope::~PerfScope() {
+  LeaveSection();
 }
 
 }  // namespace chromium
@@ -338,6 +507,41 @@ void BrowserClosed() {
                                     @"AppleWebKit/537.36 (KHTML, like Gecko) "
                                     @"Chrome/%d.0.0.0 Safari/537.36",
                                     CHROME_VERSION_MAJOR];
+}
+
+@end
+
+#pragma mark - ChromiumPerf
+
+@implementation ChromiumPerf
+
++ (void)startWatching {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    NSNumber *wanted = [NSUserDefaults.standardUserDefaults objectForKey:@"perfWatch"];
+    if (wanted && !wanted.boolValue) {
+      return;
+    }
+    NSThread *watcher = [[NSThread alloc] initWithBlock:^{
+      WatchMainThread();
+    }];
+    watcher.name = @"acorn-perf-watch";
+    watcher.qualityOfService = NSQualityOfServiceUserInteractive;
+    [watcher start];
+    PerfLog(@"watching the main thread");
+  });
+}
+
++ (void)enter:(NSString *)section {
+  EnterSection(InternSection(section));
+}
+
++ (void)leave {
+  LeaveSection();
+}
+
++ (void)note:(NSString *)message {
+  PerfLog(message);
 }
 
 @end

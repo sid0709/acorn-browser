@@ -103,6 +103,8 @@ struct BrowserCommands: Commands {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // Notes every moment the window stops answering, and what held it (perf.log).
+        ChromiumPerf.startWatching()
         // The Keychain check delays the first page by several seconds, and this browser
         // keeps no saved logins yet.
         ChromiumEngine.usesSystemKeychain = false

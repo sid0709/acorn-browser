@@ -123,6 +123,24 @@ The app lands in `build/AcornBrowser.app`, signed ad hoc, for running on this Ma
 
 Needs Xcode (for `swiftc` and `clang++`), no CMake.
 
+### When the window stalls
+
+A watcher thread notes every moment the main thread does not answer for over a quarter of a
+second, and what held it, in `~/Library/Application Support/com.acorn.browser/perf.log`. Lines
+look like this (numbers made up):
+
+```
+… new tab, 5 open
+… create browser took 180 ms (5 browsers)
+… main thread stuck 1340 ms (5 browsers, 3 pump runs): chromium pump 1180 ms, AppKit/SwiftUI 160 ms
+```
+
+The shares are sampled every 10 ms across the sections the code marks (`ChromiumPerf.enter`
+and `leave`, `chromium::PerfScope` in Objective-C++); `AppKit/SwiftUI` is time in none of
+them. Few pump runs over a long stall mean single long Chromium tasks; many mean a backlog.
+`tail -f` the file, or `log stream --predicate 'eventMessage CONTAINS "acorn-perf"'`.
+`defaults write com.acorn.browser perfWatch -bool NO` turns the watcher off.
+
 ## Next
 
 3. Several live tabs with frame-rate tiers.

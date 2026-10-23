@@ -42,6 +42,8 @@ struct Suggestions {
     }
 
     func items(for query: String, historyWhenEmpty: Bool = true) -> [CommandItem] {
+        ChromiumPerf.enter("suggestions")
+        defer { ChromiumPerf.leave() }
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let words = text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
         func matches(_ haystack: String) -> Bool {

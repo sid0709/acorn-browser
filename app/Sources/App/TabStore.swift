@@ -136,6 +136,9 @@ final class TabStore: ObservableObject {
 
     /// A tab on `url`, or on the search engine's page.
     func newTab(url: String? = nil) {
+        ChromiumPerf.note("new tab, \(tabs.count + 1) open")
+        ChromiumPerf.enter("new tab")
+        defer { ChromiumPerf.leave() }
         let tab = BrowserModel(url: url ?? BrowserSettings.shared.searchEngine.home, incognito: isIncognito)
         withAnimation(.snappy) {
             tabs.append(tab)
