@@ -63,10 +63,14 @@ marks such tasks impossible rather than failed, and so should a reading of these
 (`harness/src/page.rs`, `app/Sources/App/PageMap.swift`): on Playwright's Chromium it asks for
 the accessibility tree and the DOM snapshot and joins them the way the app does, so a change to
 the rules is tried here first and the harness's fixtures (`harness/src/fixtures/*.page.json`)
-are regenerated from `pagemap/pages/*.html`.
+are regenerated from `pagemap/pages/*.html`. `govuk-scrolled.page.json` is the same page captured
+with `--scroll=370`: boxes are in page coordinates, so they must come out as they do unscrolled
+(Chromium's snapshot already gives them from the document's top; adding the scroll again once put
+every node a screen too low after the first scroll of a run).
 
 ```bash
 cd bench/pagemap && node pagemap.mjs pages/govuk.html https://www.gov.uk/   # → out/
+cd bench/pagemap && node pagemap.mjs --scroll=370 pages/govuk.html          # → out/govuk_html-scrolled.*
 cd bench/pagemap && node compare.mjs https://www.amazon.com/s?k=laptop      # the three sources side by side
 ```
 

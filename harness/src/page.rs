@@ -101,15 +101,51 @@ impl PageNode {
         self.role == "text"
     }
 
+    /// Whether the browser cut the text short (it ends with an ellipsis), so there is more of
+    /// it to `read`.
+    pub fn is_cut(&self) -> bool {
+        self.name.ends_with('…')
+    }
+
     /// Whether the node has no box at all (an option of a closed native list, say).
     fn boxless(&self) -> bool {
         self.w <= 0.0 && self.h <= 0.0
     }
 
-    /// The line the model reads.
+    /// The edge of the view that cuts the node, when one does: a row half below the screen has
+    /// its words in the map but not on the screen, which is what the person (and the judge)
+    /// sees. A node as tall as the view or taller is not cut, it is the view's surroundings.
+    fn cut_by(&self, viewport: &Viewport) -> Option<&'static str> {
+        if self.boxless() || self.h >= viewport.height as f64 {
+            return None;
+        }
+        let (top, bottom) = (viewport.scroll_y, viewport.scroll_y + viewport.height as f64);
+        if self.y < top && self.y + self.h > top {
+            Some("top")
+        } else if self.y < bottom && self.y + self.h > bottom {
+            Some("bottom")
+        } else {
+            None
+        }
+    }
+
+    /// The line the model reads, with a note when the screen cuts the node.
+    fn line_in(&self, viewport: &Viewport) -> String {
+        match self.cut_by(viewport) {
+            Some(edge) => format!("{} (cut off at the screen's {edge})", self.line()),
+            None => self.line(),
+        }
+    }
+
+    /// The line the model reads. Text has no number, since it is not acted on, except text the
+    /// browser cut short: its number is what `read` takes to fetch the whole of it.
     fn line(&self) -> String {
         if self.is_text() {
-            return format!("{}\"{}\"", indent(self.depth), self.name);
+            return if self.is_cut() {
+                format!("{}[{}] \"{}\"", indent(self.depth), self.id, self.name)
+            } else {
+                format!("{}\"{}\"", indent(self.depth), self.name)
+            };
         }
         let mut parts = vec![format!("{}[{}]", self.role, self.id)];
         if !self.name.is_empty() {
@@ -190,7 +226,7 @@ impl PageMap {
         let bottom = viewport.scroll_y + viewport.height as f64;
         let header = format!("VIEW y={top:.0}..{bottom:.0} of {:.0}", viewport.page_height);
         let in_view: Vec<&PageNode> = self.nodes.iter().zip(&shown).filter(|(_, seen)| **seen).map(|(node, _)| node).collect();
-        let mut view: Vec<(bool, String)> = fold(&in_view);
+        let mut view: Vec<(bool, String)> = fold(&in_view, viewport);
         let height = (viewport.height as f64).max(1.0);
         let mut bands: std::collections::BTreeMap<i64, Band> = std::collections::BTreeMap::new();
         for (node, &seen) in self.nodes.iter().zip(&shown) {
@@ -262,7 +298,7 @@ impl PageMap {
 /// many cards alike, and the model needs the first few whole and the rest one line each, with
 /// the number to act on. A block is a list item with what is under it, or, with no list round
 /// them, one period of a run of nodes whose roles repeat.
-fn fold(nodes: &[&PageNode]) -> Vec<(bool, String)> {
+fn fold(nodes: &[&PageNode], viewport: &Viewport) -> Vec<(bool, String)> {
     let blocks = blocks_of(nodes);
     let mut out = Vec::new();
     let mut i = 0;
@@ -275,12 +311,12 @@ fn fold(nodes: &[&PageNode]) -> Vec<(bool, String)> {
         }
         if run < FOLD_AFTER {
             for block in &blocks[i..i + run] {
-                out.extend(block.nodes.iter().map(|node| (node.is_text(), node.line())));
+                out.extend(block.nodes.iter().map(|node| (node.is_text(), node.line_in(viewport))));
             }
         } else {
             for (k, block) in blocks[i..i + run].iter().enumerate() {
                 if k < FULL_BLOCKS {
-                    out.extend(block.nodes.iter().map(|node| (node.is_text(), node.line())));
+                    out.extend(block.nodes.iter().map(|node| (node.is_text(), node.line_in(viewport))));
                 } else {
                     out.push((false, block.folded()));
                 }
@@ -415,6 +451,54 @@ mod tests {
         assert!(text.contains("link[27] \"Help\""), "{text}");
         assert!(!text.contains("radio[10]"), "{text}");
         assert!(text.contains("MINIMAP\n  y=0..800  "), "{text}");
+    }
+
+    /// The same page, captured by the reference builder scrolled to its foot (370 px down), with
+    /// the viewport it reported. Page coordinates do not move with the scroll: the header's link
+    /// is at y=12 as it was, and the view shows the foot. A builder that added the scroll to
+    /// boxes the browser already gives from the document's top would put every node 370 px
+    /// lower, and the view would show what lies a screen above where the page is.
+    #[test]
+    fn a_map_captured_scrolled_keeps_page_coordinates_and_shows_the_view_it_was_at() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!("fixtures/govuk-scrolled.page.json")).unwrap();
+        let map: PageMap = serde_json::from_value(fixture.clone()).unwrap();
+        let viewport: Viewport = serde_json::from_value(fixture["viewport"].clone()).unwrap();
+        assert_eq!(viewport.scroll_y, 370.0);
+        let header = map.nodes.iter().find(|n| n.name == "GOV.UK").unwrap();
+        assert_eq!((header.x, header.y), (30.0, 12.0));
+        let text = map.text(&viewport);
+        assert!(text.starts_with("VIEW y=370..1170 of 1170\n"), "{text}");
+        assert!(text.contains("link[27] \"Help\""), "{text}");
+        assert!(!text.contains("radio[10]"), "{text}");
+        assert!(text.contains("MINIMAP\n  y=0..800  "), "{text}");
+    }
+
+    /// The table's last row sat half below the screen in a run: the map held its cells, so the
+    /// model called the task done, and the judge, reading the screenshot, saw the row cut off.
+    #[test]
+    fn a_node_the_screen_cuts_is_marked_so_it_is_scrolled_whole_into_view() {
+        let map = PageMap {
+            nodes: vec![
+                PageNode { id: 1, role: "main".into(), y: 100.0, w: 1000.0, h: 3000.0, ..Default::default() },
+                PageNode { id: 2, role: "text".into(), name: "Carry-on".into(), depth: 1, y: 1700.0, w: 100.0, h: 20.0, ..Default::default() },
+                PageNode { id: 3, role: "cell".into(), name: "20kg (44lb)".into(), depth: 1, x: 443.0, y: 1845.0, w: 168.0, h: 89.0, ..Default::default() },
+            ],
+        };
+        let text = map.text(&Viewport { width: 1254, height: 890, scroll_y: 1000.0, page_height: 3478.0, ..Default::default() });
+        assert!(text.contains("\n  \"Carry-on\"\n  cell[3] \"20kg (44lb)\" @443,1845 168x89 (cut off at the screen's bottom)"), "{text}");
+        assert!(text.contains("\nmain[1] @0,100 1000x3000\n"), "{text}");
+    }
+
+    #[test]
+    fn text_the_browser_cut_short_carries_its_number_for_read() {
+        let map = PageMap {
+            nodes: vec![
+                PageNode { id: 1, role: "text".into(), name: "A whole line".into(), y: 10.0, w: 100.0, h: 10.0, ..Default::default() },
+                PageNode { id: 2, role: "text".into(), name: "A paragraph the browser cut at its limit…".into(), y: 30.0, w: 100.0, h: 10.0, ..Default::default() },
+            ],
+        };
+        let text = map.text(&viewport(0.0));
+        assert!(text.contains("\n\"A whole line\"\n[2] \"A paragraph the browser cut at its limit…\""), "{text}");
     }
 
     #[test]

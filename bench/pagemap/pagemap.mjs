@@ -2,16 +2,23 @@
 // the same logic is written in Swift (app/Sources/App/PageMap.swift). Output is the shape the
 // harness reads (harness/src/page.rs): a flat, depth-first list of nodes.
 //
-// usage: node pagemap.mjs <url|file> ...   → out/<slug>.page.json and out/<slug>.page.txt
+// usage: node pagemap.mjs [--scroll=<px>] <url|file> ...   → out/<slug>.page.json and out/<slug>.page.txt
 // The harness's fixtures (harness/src/fixtures/*.page.json) are its output on pages/*.html.
+// With --scroll the page is scrolled that far down before the capture (out/<slug>-scrolled.*):
+// the boxes are in page coordinates and must come out the same as without.
 
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Playwright from this folder's node_modules, else the global one.
-const { chromium } = (() => { try { return createRequire(import.meta.url)('playwright'); } catch { return createRequire('/opt/node22/lib/node_modules/')('playwright'); } })();
 const here = path.dirname(new URL(import.meta.url).pathname);
+// Playwright from this folder's node_modules, else the kit's, else the global one.
+const { chromium } = (() => {
+  for (const from of [import.meta.url, path.join(here, '../../kit/browser/node_modules/'), '/opt/node22/lib/node_modules/']) {
+    try { return createRequire(from)('playwright'); } catch {}
+  }
+  throw new Error('playwright is not installed here, in kit/browser, or globally');
+})();
 const OUT = path.join(here, 'out');
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -33,6 +40,9 @@ const MAX_NAME = 120;
 const MAX_TEXT = 160;
 
 const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+// A text cut to its limit ends with an ellipsis: the harness numbers such a line, and `read`
+// fetches the whole of it.
+const cut = (s, max) => (s.length <= max ? s : s.slice(0, max - 1) + '…');
 
 /** The snapshot's layout, by backendNodeId: document box, styles, clickable, live values. */
 function layoutIndex(snap) {
@@ -44,21 +54,26 @@ function layoutIndex(snap) {
     (doc.nodes.contentDocumentIndex?.index ?? []).forEach((i, k) => childDoc.set(doc.nodes.backendNodeId[i], snap.strings[snap.documents[doc.nodes.contentDocumentIndex.value[k]].frameId]));
   });
   by.childDoc = childDoc;
-  // Where each child document sits on the page: the box of the iframe element that holds it,
-  // plus its own parent's offset, so a box inside a frame is in page coordinates like any other.
+  // Layout bounds are in the coordinates of the node's own document, wherever that document is
+  // scrolled to (Chromium 154 and Playwright's both): the main document's are page coordinates
+  // as they are. A child document sits where the iframe element that holds it is, less what the
+  // child has scrolled; that offset moves its boxes onto the page.
   const offsets = snap.documents.map(() => [0, 0]);
   snap.documents.forEach((doc, d) => {
     const n = doc.nodes;
     (n.contentDocumentIndex?.index ?? []).forEach((i, k) => {
       const child = n.contentDocumentIndex.value[k];
       const at = doc.layout.nodeIndex.indexOf(i);
-      if (at >= 0) { const [x, y] = doc.layout.bounds[at]; offsets[child] = [offsets[d][0] + x + (doc.scrollOffsetX ?? 0), offsets[d][1] + y + (doc.scrollOffsetY ?? 0)]; }
+      if (at >= 0) {
+        const [x, y] = doc.layout.bounds[at];
+        const inner = snap.documents[child];
+        offsets[child] = [offsets[d][0] + x - (inner.scrollOffsetX ?? 0), offsets[d][1] + y - (inner.scrollOffsetY ?? 0)];
+      }
     });
   });
   snap.documents.forEach((doc, d) => {
     const [ox, oy] = offsets[d];
     const n = doc.nodes;
-    const sx = doc.scrollOffsetX ?? 0, sy = doc.scrollOffsetY ?? 0;
     const clickable = new Set(n.isClickable?.index ?? []);
     const checked = new Set(n.inputChecked?.index ?? []);
     const selected = new Set(n.optionSelected?.index ?? []);
@@ -70,9 +85,7 @@ function layoutIndex(snap) {
       const [x, y, w, h] = L.bounds[k];
       const st = (L.styles[k] ?? []).map((s) => S[s]);
       const entry = {
-        // Layout bounds are relative to the document's own scroll: add the offset to get
-        // page coordinates, the one system every box uses.
-        box: [x + sx + ox, y + sy + oy, w, h], frame: d,
+        box: [x + ox, y + oy, w, h], frame: d,
         display: st[0], visibility: st[1], opacity: st[2], cursor: st[3],
         clickable: clickable.has(i), checked: checked.has(i), selected: selected.has(i),
         value: values.get(i), tag: S[n.nodeName[i]], attrs: attrs(i), frameId: doc.frameId,
@@ -125,7 +138,7 @@ export function buildPageMap(ax, snap, viewport, trees = new Map()) {
 
   const emit = (role, name, l, depth, extra = {}) => {
     const [x, y, w, h] = l?.box ?? [0, 0, 0, 0];
-    nodes.push({ id: ++next, role, name: clean(name).slice(0, role === 'text' ? MAX_TEXT : MAX_NAME), depth, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), frame: l?.frame ?? 0, ...extra });
+    nodes.push({ id: ++next, role, name: cut(clean(name), role === 'text' ? MAX_TEXT : MAX_NAME), depth, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), frame: l?.frame ?? 0, ...extra });
     return nodes[nodes.length - 1];
   };
 
@@ -159,10 +172,10 @@ export function buildPageMap(ax, snap, viewport, trees = new Map()) {
         if ((value === undefined || value === '') && l?.value !== undefined && l.attrs?.type !== 'password') value = l.value;
         const kind = l?.attrs?.type;
         const extra = { states };
-        if (value !== undefined && value !== '' && role !== 'StaticText' && kind !== 'password') extra.value = clean(value).slice(0, MAX_TEXT);
+        if (value !== undefined && value !== '' && role !== 'StaticText' && kind !== 'password') extra.value = cut(clean(value), MAX_TEXT);
         if (kind && role === 'textbox' && kind !== 'text') extra.kind = kind;
         if (role === 'StaticText' || named) {
-          if (name) line = emit('text', name.slice(0, MAX_TEXT), l, depth, {});
+          if (name) line = emit('text', name, l, depth, {});
         } else {
           const hint = CONTROL_ROLES.has(role) && !name ? readableClasses(l?.attrs) : '';
           if (hint) extra.hint = hint;
@@ -192,7 +205,7 @@ export function buildPageMap(ax, snap, viewport, trees = new Map()) {
         stats.clickableDivs--;
       } else if (!line.name) {
         // Name it from its text, as a button would be.
-        line.name = kids.filter((k) => k.role === 'text').map((k) => k.name).join(' ').slice(0, MAX_NAME);
+        line.name = cut(kids.filter((k) => k.role === 'text').map((k) => k.name).join(' '), MAX_NAME);
         nodes.splice(before, kids.length);
       }
     }
@@ -249,11 +262,15 @@ function render(map) {
   return lines.join('\n');
 }
 
-async function run(browser, target) {
+async function run(browser, target, scroll) {
   const url = /^https?:|^file:/.test(target) ? target : 'file://' + path.resolve(target);
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+  if (scroll) {
+    await page.evaluate((y) => window.scrollTo(0, y), scroll);
+    await page.waitForTimeout(100);
+  }
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('DOM.enable'); await cdp.send('Accessibility.enable');
   const m = await page.evaluate(() => ({ width: innerWidth, height: innerHeight, scrollX: scrollX, scrollY: scrollY, pageWidth: document.documentElement.scrollWidth, pageHeight: document.documentElement.scrollHeight, ratio: devicePixelRatio }));
@@ -271,13 +288,15 @@ async function run(browser, target) {
   const t2 = performance.now();
   map.url = page.url(); map.title = await page.title();
   const text = render(map);
-  const slug = (new URL(url).hostname || path.basename(target)).replace(/\W+/g, '_');
+  const slug = (new URL(url).hostname || path.basename(target)).replace(/\W+/g, '_') + (scroll ? '-scrolled' : '');
   fs.writeFileSync(path.join(OUT, `${slug}.page.json`), JSON.stringify(map));
   fs.writeFileSync(path.join(OUT, `${slug}.page.txt`), text);
   console.log(JSON.stringify({ url, fetchMs: Math.round(t1 - t0), buildMs: Math.round(t2 - t1), nodes: map.nodes.length, textKb: Math.round(Buffer.byteLength(text) / 102.4) / 10, jsonKb: Math.round(Buffer.byteLength(JSON.stringify(map)) / 102.4) / 10, ...map.stats }));
   await page.close();
 }
 
+const args = process.argv.slice(2);
+const scroll = Number((args.find((a) => a.startsWith('--scroll=')) ?? '--scroll=0').slice('--scroll='.length));
 const browser = await chromium.launch({ ...(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : {}) });
-for (const t of process.argv.slice(2)) await run(browser, t).catch((e) => console.log(JSON.stringify({ url: t, error: String(e).slice(0, 200) })));
+for (const t of args.filter((a) => !a.startsWith('--'))) await run(browser, t, scroll).catch((e) => console.log(JSON.stringify({ url: t, error: String(e).slice(0, 200) })));
 await browser.close();

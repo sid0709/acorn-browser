@@ -24,6 +24,9 @@ final class AgentDriver {
     nonisolated static let settleCap = 5.0
     nonisolated static let scrollSettleCap = 1.0
     nonisolated private static let openCap = 30.0
+    /// How long a navigation may take to start showing a new document before the look goes on
+    /// with the old one (a download, a link that goes nowhere).
+    nonisolated private static let navigationWait = 10.0
     nonisolated private static let maxWaitMs = 30_000.0
     /// The version of the line protocol this driver speaks; the runner checks it on connecting.
     nonisolated private static let protocolVersion = 4
@@ -46,8 +49,12 @@ final class AgentDriver {
     private var view: ChromiumBrowserView { model.view }
     private var notes: [String] = []
     private var zoneShots: [[String: Any]] = []
-    /// The page's requests not yet answered, by request id, with when each was sent.
-    private var inFlight: [String: Date] = [:]
+    /// The page's requests not yet answered that can still fill it, by request id, with when
+    /// each was sent and what for.
+    private var inFlight: [String: (at: Date, url: String)] = [:]
+    /// How many navigations the browser has reported, to tell a new document from the one
+    /// before it, which is settled as it was while the new one is still on its way.
+    private var navigations = 0
     /// The file picker the page opened and the browser intercepted, until an upload takes it.
     private var chooser: [String: Any]?
     /// What the page is dragging, once a drag of the agent's became one of the page's own.
@@ -155,12 +162,19 @@ final class AgentDriver {
     private func event(_ method: String, _ params: [String: Any]) {
         switch method {
         case "Network.requestWillBeSent":
-            // A socket or an event stream stays open on purpose; it is not loading.
+            guard let id = params["requestId"] as? String else { return }
+            // The document being navigated to always holds a look; so does a request that can
+            // still fill the page (see `fills`).
+            let navigation = (params["loaderId"] as? String) == id
             let type = params["type"] as? String ?? ""
-            if type == "WebSocket" || type == "EventSource" { return }
-            if let id = params["requestId"] as? String { inFlight[id] = Date() }
+            let url = (params["request"] as? [String: Any])?["url"] as? String ?? ""
+            if navigation || Self.fills(type: type, url: url, page: view.currentURL) { inFlight[id] = (Date(), url) }
         case "Network.loadingFinished", "Network.loadingFailed":
             if let id = params["requestId"] as? String { inFlight.removeValue(forKey: id) }
+        case "Page.frameNavigated":
+            if (params["frame"] as? [String: Any])?["parentId"] == nil { navigations += 1 }
+        case "Page.navigatedWithinDocument":
+            navigations += 1
         case "Page.fileChooserOpened":
             chooser = params
         case "Input.dragIntercepted":
@@ -173,8 +187,42 @@ final class AgentDriver {
     /// Whether the page is waiting on a request, leaving out those open for too long.
     private var loading: Bool {
         let now = Date()
-        inFlight = inFlight.filter { now.timeIntervalSince($0.value) < Self.staleRequest }
+        inFlight = inFlight.filter { now.timeIntervalSince($0.value.at) < Self.staleRequest }
         return !inFlight.isEmpty
+    }
+
+    /// The open requests in a few words, for a note on a page that would not settle.
+    private var openRequests: String {
+        let sample = inFlight.values.prefix(2).map { String($0.url.prefix(80)) }.joined(separator: ", ")
+        return "\(inFlight.count) of its own requests were still open (\(sample))"
+    }
+
+    /// Whether a request is one a look waits for: the page's own site's document, data or
+    /// script, which can still fill the page. A font, a picture, a style, a pixel, a socket, or
+    /// anything a third party serves (a tag manager, a chat widget, a captcha) cannot, and a page
+    /// may go on loading those for a minute after a person could read it.
+    nonisolated static func fills(type: String, url: String, page: String) -> Bool {
+        guard ["Document", "XHR", "Fetch", "Script"].contains(type) else { return false }
+        let site = Self.site(of: page)
+        return !site.isEmpty && Self.site(of: url) == site
+    }
+
+    /// The last two labels of a URL's host (`qatarairways.com`): the site as a person names it,
+    /// whichever of its hosts serves the request.
+    nonisolated static func site(of url: String) -> String {
+        let host = (URL(string: url)?.host ?? "").lowercased()
+        return host.split(separator: ".").suffix(2).joined(separator: ".")
+    }
+
+    /// Waits for the browser to report a navigation past `mark`, within `cap` seconds: until it
+    /// comes, the document is still the old one, settled as it was. False when none came.
+    private func navigated(past mark: Int, within cap: Double) async -> Bool {
+        let started = Date()
+        while navigations <= mark {
+            if Date().timeIntervalSince(started) >= cap { return false }
+            try? await Task.sleep(for: .milliseconds(Self.pollMs))
+        }
+        return true
     }
 
     nonisolated private static func cut(_ text: String, _ max: Int) -> String {
@@ -338,11 +386,16 @@ final class AgentDriver {
         return rep.representation(using: .jpeg, properties: [.compressionFactor: Double(jpegQuality) / 100])?.base64EncodedString()
     }
 
-    /// Waits until the page has settled: no change to its DOM for a quarter second, no request
-    /// of the page's still open, and the document loaded, within `cap` seconds. A menu still
-    /// opening or a list still filling is not what the model should plan from.
-    func settled(cap: Double = AgentDriver.settleCap) async {
+    /// Waits until the page has settled: its document parsed, no change to its DOM for a quarter
+    /// second, and none of its own requests that can still fill it open, within `cap` seconds.
+    /// A menu still opening or a list still filling is not what the model should plan from. The
+    /// load event is not waited for: a page goes on loading fonts, pixels and third-party
+    /// scripts long after a person could read it.
+    /// Returns what still held the page when the cap ran out, or nothing when it settled.
+    @discardableResult
+    func settled(cap: Double = AgentDriver.settleCap) async -> String {
         let started = Date()
+        var held = ""
         while Date().timeIntervalSince(started) < cap {
             let left = min(max(cap - Date().timeIntervalSince(started), Self.quietMs / 1000), Self.maxQuietWait)
             let quiet = (try? await evaluate("""
@@ -359,15 +412,44 @@ final class AgentDriver {
               observer.observe(document, { childList: true, subtree: true, attributes: true, characterData: true });
             })
             """) as? Bool) ?? true
-            let ready = ((try? await evaluate("document.readyState === 'complete'")) as? Bool) ?? false
-            if quiet && ready && !view.isLoading && !loading { return }
+            let parsed = ((try? await evaluate("document.readyState !== 'loading'")) as? Bool) ?? false
+            let open = loading ? inFlight.count : 0
+            if quiet && parsed && open == 0 { return "" }
+            held = [parsed ? nil : "its document was still being parsed", open > 0 ? openRequests : nil, quiet ? nil : "its content kept changing"].compactMap { $0 }.joined(separator: ", ")
             try? await Task.sleep(for: .milliseconds(150))
+        }
+        return held
+    }
+
+    /// Waits for the new document a navigation brings, then for it to settle, and tells the
+    /// model when either took longer than its cap: what it then sees is a page still on its way.
+    private func settledAfterNavigation(past mark: Int) async {
+        let started = Date()
+        let came = await navigated(past: mark, within: Self.navigationWait)
+        if !came { notes.append("The browser reported no new document within \(Int(Self.navigationWait)) s of the navigation.") }
+        let held = await settled(cap: Self.openCap)
+        if !held.isEmpty {
+            notes.append("The page had not settled \(Int(Date().timeIntervalSince(started))) s after the navigation: \(held).")
         }
     }
 
-    private func scrollTo(_ y: Double) async throws {
-        _ = try await evaluate("window.scrollTo(window.scrollX, \(y))")
+    /// Scrolls the page to `y` and says where it is afterwards. The scrolling element is moved
+    /// by its own position, since a page may put a function of its own in `window.scrollTo`
+    /// (Qatar Airways does, and the page then stays where it was); the page's smooth scrolling is
+    /// off for the jump, so the position is reached at once.
+    @discardableResult
+    private func scrollTo(_ y: Double) async throws -> Double {
+        _ = try await evaluate("""
+        (() => {
+          const root = document.documentElement, box = document.scrollingElement || root;
+          const was = root.style.scrollBehavior;
+          root.style.scrollBehavior = 'auto';
+          box.scrollTop = \(y);
+          root.style.scrollBehavior = was;
+        })()
+        """)
         await settled(cap: Self.scrollSettleCap)
+        return number(try await metrics()["scrollY"])
     }
 
     /// The focused element, following the focus into embedded frames. A frame of another site
@@ -477,6 +559,7 @@ final class AgentDriver {
     }
 
     private func open(_ url: String) async {
+        let mark = navigations
         do {
             let result = try await call("Page.navigate", ["url": url])
             if let error = result["errorText"] as? String {
@@ -485,7 +568,7 @@ final class AgentDriver {
         } catch {
             notes.append("The page did not finish loading: \(error)")
         }
-        await settled(cap: Self.openCap)
+        await settledAfterNavigation(past: mark)
     }
 
     private func observe(survey: Bool, focusYs: [Double], settledSpans: [[String: Any]]) async throws -> [String: Any] {
@@ -564,7 +647,7 @@ final class AgentDriver {
             }
             do {
                 if let target = action["scrollTo"] as? NSNumber {
-                    var m = try await metrics()
+                    let m = try await metrics()
                     let pageHeight = number(action["pageHeight"])
                     // A page that grew below the point (a list that loaded more) still has the
                     // point where it was measured; one that shrank may not.
@@ -572,10 +655,9 @@ final class AgentDriver {
                         throw ActionFailure(message: "the page is \(Int(number(m["pageHeight"]))) px tall now and was \(Int(pageHeight)) px when the point was measured")
                     }
                     if abs(number(m["scrollY"]) - target.doubleValue) > 1 {
-                        try await scrollTo(target.doubleValue)
-                        m = try await metrics()
-                        if abs(number(m["scrollY"]) - target.doubleValue) > 1 {
-                            throw ActionFailure(message: "the page could not be scrolled to \(Int(target.doubleValue)) px, where the point was measured; it is at \(Int(number(m["scrollY"]))) px")
+                        let now = try await scrollTo(target.doubleValue)
+                        if abs(now - target.doubleValue) > 1 {
+                            throw ActionFailure(message: "the page could not be scrolled to \(Int(target.doubleValue)) px, where the point was measured; it is at \(Int(now)) px")
                         }
                     }
                 }
@@ -672,9 +754,17 @@ final class AgentDriver {
                 try await tap(press)
             }
         case "scroll":
-            // Straight to a height of the page, as DOM mode asks.
+            // Straight to a height of the page, as DOM mode asks: as far as the page goes, and
+            // where it ended up is measured, so a page that would not move is reported, not
+            // assumed scrolled.
             if let to = action["to"] as? NSNumber {
-                try await scrollTo(to.doubleValue)
+                let m = try await metrics()
+                let before = number(m["scrollY"])
+                let wanted = min(max(to.doubleValue, 0), max(0, number(m["pageHeight"]) - number(m["height"])))
+                let now = try await scrollTo(wanted)
+                if abs(now - wanted) > 2 {
+                    throw ActionFailure(message: "the page could not be scrolled to \(Int(wanted)) px; it is at \(Int(now)) px", unreached: abs(now - before) <= 2)
+                }
                 return [:]
             }
             let m = try await metrics()
@@ -699,8 +789,9 @@ final class AgentDriver {
             await settled()
             return detail
         case "back":
+            let mark = navigations
             view.goBack()
-            await settled(cap: Self.openCap)
+            await settledAfterNavigation(past: mark)
             return [:]
         case let kind:
             throw ActionFailure(message: "the browser cannot do an action of kind \(kind ?? "(none)")")

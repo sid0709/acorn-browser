@@ -20,11 +20,11 @@ The map lists the page from top to bottom, as the browser knows it: every contro
 
     role[number] "name" value="..." states class=... @x,y wxh
 
-- The role says what the node is: link, button, textbox, searchbox, combobox, checkbox, radio, option, tab, heading, radiogroup, list, frame (an embedded page; its own nodes are indented under it), clickable (something the page handles a click on that has no role of its own), and so on. A line in quotes alone is plain text.
+- The role says what the node is: link, button, textbox, searchbox, combobox, checkbox, radio, option, tab, heading, radiogroup, list, frame (an embedded page; its own nodes are indented under it), clickable (something the page handles a click on that has no role of its own), and so on. A line in quotes alone is plain text; one that ends with … was cut short by the map and carries its number, for "read".
 - The number is how you name the node in an action. It belongs to this map only: the next map numbers the page afresh, so never reuse a number from an earlier step.
 - The name is the control's own: its label, its alt text, its aria-label, or the text on it.
 - value is what a control holds now: the text typed, the option chosen. The states are live: checked, selected, expanded, disabled, required, invalid, focused, level=2 for a heading.
-- @x,y wxh is the node's box in page pixels from the page's top left (its width and height after). The part marked VIEW y=a..b is what is on the screen now; the MINIMAP below it sums up the rest of the page, one line per screen's worth, with how many controls each holds and some of their names. To act on something in the minimap, scroll there first (a scroll to that height, or a scroll with that node's number); it then appears in view with its lines.
+- @x,y wxh is the node's box in page pixels from the page's top left (its width and height after). The part marked VIEW y=a..b is what is on the screen now; the MINIMAP below it sums up the rest of the page, one line per screen's worth, with how many controls each holds and some of their names. To act on something in the minimap, scroll there first (a scroll to that height, or a scroll with that node's number); it then appears in view with its lines. A line marked (cut off at the screen's bottom) or (cut off at the screen's top) is only partly on the screen: when it holds what the task asks for, scroll so it shows whole before you report done.
 - A select's options are listed under it with no box; choose one with "choose", not with a click.
 - The focus information and the results of your last actions, beside the map, say what the map cannot: which control has the keyboard, and what each action changed in its control (checked: false → true, value: "" → "laptop").
 
@@ -87,7 +87,7 @@ Name the node an action acts on by its "target": its number on this map. The bro
 - key: "keys", one key or chord, or several separated by spaces: "Enter", "Tab", "Escape", "ArrowDown", "Control+a".
 - scroll: "to", a height of the page in pixels from its top (the minimap's bands say which), or "target", a node to bring into view; "dx" and "dy" null.
 - upload: "target", the control that opens a file picker, and "resource", the id of one of the person's files below (null lets the harness choose). Use upload, never click, for anything that takes a file from the computer. Only a file from this computer counts; never use an online file source.
-- read: "target", for the whole text of a node the map cut short (a long paragraph, a table cell): the result of the action carries it, and you read it with your next look. Use it when the task asks for a detail the map's line does not hold whole.
+- read: "target", for the whole text of a node the map cut short (a line ending with …: a long paragraph, a table cell, a long name): the result of the action carries it, and you read it with your next look. Use it when the task asks for a detail the map's line does not hold whole.
 - drag: "path", two or more points [{"x", "y"}, ...] in screen pixels (page pixels less the view's top), for a slider's knob or a card to another column; "label" what is taken hold of; "modifiers" as for a click, or null.
 - wait: "ms", up to 30000.
 - navigate: "url", a whole web address starting with https://. Use it to reach another site, or a page of this one that no link in view leads to: when the task names a site or a service, go to its address first, and do not look for it from the page you are on. Not for a page a visible link opens: click the link.
