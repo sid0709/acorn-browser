@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Drives the running app over its agent socket, with the kit's protocol, and checks the results.
 
-    scripts/build.sh run          # start the app first; allow it under Accessibility when asked
-    Tests/agent_smoke.py          # and keep the hands off the mouse while it runs
+    scripts/build.sh run          # start the app first
+    Tests/agent_smoke.py
 
 Exits 0 when every check passed.
 """

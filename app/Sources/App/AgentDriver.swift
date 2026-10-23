@@ -46,6 +46,8 @@ final class AgentDriver {
     private var inFlight: [String: Date] = [:]
     /// The file picker the page opened and the browser intercepted, until an upload takes it.
     private var chooser: [String: Any]?
+    /// What the page is dragging, once a drag of the agent's became one of the page's own.
+    private var dragData: [String: Any]?
     /// Whether the DevTools domains this driver listens to are on for the current browser.
     private var domainsOn = false
     private var attached = false
@@ -100,16 +102,19 @@ final class AgentDriver {
         guard attached else { return }
         attached = false
         await releaseHeld()
-        view.restoreKeyboard()
+        view.releasePointer()
+        view.showPointer(false)
         view.dialogHandler = nil
         view.downloadHandler = nil
         view.blockedPopupHandler = nil
         if domainsOn {
             _ = try? await call("Page.setInterceptFileChooserDialog", ["enabled": false])
+            _ = try? await call("Input.setInterceptDrags", ["enabled": false])
         }
         domainsOn = false
         inFlight.removeAll()
         chooser = nil
+        dragData = nil
     }
 
     private func enableDomains() async {
@@ -119,6 +124,9 @@ final class AgentDriver {
             _ = try await call("Page.enable")
             _ = try await call("DOM.enable")
             _ = try await call("Page.setInterceptFileChooserDialog", ["enabled": true])
+            // A page's own drag (a card to another column) would otherwise become a drag of
+            // the system's, which follows the person's mouse, not the agent's pointer.
+            _ = try await call("Input.setInterceptDrags", ["enabled": true])
             domainsOn = true
         } catch {
             // Without a browser yet (the window is still opening) there is nothing to enable;
@@ -138,6 +146,8 @@ final class AgentDriver {
             if let id = params["requestId"] as? String { inFlight.removeValue(forKey: id) }
         case "Page.fileChooserOpened":
             chooser = params
+        case "Input.dragIntercepted":
+            dragData = params["data"] as? [String: Any]
         default:
             break
         }
@@ -426,12 +436,8 @@ final class AgentDriver {
     private func act(_ actions: [[String: Any]]) async -> [[String: Any]] {
         var results: [[String: Any]] = []
         var stopped: String?
-        if !ChromiumBrowserView.canSendInput(true) {
-            stopped = "the app may not control the mouse and keyboard: allow Acorn Browser under System Settings > Privacy & Security > Accessibility"
-        } else {
-            view.takeFront()
-            view.useLatinKeyboard()
-        }
+        view.takeFront()
+        view.showPointer(true)
         for (index, action) in actions.enumerated() {
             let id = action["id"] as? String ?? ""
             if let stopped {
@@ -578,7 +584,7 @@ final class AgentDriver {
     }
 
     private func offScreen() -> ActionFailure {
-        ActionFailure(message: "the browser window is not on screen, so the mouse cannot reach the page")
+        ActionFailure(message: "the page is not in a window, so the pointer cannot reach it")
     }
 
     private func move(_ x: Double, _ y: Double, flags: CGEventFlags = []) async throws {
@@ -608,6 +614,8 @@ final class AgentDriver {
     /// the last: a stroke, a sweep, or something carried to where it is dropped.
     private func drag(_ path: [(x: Double, y: Double)], flags: CGEventFlags) async throws {
         try await hold(flags)
+        dragData = nil
+        var carrying = false
         try await move(path[0].x, path[0].y, flags: flags)
         await pause(Self.pressMs)
         try await button(.left, down: true, path[0].x, path[0].y, count: 1, flags: flags)
@@ -621,12 +629,36 @@ final class AgentDriver {
             let moves = max(1, Int((distance(dx, dy) / step).rounded(.up)))
             for i in 1...moves {
                 let f = Double(i) / Double(moves)
-                try await move(pair.0.x + dx * f, pair.0.y + dy * f, flags: flags)
+                let (x, y) = (pair.0.x + dx * f, pair.0.y + dy * f)
+                if let data = dragData {
+                    // The page took the drag over (something draggable): from here it is told
+                    // where its item is, through the browser, as the system would tell it.
+                    try await dragEvent(carrying ? "dragOver" : "dragEnter", x, y, data, flags)
+                    carrying = true
+                    await pause(Self.moveMs)
+                } else {
+                    try await move(x, y, flags: flags)
+                }
             }
         }
         await pause(Self.pressMs)
-        try await button(.left, down: false, path.last!.x, path.last!.y, count: 1, flags: flags)
+        if let data = dragData {
+            try await dragEvent(carrying ? "drop" : "dragCancel", path.last!.x, path.last!.y, data, flags)
+            dragData = nil
+            view.releasePointer()
+        } else {
+            try await button(.left, down: false, path.last!.x, path.last!.y, count: 1, flags: flags)
+        }
         await releaseHeld()
+    }
+
+    private func dragEvent(_ type: String, _ x: Double, _ y: Double, _ data: [String: Any], _ flags: CGEventFlags) async throws {
+        var modifiers = 0
+        if flags.contains(.maskAlternate) { modifiers |= 1 }
+        if flags.contains(.maskControl) { modifiers |= 2 }
+        if flags.contains(.maskCommand) { modifiers |= 4 }
+        if flags.contains(.maskShift) { modifiers |= 8 }
+        _ = try await call("Input.dispatchDragEvent", ["type": type, "x": x, "y": y, "data": data, "modifiers": modifiers])
     }
 
     /// Turns the wheel at the point, a turn at a time, until the distance is covered.
@@ -647,7 +679,7 @@ final class AgentDriver {
     private func hold(_ flags: CGEventFlags) async throws {
         for key in KeyPress.modifierKeys(flags) where !held.contains(key) {
             heldFlags.insert(KeyPress.flag(of: key))
-            guard view.keyCode(key, down: true, flags: heldFlags, characters: nil) else { throw offScreen() }
+            guard view.keyCode(key, down: true, flags: heldFlags, characters: "", unmodified: "") else { throw offScreen() }
             held.append(key)
             await pause(Self.keyMs)
         }
@@ -657,7 +689,7 @@ final class AgentDriver {
     private func releaseHeld() async {
         for key in held.reversed() {
             heldFlags.remove(KeyPress.flag(of: key))
-            _ = view.keyCode(key, down: false, flags: heldFlags, characters: nil)
+            _ = view.keyCode(key, down: false, flags: heldFlags, characters: "", unmodified: "")
             await pause(Self.keyMs)
         }
         held.removeAll()
@@ -668,9 +700,9 @@ final class AgentDriver {
     private func tap(_ press: KeyPress) async throws {
         try await hold(press.flags)
         let flags = press.flags.union(heldFlags)
-        guard view.keyCode(press.keyCode, down: true, flags: flags, characters: press.text) else { throw offScreen() }
+        guard view.keyCode(press.keyCode, down: true, flags: flags, characters: press.characters, unmodified: press.unmodified) else { throw offScreen() }
         await pause(Self.keyMs)
-        _ = view.keyCode(press.keyCode, down: false, flags: flags, characters: press.text)
+        _ = view.keyCode(press.keyCode, down: false, flags: flags, characters: press.characters, unmodified: press.unmodified)
         await pause(Self.afterKeyMs)
         await releaseHeld()
     }

@@ -16,4 +16,6 @@ void BrowserClosed();
 @interface ChromiumBrowserView (Internal)
 /// Gives the page keyboard focus, whatever has it now.
 - (void)cef_focusPage;
+/// Keeps the agent's pointer drawn above the page, after a subview joined.
+- (void)cef_keepPointerOnTop;
 @end

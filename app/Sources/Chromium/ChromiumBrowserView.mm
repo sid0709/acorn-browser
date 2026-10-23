@@ -632,6 +632,7 @@ class BrowserClient : public CefClient,
   [super didAddSubview:subview];
   subview.frame = self.bounds;
   subview.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+  [self cef_keepPointerOnTop];
 }
 
 - (void)resizeSubviewsWithOldSize:(NSSize)oldSize {

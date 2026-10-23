@@ -151,25 +151,23 @@ NS_SWIFT_UI_ACTOR
 /// may open it in this tab.
 @property (nonatomic, copy, nullable) void (^blockedPopupHandler)(NSString *url);
 
-#pragma mark Real input
+#pragma mark The agent's own pointer and keyboard
 
-/// Whether the app may post mouse and keyboard events to the system (the Accessibility
-/// permission). With `ask`, macOS shows the person the prompt to allow it once.
-+ (BOOL)canSendInput:(BOOL)ask;
+/// Input for the agent that is real to the page and invisible to the system: the events are
+/// built as the system builds them from the hardware (NSEvent) and handed to Chromium's view
+/// the way the window hands them over, so the page sees a person's click, drag or key, while
+/// the person's own mouse and keyboard are left alone. The agent's pointer is drawn on the
+/// page as an arrow of its own. Points are CSS pixels of the page, from its top left.
 
-/// Brings the window to the front and gives the page the keyboard: what the real events
-/// below need, since they go to whatever is under the pointer and in front.
+/// Brings the window on screen and gives the page the keyboard, without taking the person's
+/// focus from another app.
 - (void)takeFront;
 
-/// Switches to a Latin keyboard layout while the agent types (a Korean or Japanese input
-/// source would turn its keys into other characters), and back when it is done.
-- (void)useLatinKeyboard;
-- (void)restoreKeyboard;
+/// Shows the agent's pointer on the page, or hides it.
+- (void)showPointer:(BOOL)shown;
 
-/// The events a person's mouse would send, posted to the system as if from the hardware: the
-/// pointer really moves, and the page gets them the way it gets any click. Points are CSS pixels
-/// of the page, from its top left. `flags` are the modifier keys held meanwhile. Each returns
-/// NO when the view is not on screen.
+/// Moves the pointer to the point: a move, or a drag while a button is held. `flags` are the
+/// modifier keys held meanwhile. Returns NO when the view is not in a window.
 - (BOOL)pointerMoveToX:(double)x y:(double)y flags:(CGEventFlags)flags
     NS_SWIFT_NAME(pointerMove(toX:y:flags:));
 - (BOOL)pointerButton:(ChromiumMouseButton)button
@@ -178,16 +176,22 @@ NS_SWIFT_UI_ACTOR
                     y:(double)y
            clickCount:(NSInteger)clickCount
                 flags:(CGEventFlags)flags NS_SWIFT_NAME(pointerButton(_:down:x:y:clickCount:flags:));
-/// One turn of the wheel at the pointer: positive deltas scroll right and down, in pixels.
+/// Forgets a held button without an event, when the page took the drag over as a drop.
+- (void)releasePointer;
+/// One turn of the wheel at the point: positive deltas scroll right and down, in pixels.
 - (BOOL)wheelAtX:(double)x y:(double)y deltaX:(double)deltaX deltaY:(double)deltaY flags:(CGEventFlags)flags
     NS_SWIFT_NAME(wheel(atX:y:deltaX:deltaY:flags:));
 
-/// A key going down or up, by its macOS virtual key code, with the characters it types (nil
-/// for a key that types none) and the modifier keys held.
-- (BOOL)keyCode:(CGKeyCode)keyCode down:(BOOL)down flags:(CGEventFlags)flags characters:(nullable NSString *)characters
-    NS_SWIFT_NAME(keyCode(_:down:flags:characters:));
+/// A key going down or up, by its macOS virtual key code, with the characters the key event
+/// carries (as modified, and without the modifiers) and the modifier keys held. A modifier
+/// key's own code (Shift, Command, ...) makes a flags-changed event.
+- (BOOL)keyCode:(CGKeyCode)keyCode
+           down:(BOOL)down
+          flags:(CGEventFlags)flags
+     characters:(NSString *)characters
+     unmodified:(NSString *)unmodified NS_SWIFT_NAME(keyCode(_:down:flags:characters:unmodified:));
 
-/// Hands the focused control text as an input method would when it commits a composition: how
+/// Hands the focused control text as an input method does when it commits a composition: how
 /// characters a keyboard cannot type (Chinese, say) arrive. NO when nothing takes text.
 - (BOOL)insertText:(NSString *)text;
 

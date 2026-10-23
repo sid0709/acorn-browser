@@ -6,6 +6,10 @@ import Foundation
 struct KeyPress {
     var flags: CGEventFlags
     var keyCode: CGKeyCode
+    /// The characters the key event carries, as the modifiers make them ("A" for Shift and a,
+    /// a function-key character for an arrow), and without the modifiers ("a").
+    var characters: String
+    var unmodified: String
     /// The character the key types, when it types one and no Control or Command is held.
     var text: String?
 
@@ -26,24 +30,27 @@ struct KeyPress {
     static let optionKey: CGKeyCode = 58
     static let commandKey: CGKeyCode = 55
 
-    private static let named: [String: (keyCode: CGKeyCode, text: String?)] = [
-        "Enter": (36, "\r"),
-        "Tab": (48, "\t"),
-        "Escape": (53, nil),
-        "Backspace": (51, nil),
-        "Delete": (117, nil),
-        "Space": (49, " "),
-        "ArrowLeft": (123, nil),
-        "ArrowUp": (126, nil),
-        "ArrowRight": (124, nil),
-        "ArrowDown": (125, nil),
-        "Home": (115, nil),
-        "End": (119, nil),
-        "PageUp": (116, nil),
-        "PageDown": (121, nil),
-        "F1": (122, nil), "F2": (120, nil), "F3": (99, nil), "F4": (118, nil),
-        "F5": (96, nil), "F6": (97, nil), "F7": (98, nil), "F8": (100, nil),
-        "F9": (101, nil), "F10": (109, nil), "F11": (103, nil), "F12": (111, nil),
+    /// Each named key: its code, the characters its event carries (the function-key characters
+    /// of the system for the keys that type nothing), and whether it types them.
+    private static let named: [String: (keyCode: CGKeyCode, characters: String, types: Bool)] = [
+        "Enter": (36, "\r", true),
+        "Tab": (48, "\t", true),
+        "Escape": (53, "\u{1B}", false),
+        "Backspace": (51, "\u{7F}", false),
+        "Delete": (117, "\u{F728}", false),
+        "Space": (49, " ", true),
+        "ArrowLeft": (123, "\u{F702}", false),
+        "ArrowUp": (126, "\u{F700}", false),
+        "ArrowRight": (124, "\u{F703}", false),
+        "ArrowDown": (125, "\u{F701}", false),
+        "Home": (115, "\u{F729}", false),
+        "End": (119, "\u{F72B}", false),
+        "PageUp": (116, "\u{F72C}", false),
+        "PageDown": (121, "\u{F72D}", false),
+        "F1": (122, "\u{F704}", false), "F2": (120, "\u{F705}", false), "F3": (99, "\u{F706}", false),
+        "F4": (118, "\u{F707}", false), "F5": (96, "\u{F708}", false), "F6": (97, "\u{F709}", false),
+        "F7": (98, "\u{F70A}", false), "F8": (100, "\u{F70B}", false), "F9": (101, "\u{F70C}", false),
+        "F10": (109, "\u{F70D}", false), "F11": (103, "\u{F70E}", false), "F12": (111, "\u{F70F}", false),
     ]
 
     private static let aliases: [String: String] = [
@@ -102,7 +109,9 @@ struct KeyPress {
         let name = aliases[last.lowercased()] ?? last
         let press: KeyPress
         if let entry = named[name] {
-            press = KeyPress(flags: flags, keyCode: entry.keyCode, text: entry.text)
+            let types = entry.types && flags.isDisjoint(with: [.maskControl, .maskCommand])
+            press = KeyPress(flags: flags, keyCode: entry.keyCode, characters: entry.characters,
+                             unmodified: entry.characters, text: types ? entry.characters : nil)
         } else {
             guard last.count == 1, let character = last.first else { throw ParseError.unknown(last) }
             press = try KeyPress(character: character, flags: flags)
@@ -113,9 +122,11 @@ struct KeyPress {
         return press
     }
 
-    init(flags: CGEventFlags, keyCode: CGKeyCode, text: String?) {
+    init(flags: CGEventFlags, keyCode: CGKeyCode, characters: String, unmodified: String, text: String?) {
         self.flags = flags
         self.keyCode = keyCode
+        self.characters = characters
+        self.unmodified = unmodified
         self.text = text
     }
 
@@ -135,8 +146,15 @@ struct KeyPress {
         guard let keyCode = Self.plain[base] else { throw ParseError.unknown(String(character)) }
         self.flags = flags
         self.keyCode = keyCode
-        // Control and Command chords type nothing.
+        self.unmodified = String(base)
+        // Control and Command chords type nothing; with Control a letter's event carries the
+        // control character, as the keyboard sends it.
         let types = flags.isDisjoint(with: [.maskControl, .maskCommand])
+        if flags.contains(.maskControl), let ascii = base.asciiValue, base.isLetter {
+            self.characters = String(Character(UnicodeScalar(ascii - 96)))
+        } else {
+            self.characters = String(character)
+        }
         self.text = types ? String(character) : nil
     }
 
