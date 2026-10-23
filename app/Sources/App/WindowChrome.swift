@@ -1,43 +1,93 @@
 import SwiftUI
 import AppKit
 
-/// Close, minimize and zoom, drawn and wired by hand.
-///
-/// The system's own buttons are asked for (`.windowStyle(.hiddenTitleBar)`) but do not paint on
-/// this build of macOS: the `NSWindow` reports them present, unhidden, fully opaque and
-/// correctly framed, yet nothing draws and Accessibility finds none — a compositor bug outside
-/// this app's window code, not something more AppKit calls fix. These are working stand-ins.
-struct WindowControls: View {
-    @State private var hovering = false
+/// Puts the system's own close, minimize and zoom buttons where the window's header wants
+/// them, and keeps them there. The window has no title bar of its own (`.hiddenTitleBar`), so
+/// the buttons would sit high in the corner; this makes the transparent title bar as tall as
+/// the header row and centers them in it, keeping the system's spacing. AppKit lays the title
+/// bar out again on resize, on leaving full screen and on key changes, so it is redone then.
+/// The buttons hide where the header they belong to is put away (a hidden sidebar).
+struct WindowConfigurator: NSViewRepresentable {
+    var headerHeight: CGFloat = WindowConfigurator.headerHeight
+    var buttonsVisible = true
 
-    var body: some View {
-        HStack(spacing: 8) {
-            light(color: Color(red: 1.00, green: 0.37, blue: 0.34), glyph: "xmark") {
-                NSApp.keyWindow?.performClose(nil)
-            }
-            light(color: Color(red: 1.00, green: 0.74, blue: 0.18), glyph: "minus") {
-                NSApp.keyWindow?.miniaturize(nil)
-            }
-            light(color: Color(red: 0.16, green: 0.78, blue: 0.25), glyph: "plus") {
-                NSApp.keyWindow?.zoom(nil)
-            }
-        }
-        .onHover { hovering = $0 }
+    /// The height of the header rows the buttons sit in (the sidebar's top row, the tab row).
+    static let headerHeight: CGFloat = 44
+    /// The close button's left edge, from the window's.
+    static let leading: CGFloat = 16
+    /// The room the three buttons take, with a margin, for the header to leave clear.
+    static let reserved: CGFloat = 78
+
+    func makeNSView(context: Context) -> ConfiguratorView { ConfiguratorView() }
+
+    func updateNSView(_ view: ConfiguratorView, context: Context) {
+        view.headerHeight = headerHeight
+        view.buttonsVisible = buttonsVisible
+        view.place()
     }
 
-    private func light(color: Color, glyph: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            ZStack {
-                Circle().fill(color)
-                if hovering {
-                    Image(systemName: glyph)
-                        .font(.system(size: 7, weight: .heavy))
-                        .foregroundStyle(Color.black.opacity(0.5))
-                }
+    final class ConfiguratorView: NSView {
+        var headerHeight = WindowConfigurator.headerHeight
+        var buttonsVisible = true
+        /// The system's distance from one button to the next, read before moving them.
+        private var spacing: CGFloat?
+        private var observers: [NSObjectProtocol] = []
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers = []
+            guard let window else { return }
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.styleMask.insert(.fullSizeContentView)
+            let names: [Notification.Name] = [
+                NSWindow.didResizeNotification, NSWindow.didExitFullScreenNotification,
+                NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+            ]
+            for name in names {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    self?.place()
+                })
             }
-            .frame(width: 12, height: 12)
+            DispatchQueue.main.async { [weak self] in self?.place() }
         }
-        .buttonStyle(.plain)
+
+        deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+
+        func place() {
+            guard let window, !window.styleMask.contains(.fullScreen),
+                  let close = window.standardWindowButton(.closeButton),
+                  let minimize = window.standardWindowButton(.miniaturizeButton),
+                  let zoom = window.standardWindowButton(.zoomButton),
+                  let titlebar = close.superview, let container = titlebar.superview else { return }
+            if spacing == nil { spacing = minimize.frame.minX - close.frame.minX }
+            let step = spacing ?? 20
+
+            // The title bar's container, as tall as the header and pinned to the window's top.
+            var frame = container.frame
+            frame.size.height = headerHeight
+            frame.origin.y = window.frame.height - headerHeight
+            container.frame = frame
+            titlebar.frame = container.bounds
+
+            for (index, button) in [close, minimize, zoom].enumerated() {
+                button.isHidden = !buttonsVisible
+                button.setFrameOrigin(NSPoint(
+                    x: WindowConfigurator.leading + CGFloat(index) * step,
+                    y: ((headerHeight - button.frame.height) / 2).rounded()))
+            }
+        }
+    }
+}
+
+/// Leaves room in a header row for the window's buttons.
+struct WindowButtonsSpace: View {
+    /// How far the row already sits from the window's left edge.
+    var inset: CGFloat = 0
+
+    var body: some View {
+        Color.clear.frame(width: max(WindowConfigurator.reserved - inset, 0), height: 1)
     }
 }
 

@@ -40,6 +40,9 @@ private struct Shell: View {
     /// aside: the page the agent sees stays as wide as it was before there was a sidebar.
     private var agentHoldsPage: Bool { store.hasAgent && agentTab.isDriven && store.isShowing(agentTab) }
     private var showsSidebar: Bool { store.verticalLayout && !store.sidebarHidden && !agentHoldsPage }
+    /// The window's buttons live in the sidebar's top row, so they go away with it, and come
+    /// back while it peeks out.
+    private var buttonsVisible: Bool { !store.verticalLayout || showsSidebar || peeking }
 
     var body: some View {
         Group {
@@ -47,6 +50,7 @@ private struct Shell: View {
         }
         .frame(minWidth: 960, minHeight: 580)
         .background(WindowDragArea())
+        .background(WindowConfigurator(buttonsVisible: buttonsVisible))
         .background(WindowShortcuts(store: store))
         .overlay {
             if let mode = store.commandBar {
@@ -61,7 +65,6 @@ private struct Shell: View {
         .focusedSceneObject(store)
         .containerBackground(for: .window) { WindowCanvas() }
         .navigationTitle(store.active.title.isEmpty ? "Acorn Browser" : store.active.title)
-        .toolbar(.hidden, for: .windowToolbar)
         .ignoresSafeArea(.container, edges: .top)
         .animation(Theme.layout, value: showsSidebar)
         .onChange(of: showsSidebar) { _, shown in if shown { peeking = false } }
@@ -99,7 +102,7 @@ private struct Shell: View {
             if peeking {
                 Sidebar(store: store, runner: runner, showAgent: $showAgent)
                     .frame(width: store.sidebarWidth)
-                    .padding(.vertical, Theme.Space.xs)
+                    .padding(.bottom, Theme.Space.xs)
                     .background {
                         WindowCanvas()
                             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous))
@@ -107,7 +110,9 @@ private struct Shell: View {
                     }
                     .overlay(RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous)
                         .strokeBorder(palette.hairline))
-                    .padding(Theme.gutter)
+                    // Flush with the window's top, so its first row lines up with the
+                    // window's buttons, which come back while it is out.
+                    .padding([.leading, .bottom], Theme.gutter)
                     .onHover { if !$0 { withAnimation(Theme.layout) { peeking = false } } }
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
@@ -127,16 +132,15 @@ private struct Shell: View {
     /// The window's controls, the tabs, then the theme and the agent toggle on the right.
     private var topBar: some View {
         HStack(spacing: Theme.Space.m) {
-            WindowControls()
+            WindowButtonsSpace()
             TabStrip(store: store)
             Spacer(minLength: Theme.Space.s)
             if store.isIncognito { IncognitoBadge() }
             ThemeButton()
             if store.hasAgent { askButton }
         }
-        .padding(.leading, 20)
         .padding(.trailing, Theme.Space.m)
-        .frame(height: 46)
+        .frame(height: WindowConfigurator.headerHeight)
     }
 
     private var askButton: some View {

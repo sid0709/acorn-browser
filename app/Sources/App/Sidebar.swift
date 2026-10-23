@@ -83,7 +83,7 @@ struct Sidebar: View {
     /// The window's controls, the sidebar toggle, and navigation for the active tab.
     private var topRow: some View {
         HStack(spacing: Theme.Space.xs) {
-            WindowControls().padding(.leading, 6).padding(.trailing, Theme.Space.s)
+            WindowButtonsSpace(inset: Theme.Space.s + 2)
             Button { withAnimation(Theme.layout) { store.sidebarHidden.toggle() } } label: {
                 Image(systemName: "sidebar.left")
             }

@@ -135,7 +135,9 @@ The window is a tinted canvas behind rounded cards: the page in one, the agent p
 address, or down a sidebar on the left, Arc's way (the layout is chosen in the ⋮ menu): window
 controls and navigation, the address, pinned tabs as tiles, the agent's tab, then groups as
 folders and the open tabs. ⌘S puts the sidebar away; the window's left edge brings it back over
-the page while the pointer is on it. The address shows the site's name only (with copy-link and
+the page while the pointer is on it. The window's close, minimize and zoom buttons are the
+system's own, moved by `WindowConfigurator` into the header row (the sidebar's top row, or the
+tab row) and kept there through resizing and full screen; they go away with a hidden sidebar. The address shows the site's name only (with copy-link and
 a bookmark star under the pointer).
 
 The command bar (`CommandBar.swift`) is how anything is opened: ⌘T for a new tab, ⌘L or a click
@@ -184,6 +186,6 @@ to three colors are set, intensity, grain, light or dark). No view draws with a 
 each reads a `Palette` derived from the theme (`ThemeStore.swift`), whose text and accent are
 picked to stay readable in either appearance. Spacing, radii, type and the shared button styles
 are in `Theme.swift`, tab state in `TabStore.swift`, the strip in `TabStrip.swift`, the sidebar
-in `Sidebar.swift`, and the pieces both layouts share (window controls, the address, the page
+in `Sidebar.swift`, and the pieces both layouts share (the window's buttons, the address, the page
 toolbar, the agent's ring, the shortcuts) in `WindowChrome.swift`. Where the interface is going
 next is in `DESIGN.md`.
