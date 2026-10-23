@@ -328,6 +328,12 @@ final class BrowserSettings: ObservableObject {
         didSet { UserDefaults.standard.set(translateLanguage, forKey: "translateLanguage") }
     }
 
+    /// The person's tabs as Chrome-style views, which run Web Store extensions. Off, they are
+    /// plain Alloy views like the agent's. New tabs take the change.
+    @Published var chromeTabs: Bool {
+        didSet { UserDefaults.standard.set(chromeTabs, forKey: "chromeTabs") }
+    }
+
     /// Languages to translate without asking, and never to offer for (base codes: "ja", "zh-CN").
     @Published var alwaysTranslate: [String] {
         didSet { UserDefaults.standard.set(alwaysTranslate, forKey: "alwaysTranslate") }
@@ -347,6 +353,7 @@ final class BrowserSettings: ObservableObject {
         let system = Locale.current.language.languageCode?.identifier ?? "en"
         translateLanguage = UserDefaults.standard.string(forKey: "translateLanguage")
             ?? (Self.languages.contains { $0.code == system } ? system : "en")
+        chromeTabs = UserDefaults.standard.object(forKey: "chromeTabs") as? Bool ?? true
         alwaysTranslate = UserDefaults.standard.stringArray(forKey: "alwaysTranslate") ?? []
         neverTranslate = UserDefaults.standard.stringArray(forKey: "neverTranslate") ?? []
     }

@@ -179,6 +179,9 @@ struct AddressPill: View {
                 .help("Copy link (⇧⌘C)")
                 .transition(.opacity)
             }
+            if let id = ExtensionStore.webStoreID(in: tab.address), !tab.isIncognito {
+                AddExtensionButton(id: id)
+            }
             if offersTranslation {
                 Button { showingTranslate.toggle() } label: {
                     Image(systemName: "character.bubble")
@@ -247,6 +250,7 @@ struct PageToolbar: View {
             Button { store.commandBar = .newTab } label: { Image(systemName: "plus") }
                 .buttonStyle(.chrome)
                 .help("New tab (⌘T)")
+            ExtensionsButton(store: store)
             Button { showingMenu = true } label: { Image(systemName: "ellipsis") }
                 .buttonStyle(.chrome)
                 .help("More")

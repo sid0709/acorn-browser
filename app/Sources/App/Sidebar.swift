@@ -137,6 +137,7 @@ struct Sidebar: View {
                 .help(showAgent ? "Hide the agent (⌘K)" : "Ask the agent (⌘K)")
             }
             Spacer(minLength: 0)
+            ExtensionsButton(store: store)
             Button { showingMenu = true } label: { Image(systemName: "ellipsis") }
                 .buttonStyle(.chrome)
                 .help("More")

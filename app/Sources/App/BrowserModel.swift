@@ -5,7 +5,8 @@ import SwiftUI
 final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegate {
     /// The agent's tab, the first of the main window. It opens on the start page, which needs
     /// no network; the harness navigates it wherever a task begins.
-    static let shared = BrowserModel(url: startURL)
+    /// An Alloy view: the plain page `AgentDriver` was built for, which runs no extensions.
+    static let shared = BrowserModel(url: startURL, chromeStyle: false)
 
     /// A tab here shows the start page, drawn by the app over an empty page.
     static let startURL = "about:blank"
@@ -78,9 +79,12 @@ final class BrowserModel: NSObject, ObservableObject, ChromiumBrowserViewDelegat
 
     func printPage() { view.printPage() }
 
-    init(url: String, incognito: Bool = false) {
+    /// `chromeStyle`: Chrome's own browser features in the page, Web Store extensions among
+    /// them. The person's tabs have it (unless turned off in Settings); the agent's does not.
+    init(url: String, incognito: Bool = false, chromeStyle: Bool? = nil) {
         isIncognito = incognito
         view = ChromiumBrowserView(url: url, incognito: incognito)
+        view.usesChromeStyle = chromeStyle ?? BrowserSettings.shared.chromeTabs
         // A page's own drag and drop (a card to another column) is part of using it.
         view.allowsDragAndDrop = true
         address = url

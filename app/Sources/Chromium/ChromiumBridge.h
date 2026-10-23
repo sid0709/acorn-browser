@@ -21,6 +21,10 @@ NS_SWIFT_UI_ACTOR
 /// page by several seconds. Must be set before `start`. Defaults to YES.
 @property (class, nonatomic) BOOL usesSystemKeychain;
 
+/// Unpacked extensions (folders with a manifest.json) to load at start, as Chromium's
+/// --load-extension does. They run in Chrome-style views. Must be set before `start`.
+@property (class, nonatomic, copy) NSArray<NSString *> *extensionDirectories;
+
 /// Ends the app right away. Chromium is not shut down gracefully (its helper processes exit
 /// with the app); the only thing done first is a quick flush of the cookie store so a recent
 /// login isn't lost. Never returns normally: the process exits within about a second.
@@ -116,6 +120,10 @@ NS_SWIFT_UI_ACTOR
 /// The site's favicon, or nil until one has loaded.
 @property (nonatomic, readonly, nullable) NSImage *favicon;
 
+/// Chrome style instead of Alloy: Chrome's own browser features in this view, extensions and
+/// the Web Store among them. Alloy (NO, the default) is the plain view the agent drives. Must be
+/// set before the view joins a window; a page's popups take the style of their opener.
+@property (nonatomic) BOOL usesChromeStyle;
 @property (nonatomic) BOOL allowsPopups;
 @property (nonatomic) BOOL allowsDragAndDrop;
 @property (nonatomic) BOOL allowsTooltips;

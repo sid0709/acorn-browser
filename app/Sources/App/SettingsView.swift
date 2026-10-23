@@ -45,9 +45,13 @@ private struct GeneralSettings: View {
             Picker("Translate pages into", selection: $settings.translateLanguage) {
                 ForEach(BrowserSettings.languages, id: \.code) { Text($0.name).tag($0.code) }
             }
+            Toggle(isOn: $settings.chromeTabs) {
+                Text("Chrome extensions in tabs")
+                Text("Tabs run as Chrome-style views, which can install and run Web Store extensions. New tabs take the change; the agent's tab is never one.")
+            }
         }
         .formStyle(.grouped)
-        .frame(height: 220)
+        .frame(height: 280)
     }
 }
 

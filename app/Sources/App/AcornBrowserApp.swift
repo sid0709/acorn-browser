@@ -106,6 +106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The Keychain check delays the first page by several seconds, and this browser
         // keeps no saved logins yet.
         ChromiumEngine.usesSystemKeychain = false
+        // Extensions the app installed itself load with the engine.
+        ChromiumEngine.extensionDirectories = ExtensionStore.launchDirectories()
         if !ChromiumEngine.start() {
             NSLog("AcornBrowser: Chromium did not start.")
         }

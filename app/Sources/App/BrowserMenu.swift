@@ -333,21 +333,53 @@ private struct PageRow: View {
     }
 }
 
-/// The menu's Extensions page: the site boosts, and a boost for the site shown.
+/// The menu's Extensions page: the Web Store's extensions, then the site boosts and a boost for
+/// the site shown.
 private struct ExtensionsPage: View {
     @ObservedObject var tab: BrowserModel
     @ObservedObject var store: TabStore
     @Binding var isPresented: Bool
     @ObservedObject private var boosts = BoostStore.shared
+    @ObservedObject private var extensions = ExtensionStore.shared
     @Environment(\.palette) private var palette
 
     private var host: String? { URL(string: tab.address)?.host() }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
-            Text("Boosts change how a site looks or works with styles and a script of your own. Chrome Web Store extensions cannot load in this engine.")
+            ForEach(extensions.installed) { info in
+                HStack(spacing: Theme.Space.s) {
+                    Image(systemName: "puzzlepiece.extension").frame(width: 18).foregroundStyle(palette.inkTertiary)
+                    Text(info.name).font(Theme.Text.body).foregroundStyle(palette.ink).lineLimit(1)
+                    Spacer()
+                    if !extensions.isEnabled(info) {
+                        Text("Off").font(Theme.Text.caption).foregroundStyle(palette.inkTertiary)
+                    }
+                }
+                .padding(.horizontal, Theme.Space.s)
+                .frame(height: 28)
+            }
+            if extensions.needsRelaunch {
+                Button { extensions.relaunch() } label: { Label("Relaunch to Apply Changes", systemImage: "arrow.clockwise") }
+                    .buttonStyle(.row)
+            }
+            Button {
+                isPresented = false
+                store.newTab(url: "https://chromewebstore.google.com")
+            } label: { Label("Chrome Web Store", systemImage: "bag") }
+                .buttonStyle(.row)
+            Button {
+                isPresented = false
+                store.newTab(url: "chrome://extensions")
+            } label: { Label("Manage Extensions", systemImage: "gearshape") }
+                .buttonStyle(.row)
+
+            Rectangle().fill(palette.hairline).frame(height: 1).padding(.vertical, Theme.Space.xs)
+            Text("Site Boosts").font(Theme.Text.section).foregroundStyle(palette.inkSecondary)
+                .padding(.horizontal, Theme.Space.s)
+            Text("Styles and a script of your own, put into a site's pages.")
                 .font(Theme.Text.caption)
-                .foregroundStyle(palette.inkSecondary)
+                .foregroundStyle(palette.inkTertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, Theme.Space.s)
             if let host {

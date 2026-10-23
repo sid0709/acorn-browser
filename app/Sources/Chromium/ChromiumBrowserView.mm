@@ -693,7 +693,7 @@ static NSInteger gIncognitoViews = 0;
   CefWindowInfo windowInfo;
   windowInfo.SetAsChild((__bridge void *)self,
                         CefRect(0, 0, (int)bounds.size.width, (int)bounds.size.height));
-  windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+  windowInfo.runtime_style = _usesChromeStyle ? CEF_RUNTIME_STYLE_CHROME : CEF_RUNTIME_STYLE_ALLOY;
 
   CefBrowserSettings browserSettings;
   CefRefPtr<CefRequestContext> context;
@@ -890,6 +890,7 @@ static NSInteger gIncognitoViews = 0;
                                                               incognito:self.isIncognito];
   popup->_isPopupHost = YES;
   popup.frame = self.bounds;
+  popup.usesChromeStyle = self.usesChromeStyle;
   popup.allowsPopups = self.allowsPopups;
   popup.allowsDragAndDrop = self.allowsDragAndDrop;
   popup.allowsTooltips = self.allowsTooltips;
@@ -903,7 +904,7 @@ static NSInteger gIncognitoViews = 0;
   const NSRect bounds = popup.bounds;
   windowInfo.SetAsChild((__bridge void *)popup,
                         CefRect(0, 0, (int)bounds.size.width, (int)bounds.size.height));
-  windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+  windowInfo.runtime_style = self.usesChromeStyle ? CEF_RUNTIME_STYLE_CHROME : CEF_RUNTIME_STYLE_ALLOY;
   client = popup->_client.get();
   [_pendingPopups setObject:popup forKey:@(popupID)];
   return NO;

@@ -151,10 +151,17 @@ the theme, the layout, search, translation and clearing data.
 
 The ⋮ menu follows Chromium's: New tab, New window and Incognito as tiles; zoom in place with full
 screen beside it, bookmark, pin, find, translate, print and copy link; then Bookmarks, History, Tab and Extensions,
-which open inside the menu; About and Settings at the foot. The engine runs Chromium's Alloy
-style, which cannot load Web Store extensions, so Extensions holds site boosts instead
-(`Boosts.swift`): styles and a script of the person's own put into a site's pages when they
-load, never into the agent's tab.
+which open inside the menu; About and Settings at the foot. The person's tabs are Chrome-style
+views (`usesChromeStyle`), which run Chrome's extension system; the agent's tab stays an Alloy
+view, the plain page `AgentDriver` was built for, and runs none (Settings can turn Chrome style
+off for new tabs). Extensions come from the Chrome Web Store (`Extensions.swift`): its own Add
+button where it can install into this browser, and otherwise "Add to Acorn" in the address of an
+extension's Store page, which fetches the Store's package, unpacks it beside the runs keeping
+the Store's id, and loads it at the next launch (`ChromiumEngine.extensionDirectories`, as
+`--load-extension`). The puzzle piece beside the address lists them and opens their popups;
+`chrome://extensions` manages the rest. Extensions also holds site boosts (`Boosts.swift`):
+styles and a script of the person's own put into a site's pages when they load, never into the
+agent's tab.
 
 Tabs are dragged (`TabDrag.swift`): onto either end of another tab to move there, taking its
 group and pin; onto its middle to make a group of the two (the new folder's name opens for
