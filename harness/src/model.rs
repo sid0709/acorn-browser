@@ -4,8 +4,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::action::{Action, Commit, Kind, Point};
+use crate::action::{Action, Commit, Kind, Point, Target};
+use crate::check::Check;
 use crate::observe::Viewport;
+use crate::page::PageMap;
 use crate::run::{Status, StopInfo};
 
 /// The name the reply schema is sent under.
@@ -128,6 +130,12 @@ pub struct RawAction {
     /// The option to choose in a native dropdown, as its text.
     #[serde(default)]
     pub option: Option<String>,
+    /// The node of the page map to act on, by its number, in DOM mode.
+    #[serde(default)]
+    pub target: Option<u32>,
+    /// Where to scroll to, in page pixels from the top, in DOM mode.
+    #[serde(default)]
+    pub to: Option<f64>,
 }
 
 /// A point of a drag's path as the model writes it.
@@ -160,8 +168,10 @@ pub fn parse_json<T: serde::de::DeserializeOwned>(content: &str) -> Result<T, St
 /// Turns the model's actions into ones the browser can run, and says why it refused the rest.
 /// An action that would land outside the screenshot, type nothing, or press no key is refused
 /// here, so the browser never receives a nonsense command. `screens` are the scroll positions
-/// of the survey the look was, empty for a plain look.
-pub fn check_actions(step: u32, raw: Vec<RawAction>, vp: &Viewport, max_actions: usize, screens: &[f64]) -> (Vec<Action>, Vec<String>) {
+/// of the survey the look was, empty for a plain look. `page` is the map the look carried: an
+/// action that names a node of it by number (`target`) gets the node's centre as its point,
+/// and a check that names one is bound to the node's role and name (`check.rs`).
+pub fn check_actions(step: u32, raw: Vec<RawAction>, vp: &Viewport, max_actions: usize, screens: &[f64], page: Option<&PageMap>) -> (Vec<Action>, Vec<String>) {
     let mut valid = Vec::new();
     let mut dropped = Vec::new();
     for (i, input) in raw.into_iter().enumerate() {
@@ -170,7 +180,14 @@ pub fn check_actions(step: u32, raw: Vec<RawAction>, vp: &Viewport, max_actions:
             dropped.push(format!("action {n} ({}): only {max_actions} actions run per step", input.kind));
             continue;
         }
-        let kind = match fill(&input, vp) {
+        let target = match aim(&input, vp, page) {
+            Ok(target) => target,
+            Err(why) => {
+                dropped.push(format!("action {n} ({}): {why}", input.kind));
+                continue;
+            }
+        };
+        let kind = match fill(&input, vp, target.as_ref().map(|(_, point)| *point)) {
             Ok(kind) => kind,
             Err(why) => {
                 dropped.push(format!("action {n} ({}): {why}", input.kind));
@@ -178,11 +195,19 @@ pub fn check_actions(step: u32, raw: Vec<RawAction>, vp: &Viewport, max_actions:
             }
         };
         let mut action = Action::new(format!("s{step}a{n}"), kind);
-        if let Err(why) = place_on_screen(&mut action, input.screen, vp, screens) {
+        // A targeted action is placed by the browser, on the node, wherever the page is scrolled.
+        if target.is_none()
+            && let Err(why) = place_on_screen(&mut action, input.screen, vp, screens)
+        {
             dropped.push(format!("action {n} ({}): {why}", input.kind));
             continue;
         }
-        action.check = clip_text(input.check.as_deref().unwrap_or("").trim(), MAX_CHECK_CHARS);
+        action.target = target.map(|(target, _)| target);
+        let check = clip_text(input.check.as_deref().unwrap_or("").trim(), MAX_CHECK_CHARS);
+        action.check = match page {
+            Some(page) => Check::bind(&check, page),
+            None => check,
+        };
         action.label = clip_text(input.label.as_deref().unwrap_or("").trim(), MAX_LABEL_CHARS);
         action.commit = commit_of(&input, &action.kind);
         valid.push(action);
@@ -190,27 +215,48 @@ pub fn check_actions(step: u32, raw: Vec<RawAction>, vp: &Viewport, max_actions:
     (valid, dropped)
 }
 
-/// The kind an action is, with what it carries, once its fields are checked.
-fn fill(input: &RawAction, vp: &Viewport) -> Result<Kind, String> {
+/// The node an action names on the page map, with the centre of its box in screenshot pixels
+/// (which may lie off the screen: the browser scrolls to it). `None` when the action names
+/// none; an error when it names one the map does not have.
+fn aim(input: &RawAction, vp: &Viewport, page: Option<&PageMap>) -> Result<Option<(Target, Point)>, String> {
+    let Some(id) = input.target else { return Ok(None) };
+    let Some(page) = page else { return Err(format!("target [{id}] named, but the look carried no page map")) };
+    let Some(node) = page.nodes.iter().find(|node| node.id == id) else { return Err(format!("there is no node [{id}] on the page map")) };
+    if node.is_text() {
+        return Err(format!("node [{id}] is plain text, not a control"));
+    }
+    let point = Point { x: node.x + node.w / 2.0 - vp.scroll_x, y: node.y + node.h / 2.0 - vp.scroll_y };
+    Ok(Some((Target { id, role: node.role.clone(), name: node.name.clone(), frame: node.frame }, point)))
+}
+
+/// The kind an action is, with what it carries, once its fields are checked. `aimed` is the
+/// point of the node the action targets, in place of any point the model wrote.
+fn fill(input: &RawAction, vp: &Viewport, aimed: Option<Point>) -> Result<Kind, String> {
+    let point = |input: &RawAction| -> Result<(f64, f64), String> {
+        match aimed {
+            Some(p) => Ok((p.x, p.y)),
+            None => point(input, vp),
+        }
+    };
     Ok(match input.kind.as_str() {
         "click" => {
-            let (x, y) = point(input, vp)?;
+            let (x, y) = point(input)?;
             Kind::Click { x, y, modifiers: modifiers(input)? }
         }
         "double_click" => {
-            let (x, y) = point(input, vp)?;
+            let (x, y) = point(input)?;
             Kind::DoubleClick { x, y, modifiers: modifiers(input)? }
         }
         "triple_click" => {
-            let (x, y) = point(input, vp)?;
+            let (x, y) = point(input)?;
             Kind::TripleClick { x, y, modifiers: modifiers(input)? }
         }
         "right_click" => {
-            let (x, y) = point(input, vp)?;
+            let (x, y) = point(input)?;
             Kind::RightClick { x, y, modifiers: modifiers(input)? }
         }
         "hover" => {
-            let (x, y) = point(input, vp)?;
+            let (x, y) = point(input)?;
             Kind::Hover { x, y, modifiers: modifiers(input)? }
         }
         "drag" => {
@@ -232,7 +278,7 @@ fn fill(input: &RawAction, vp: &Viewport) -> Result<Kind, String> {
             Kind::Drag { path, modifiers: modifiers(input)? }
         }
         "upload" => {
-            let (x, y) = point(input, vp)?;
+            let (x, y) = point(input)?;
             Kind::Upload { x, y, resource: input.resource.as_deref().unwrap_or("").trim().to_string(), file_name: String::new() }
         }
         "type" => {
@@ -257,6 +303,16 @@ fn fill(input: &RawAction, vp: &Viewport) -> Result<Kind, String> {
         }
         "scroll" => {
             let (dx, dy) = (input.dx.unwrap_or(0.0), input.dy.unwrap_or(0.0));
+            // Straight to a height of the page, or to where the target node is, a third of
+            // the screen down so what is round it shows too.
+            let to = match (input.to, aimed) {
+                (Some(to), _) => Some(to.max(0.0).min(vp.page_height.max(0.0))),
+                (None, Some(p)) => Some((p.y + vp.scroll_y - vp.height as f64 / 3.0).max(0.0)),
+                (None, None) => None,
+            };
+            if let Some(to) = to {
+                return Ok(Kind::Scroll { x: None, y: None, dx: 0.0, dy: 0.0, to: Some(to) });
+            }
             if dx == 0.0 && dy == 0.0 {
                 return Err("there is no distance to scroll".to_string());
             }
@@ -270,7 +326,14 @@ fn fill(input: &RawAction, vp: &Viewport) -> Result<Kind, String> {
                 y: Some(y),
                 dx: dx.clamp(-MAX_SCROLL_PAGES * vp.width as f64, MAX_SCROLL_PAGES * vp.width as f64),
                 dy: dy.clamp(-MAX_SCROLL_PAGES * vp.height as f64, MAX_SCROLL_PAGES * vp.height as f64),
+                to: None,
             }
+        }
+        "read" => {
+            if aimed.is_none() {
+                return Err("read needs a target node".to_string());
+            }
+            Kind::Read
         }
         "wait" => Kind::Wait { ms: input.ms.unwrap_or(DEFAULT_WAIT_MS).clamp(MIN_WAIT_MS, MAX_WAIT_MS) },
         "navigate" => {
@@ -516,7 +579,7 @@ mod tests {
             raw(r#"{"kind":"choose","option":" United States of America "}"#),
             raw(r#"{"kind":"choose","option":""}"#),
         ];
-        let (valid, dropped) = check_actions(3, raw, &vp, 30, &[0.0, 500.0]);
+        let (valid, dropped) = check_actions(3, raw, &vp, 30, &[0.0, 500.0], None);
         let ids: Vec<&str> = valid.iter().map(|a| a.id.as_str()).collect();
         assert_eq!(ids, vec!["s3a1", "s3a3", "s3a4", "s3a6", "s3a8", "s3a11", "s3a13", "s3a14"]);
         assert_eq!(valid[7].kind, Kind::Choose { option: "United States of America".to_string() });
@@ -530,9 +593,52 @@ mod tests {
         assert_eq!(valid[0].commit, Commit::Send);
         assert_eq!(valid[0].label, "Send");
         assert_eq!(valid[1].kind, Kind::Wait { ms: 100 });
-        assert_eq!(valid[2].kind, Kind::Scroll { x: Some(400.0), y: Some(300.0), dx: 0.0, dy: 1800.0 });
+        assert_eq!(valid[2].kind, Kind::Scroll { x: Some(400.0), y: Some(300.0), dx: 0.0, dy: 1800.0, to: None });
         assert_eq!(valid[3].kind, Kind::Survey);
         assert_eq!(dropped.len(), 7);
+    }
+
+    #[test]
+    fn a_target_gives_the_action_its_point_and_binds_its_check_to_the_node() {
+        use crate::page::{PageMap, PageNode};
+        let vp = Viewport { width: 800, height: 600, scroll_y: 1000.0, page_width: 800.0, page_height: 3000.0, ..Default::default() };
+        let page = PageMap {
+            nodes: vec![
+                PageNode { id: 1, role: "radio".into(), name: "Work".into(), x: 100.0, y: 1200.0, w: 20.0, h: 20.0, ..Default::default() },
+                PageNode { id: 2, role: "text".into(), name: "Some words".into(), x: 0.0, y: 0.0, w: 100.0, h: 10.0, ..Default::default() },
+                PageNode { id: 3, role: "button".into(), name: "Continue".into(), x: 100.0, y: 2500.0, w: 100.0, h: 40.0, ..Default::default() },
+            ],
+        };
+        let written = vec![
+            raw(r#"{"kind":"click","target":1,"check":"[1] checked"}"#),
+            raw(r#"{"kind":"click","target":2}"#),
+            raw(r#"{"kind":"click","target":9}"#),
+            raw(r#"{"kind":"scroll","target":3}"#),
+            raw(r#"{"kind":"scroll","to":2400}"#),
+            raw(r#"{"kind":"read","target":3}"#),
+            raw(r#"{"kind":"read"}"#),
+            raw(r#"{"kind":"click","x":5,"y":5,"check":"the list is open"}"#),
+        ];
+        let (valid, dropped) = check_actions(1, written, &vp, 30, &[], Some(&page));
+        let ids: Vec<&str> = valid.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, vec!["s1a1", "s1a4", "s1a5", "s1a6", "s1a8"]);
+        // The point is the node's centre in screenshot pixels, off screen or not.
+        assert_eq!(valid[0].kind, Kind::Click { x: 110.0, y: 210.0, modifiers: String::new() });
+        assert_eq!(valid[0].target, Some(Target { id: 1, role: "radio".into(), name: "Work".into(), frame: 0 }));
+        assert_eq!(valid[0].check, "[radio \"Work\"] checked");
+        assert!(valid[0].scroll_to.is_none());
+        assert_eq!(valid[1].kind, Kind::Scroll { x: None, y: None, dx: 0.0, dy: 0.0, to: Some(2320.0) });
+        assert_eq!(valid[2].kind, Kind::Scroll { x: None, y: None, dx: 0.0, dy: 0.0, to: Some(2400.0) });
+        assert_eq!(valid[3].kind, Kind::Read);
+        assert_eq!(valid[3].target.as_ref().map(|t| t.id), Some(3));
+        assert_eq!(valid[4].check, "the list is open");
+        assert_eq!(dropped.len(), 3);
+        assert!(dropped[0].contains("plain text"), "{}", dropped[0]);
+        assert!(dropped[1].contains("no node [9]"), "{}", dropped[1]);
+        assert!(dropped[2].contains("needs a target"), "{}", dropped[2]);
+        // Without a map, a target is refused rather than guessed.
+        let (valid, dropped) = check_actions(1, vec![raw(r#"{"kind":"click","target":1}"#)], &vp, 30, &[], None);
+        assert!(valid.is_empty() && dropped[0].contains("no page map"), "{dropped:?}");
     }
 
     #[test]

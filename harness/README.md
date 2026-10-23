@@ -184,9 +184,18 @@ flat, depth-first list of its nodes: role, computed name, live state (`checked`,
 `selected`, ...), the value a control holds, and the box in page coordinates (CSS pixels from
 the document's top left, a frame's offset already added). The harness renders it for the model
 as one line per node in view and a minimap of the rest, one line per screen's worth of page,
-under a byte budget; options of a closed native list have no box and follow their list. Stage
-1, this: the map is built by the app and written to the trace (`NNN.page.txt`); the model
-still sees the screenshot.
+under a byte budget; options of a closed native list have no box and follow their list.
+
+An action may name a node of the map instead of a point (`target`): the harness gives it the
+node's centre as its point and the browser measures the node again just before acting, scrolls
+it into view, makes sure the point hits it and not something over it, and finds it anew by role
+and name when its number went stale. `scroll` takes `to` (a height of the page) or a target;
+`read` answers with a node's whole text. A check written in the harness's words (`check.rs`:
+`[12] checked`, `[12] value="laptop"`, `url~="/results"`, `exists "Thank you"`) is bound to
+the node's role and name when the plan is taken and judged from the next look's map, with no
+model and no wait; a check in other words still goes to the decision model. The browser also
+reads a targeted control before and after the action and reports what changed
+(`checked: false → true`). Up to stage 2, this: the model still sees the screenshot.
 
 ### Intervention and the end (`run.rs`, `report.rs`, `trace.rs`)
 

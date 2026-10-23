@@ -608,7 +608,7 @@ impl Agent {
 
         let screens: Vec<f64> = obs.survey.iter().map(|screen| screen.scroll_y).collect();
         let written = reply.actions.len();
-        let (planned, mut dropped) = model::check_actions(number, std::mem::take(&mut reply.actions), &obs.viewport, self.config.plan_limit(checks), &screens);
+        let (planned, mut dropped) = model::check_actions(number, std::mem::take(&mut reply.actions), &obs.viewport, self.config.plan_limit(checks), &screens, obs.page.as_ref());
         // How many actions of the plan could not be carried out: the click that sends the page
         // waits for them.
         // A survey or a resume is a request the harness grants, not an action lost.

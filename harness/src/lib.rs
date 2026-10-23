@@ -12,6 +12,7 @@ pub use image;
 
 pub mod action;
 pub mod change;
+pub mod check;
 pub mod focus;
 pub mod gate;
 pub mod intake;

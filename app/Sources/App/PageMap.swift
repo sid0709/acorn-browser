@@ -1,5 +1,16 @@
 import Foundation
 
+/// What the last page map said a node was, and the DOM node behind it, for acting on the node
+/// by its number.
+struct MapRef {
+    var backend: Int
+    var frame: Int
+    /// The role as the map writes it, and as Chromium names it (for finding the node again).
+    var role: String
+    var axRole: String
+    var name: String
+}
+
 /// The page map of DOM mode (`harness/src/page.rs`): what this browser knows of the page, as
 /// a flat, depth-first list of nodes, each with its role, its computed name, its live state and
 /// its box in page coordinates. It is built from two DevTools answers joined on the DOM node:
@@ -60,6 +71,9 @@ extension AgentDriver {
         var role: String
         var name: String
         var depth: Int
+        /// The DOM node behind the line and Chromium's own name for its role; never sent.
+        var backend = -1
+        var axRole = ""
         var x = 0.0, y = 0.0, w = 0.0, h = 0.0
         var frame = 0
         var states: [String] = []
@@ -109,6 +123,10 @@ extension AgentDriver {
         var laid: [Int: Laid] = [:]
         /// The frame id of the document an iframe element holds, by the element's node id.
         var childFrame: [Int: String] = [:]
+        /// Each child document's iframe element, parent document and frame id, by document.
+        var frameElement: [Int: Int] = [:]
+        var frameParent: [Int: Int] = [:]
+        var frameId: [Int: String] = [:]
     }
 
     /// Builds the page map for this look, or nil when the browser could not answer. `m` is the
@@ -133,7 +151,12 @@ extension AgentDriver {
                 }
             }
             let builder = MapBuilder(ax: nodes, trees: trees, snapshot: snap)
-            return ["nodes": builder.build().map { $0.dictionary }]
+            let built = builder.build()
+            mapRefs = Dictionary(uniqueKeysWithValues: built.map { ($0.id, MapRef(backend: $0.backend, frame: $0.frame, role: $0.role, axRole: $0.axRole, name: $0.name)) })
+            frameElements = snap.frameElement
+            frameParents = snap.frameParent
+            frameIds = snap.frameId
+            return ["nodes": built.map { $0.dictionary }]
         } catch {
             return nil
         }
@@ -207,11 +230,14 @@ extension AgentDriver {
                 let v = ints(inputValue["value"])
                 if k < v.count { values[i] = str(v[k]) }
             }
+            snap.frameId[d] = str((doc["frameId"] as? NSNumber)?.intValue ?? -1)
             let content = (nodes["contentDocumentIndex"] as? [String: Any]) ?? [:]
             for (k, i) in ints(content["index"]).enumerated() {
                 let v = ints(content["value"])
                 if k < v.count, v[k] < documents.count, i < backend.count {
                     snap.childFrame[backend[i]] = str((documents[v[k]]["frameId"] as? NSNumber)?.intValue ?? -1)
+                    snap.frameElement[v[k]] = backend[i]
+                    snap.frameParent[v[k]] = d
                 }
             }
             let sx = (doc["scrollOffsetX"] as? NSNumber)?.doubleValue ?? 0
@@ -331,6 +357,8 @@ extension AgentDriver {
                 var node = MapNode(role: role, name: name, depth: depth)
                 if let box = laid?.box { node.x = box.x.rounded(); node.y = box.y.rounded(); node.w = box.w.rounded(); node.h = box.h.rounded() }
                 node.frame = laid?.frame ?? 0
+                node.backend = backendId
+                node.axRole = role
                 extra(&node)
                 self.nodes.append(node)
                 line = self.nodes.count - 1
@@ -404,5 +432,132 @@ extension AgentDriver {
                 nodes.remove(at: before)
             }
         }
+    }
+}
+
+// MARK: Acting on a node by number
+
+extension AgentDriver {
+    /// The most characters a `read` answers with.
+    nonisolated private static let maxRead = 4000
+
+    /// Runs a function on the DOM node, in its own document, and returns what it returned.
+    private func callOn(_ backend: Int, _ function: String) async throws -> Any? {
+        let resolved = try await call("DOM.resolveNode", ["backendNodeId": backend])
+        guard let objectId = (resolved["object"] as? [String: Any])?["objectId"] as? String else { throw AgentError("the node is gone") }
+        let result = try await call("Runtime.callFunctionOn", ["objectId": objectId, "functionDeclaration": function, "returnByValue": true])
+        if let details = result["exceptionDetails"] as? [String: Any] {
+            let exception = details["exception"] as? [String: Any]
+            throw AgentError((exception?["description"] as? String) ?? (details["text"] as? String) ?? "the page function failed")
+        }
+        return (result["result"] as? [String: Any])?["value"]
+    }
+
+    /// The node a target names, as the last map numbered it; found again by role and name when
+    /// the map was renumbered since (the number's node is not what the target says it is), or
+    /// the number is gone. Nil when it is nowhere on the page.
+    private func node(for target: [String: Any]) async -> MapRef? {
+        let id = (target["id"] as? NSNumber)?.intValue ?? 0
+        let role = target["role"] as? String ?? ""
+        let name = target["name"] as? String ?? ""
+        if let known = mapRefs[id], known.role == role, known.name == name { return known }
+        // Chromium finds a node by its computed name and role, on the page or in a frame.
+        let axRole = mapRefs.values.first(where: { $0.role == role && $0.name == name })?.axRole ?? (role == "clickable" ? "" : role)
+        var params: [String: Any] = [:]
+        if !name.isEmpty { params["accessibleName"] = name }
+        if !axRole.isEmpty { params["role"] = axRole }
+        if params.isEmpty { return nil }
+        let frame = (target["frame"] as? NSNumber)?.intValue ?? 0
+        if frame > 0, let frameId = frameIds[frame] { params["frameId"] = frameId }
+        guard let found = try? await call("Accessibility.queryAXTree", params), let nodes = found["nodes"] as? [[String: Any]] else { return nil }
+        for node in nodes where (node["ignored"] as? Bool) != true {
+            if let backend = (node["backendDOMNodeId"] as? NSNumber)?.intValue {
+                return MapRef(backend: backend, frame: frame, role: role, axRole: axRole, name: name)
+            }
+        }
+        return nil
+    }
+
+    private func describe(_ target: [String: Any]) -> String {
+        "[\((target["id"] as? NSNumber)?.intValue ?? 0)] \(target["role"] as? String ?? "") \"\(target["name"] as? String ?? "")\""
+    }
+
+    /// Where the node an action targets is now, in screenshot pixels, once it is scrolled into
+    /// view, and the DOM node itself. The point must hit the node: one covered by something
+    /// else (a banner, a dialog) is refused rather than clicked through.
+    func locate(_ target: [String: Any]) async throws -> (x: Double, y: Double, backend: Int) {
+        guard let ref = await node(for: target) else { throw ActionFailure(message: "\(describe(target)) is no longer on the page") }
+        _ = try? await call("DOM.scrollIntoViewIfNeeded", ["backendNodeId": ref.backend])
+        await settled(cap: Self.scrollSettleCap)
+        // The box in the page's own viewport: a node in a frame adds the frames' places, which
+        // the page gives for its own frames and the snapshot's table for the others.
+        let measured = try await callOn(ref.backend, """
+        function() {
+          const r = this.getBoundingClientRect();
+          let x = r.x, y = r.y, win = this.ownerDocument.defaultView, framed = true;
+          try { while (win && win.frameElement) { const f = win.frameElement.getBoundingClientRect(); x += f.x; y += f.y; win = win.parent; } } catch (e) { framed = false; }
+          const e = this.ownerDocument.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          const hit = !!e && (e === this || this.contains(e) || e.contains(this));
+          return { x, y, w: r.width, h: r.height, hit, framed, covering: hit ? '' : (e ? (e.tagName + ' ' + (e.id ? '#' + e.id : '') + ' ' + (e.innerText || '').trim().slice(0, 60)).trim() : 'nothing') };
+        }
+        """) as? [String: Any] ?? [:]
+        var x = (measured["x"] as? NSNumber)?.doubleValue ?? 0
+        var y = (measured["y"] as? NSNumber)?.doubleValue ?? 0
+        let w = (measured["w"] as? NSNumber)?.doubleValue ?? 0
+        let h = (measured["h"] as? NSNumber)?.doubleValue ?? 0
+        if (measured["framed"] as? Bool) == false {
+            var frame = ref.frame
+            while frame > 0, let element = frameElements[frame] {
+                if let box = try? await callOn(element, "function() { const r = this.getBoundingClientRect(); return [r.x, r.y]; }") as? [NSNumber], box.count == 2 {
+                    x += box[0].doubleValue
+                    y += box[1].doubleValue
+                }
+                frame = frameParents[frame] ?? 0
+            }
+        }
+        if w <= 0 || h <= 0 { throw ActionFailure(message: "\(describe(target)) has no size on the screen") }
+        if (measured["hit"] as? Bool) != true {
+            throw ActionFailure(message: "\(describe(target)) is covered by \(measured["covering"] as? String ?? "something else")")
+        }
+        return (x + w / 2, y + h / 2, ref.backend)
+    }
+
+    /// The whole text of the node a `read` targets.
+    func readText(_ target: [String: Any]) async throws -> String {
+        guard let ref = await node(for: target) else { throw ActionFailure(message: "\(describe(target)) is no longer on the page") }
+        let text = try await callOn(ref.backend, "function() { return (this.innerText || this.textContent || '').replace(/[ \\t]+/g, ' ').replace(/\\n{3,}/g, '\\n\\n').trim().slice(0, \(Self.maxRead)); }") as? String ?? ""
+        return text.isEmpty ? "(the node has no text)" : text
+    }
+
+    /// The state of a control as the page holds it: checked, the value or the chosen option,
+    /// expanded, and whether it has the focus. Nil when the node cannot be asked.
+    func readBack(_ backend: Int) async -> [String: String]? {
+        let value = try? await callOn(backend, """
+        function() {
+          const t = this, tag = t.tagName ? t.tagName.toLowerCase() : '', out = {};
+          const type = (t.type || '').toLowerCase();
+          if (type === 'checkbox' || type === 'radio') out.checked = String(!!t.checked);
+          else if (tag === 'select') out.value = (t.selectedOptions && t.selectedOptions[0] ? t.selectedOptions[0].text : '').slice(0, 200);
+          else if (tag === 'input' || tag === 'textarea') out.value = type === 'password' ? '' : String(t.value).slice(0, 200);
+          else if (t.isContentEditable) out.value = (t.innerText || '').slice(0, 200);
+          const ac = t.getAttribute('aria-checked'); if (ac !== null) out.checked = String(ac === 'true');
+          const ae = t.getAttribute('aria-expanded'); if (ae !== null) out.expanded = String(ae === 'true');
+          const as = t.getAttribute('aria-selected'); if (as !== null) out.selected = String(as === 'true');
+          out.focused = String(t.ownerDocument.activeElement === t);
+          return out;
+        }
+        """)
+        return value as? [String: String]
+    }
+
+    /// What changed in a control's state, as `checked: false → true`; empty when nothing did.
+    nonisolated static func changes(_ before: [String: String], _ after: [String: String]) -> String {
+        var parts: [String] = []
+        for key in ["checked", "value", "expanded", "selected", "focused"] {
+            let a = before[key] ?? "", b = after[key] ?? ""
+            guard a != b else { continue }
+            parts.append(key == "value" ? "value: \"\(a)\" → \"\(b)\"" : "\(key): \(a) → \(b)")
+        }
+        return parts.joined(separator: ", ")
     }
 }

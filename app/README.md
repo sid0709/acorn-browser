@@ -111,13 +111,20 @@ Config/             Info.plist and entitlements
 scripts/            setup-cef.sh, build.sh
 ```
 
-## The page map (stage 1 of DOM mode)
+## The page map (DOM mode, stages 1 and 2)
 
 Every look also carries the page as this browser knows it (`PageMap.swift`): the accessibility
 tree joined with the DOM snapshot through DevTools, as a list of nodes with their computed name,
 live state and box in page coordinates, child frames fetched apart and hung under their frame.
-Nothing is written to the page. The harness writes it to the trace (`NNN.page.txt`); the model
-still sees the screenshot. The plan for the rest is in `docs/dom-mode-plan.md`.
+Nothing is written to the page. The harness writes it to the trace (`NNN.page.txt`).
+
+An action that names a node of the map (`target`) is placed by the browser, not by the point
+the harness sent: the node is found again by role and name if the map was renumbered since,
+scrolled into view, measured now, and the point must hit it (a node under a banner or a dialog
+is refused, saying what covers it); the click is then the same human-paced click as any other.
+The control's state is read before and after and the result says what changed. `scroll` with
+`to` goes straight to a height of the page; `read` answers with a node's whole text. The plan
+for the rest is in `docs/dom-mode-plan.md`.
 
 ## Build and run
 

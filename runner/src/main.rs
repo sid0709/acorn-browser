@@ -258,11 +258,13 @@ fn describe(action: &Action) -> String {
         Kind::Type { text, secret: true } => format!("type [{} secret characters]", text.chars().count()),
         Kind::Type { text, .. } => format!("type {text:?}"),
         Kind::Key { keys } => format!("press {keys}"),
+        Kind::Scroll { to: Some(to), .. } => format!("scroll to {to:.0}"),
         Kind::Scroll { dy, .. } => format!("scroll {dy:+.0}"),
         Kind::Wait { ms } => format!("wait {ms}ms"),
         Kind::Navigate { url } => format!("go to {url}"),
         Kind::Choose { option } => format!("choose {option:?}"),
         Kind::Back => "go back".to_string(),
+        Kind::Read => format!("read{label}"),
         Kind::Survey => "look over the whole page".to_string(),
         other => {
             let name = serde_json::to_value(other).ok().and_then(|v| v["kind"].as_str().map(str::to_string)).unwrap_or_default().replace('_', " ");

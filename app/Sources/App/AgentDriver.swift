@@ -26,7 +26,7 @@ final class AgentDriver {
     nonisolated private static let openCap = 30.0
     nonisolated private static let maxWaitMs = 30_000.0
     /// The version of the line protocol this driver speaks; the runner checks it on connecting.
-    nonisolated private static let protocolVersion = 3
+    nonisolated private static let protocolVersion = 4
     nonisolated private static let jpegQuality = 80
     nonisolated private static let evaluateRetries = 5
     nonisolated private static let maxLabel = 80
@@ -39,6 +39,8 @@ final class AgentDriver {
     /// How long an upload waits for the page to ask for a file after the click.
     nonisolated private static let chooserWait = 3.0
     nonisolated private static let pollMs = 50
+    /// The kinds of action that act at a point, and so on a target node when one is named.
+    nonisolated private static let pointedKinds: Set<String> = ["click", "double_click", "triple_click", "right_click", "hover", "upload"]
 
     private let model: BrowserModel
     private var view: ChromiumBrowserView { model.view }
@@ -53,6 +55,12 @@ final class AgentDriver {
     /// Whether the DevTools domains this driver listens to are on for the current browser.
     private var domainsOn = false
     private var attached = false
+    /// The nodes of the last page map by their number, and the frames' places, for acting on a
+    /// node by number (PageMap.swift).
+    var mapRefs: [Int: MapRef] = [:]
+    var frameElements: [Int: Int] = [:]
+    var frameParents: [Int: Int] = [:]
+    var frameIds: [Int: String] = [:]
 
     init(model: BrowserModel) {
         self.model = model
@@ -571,7 +579,32 @@ final class AgentDriver {
                 }
                 chooser = nil
                 var result: [String: Any] = ["id": id, "ok": true]
+                var action = action
+                // An action on a node of the page map: the node is found and measured now, the
+                // point the harness sent being only where it was, and its state read before and
+                // after so the result says what the action did to it.
+                var targeted: Int?
+                if let target = action["target"] as? [String: Any] {
+                    let kind = action["kind"] as? String ?? ""
+                    if kind == "read" {
+                        result["detail"] = try await readText(target)
+                        results.append(result)
+                        continue
+                    }
+                    if Self.pointedKinds.contains(kind) {
+                        let at = try await locate(target)
+                        action["x"] = at.x
+                        action["y"] = at.y
+                        targeted = at.backend
+                    }
+                }
+                var before: [String: String]?
+                if let targeted { before = await readBack(targeted) }
                 for (key, value) in try await doAction(action) { result[key] = value }
+                if let targeted, let before, let after = await readBack(targeted) {
+                    let changed = Self.changes(before, after)
+                    if !changed.isEmpty { result["detail"] = changed }
+                }
                 // A plain click that opened the file picker: the browser held it back, and the
                 // harness is told so it can plan an upload.
                 if chooser != nil && action["kind"] as? String != "upload" {
@@ -637,6 +670,11 @@ final class AgentDriver {
                 try await tap(press)
             }
         case "scroll":
+            // Straight to a height of the page, as DOM mode asks.
+            if let to = action["to"] as? NSNumber {
+                try await scrollTo(to.doubleValue)
+                return [:]
+            }
             let m = try await metrics()
             let at = (x: (action["x"] as? NSNumber)?.doubleValue ?? number(m["width"]) / 2,
                       y: (action["y"] as? NSNumber)?.doubleValue ?? number(m["height"]) / 2)
