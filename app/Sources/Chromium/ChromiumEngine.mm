@@ -1,7 +1,11 @@
 #import "ChromiumInternal.h"
 
 #include <crt_externs.h>
+#include <cxxabi.h>
+#include <dlfcn.h>
+#include <mach/mach.h>
 #include <objc/runtime.h>
+#include <pthread.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -328,31 +332,171 @@ const char *InternSection(NSString *name) {
   return copy;
 }
 
+/// The main thread's call stack at one moment: return addresses, innermost first.
+struct MainStack {
+  static constexpr int kMaxFrames = 48;
+  int count = 0;
+  uintptr_t frames[kMaxFrames];
+  bool operator==(const MainStack &other) const {
+    return count == other.count && std::equal(frames, frames + count, other.frames);
+  }
+};
+
+/// An address as code can be found at: without the pointer-signing bits an arm64e system
+/// library leaves in the return addresses it saves.
+uintptr_t CodeAddress(uintptr_t address) {
+  return address & 0x00007FFFFFFFFFFFULL;
+}
+
+/// Stops the main thread for a moment and walks its frame pointers. Nothing between suspend
+/// and resume takes a lock or allocates: the main thread may be holding the lock.
+bool SampleMainStack(MainStack &stack) {
+  pthread_t main = pthread_main_thread_np();
+  const mach_port_t thread = pthread_mach_thread_np(main);
+  const uintptr_t top = (uintptr_t)pthread_get_stackaddr_np(main);
+  const uintptr_t bottom = top - pthread_get_stacksize_np(main);
+  if (thread_suspend(thread) != KERN_SUCCESS) {
+    return false;
+  }
+  stack.count = 0;
+  uintptr_t fp = 0;
+#if defined(__arm64__)
+  arm_thread_state64_t state;
+  mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
+  if (thread_get_state(thread, ARM_THREAD_STATE64, (thread_state_t)&state, &count) == KERN_SUCCESS) {
+    stack.frames[stack.count++] = CodeAddress((uintptr_t)arm_thread_state64_get_pc(state));
+    // A leaf function may not have saved its frame yet: its caller is in the link register.
+    stack.frames[stack.count++] = CodeAddress((uintptr_t)arm_thread_state64_get_lr(state));
+    fp = (uintptr_t)arm_thread_state64_get_fp(state);
+  }
+#elif defined(__x86_64__)
+  x86_thread_state64_t state;
+  mach_msg_type_number_t count = x86_THREAD_STATE64_COUNT;
+  if (thread_get_state(thread, x86_THREAD_STATE64, (thread_state_t)&state, &count) == KERN_SUCCESS) {
+    stack.frames[stack.count++] = (uintptr_t)state.__rip;
+    fp = (uintptr_t)state.__rbp;
+  }
+#endif
+  while (fp >= bottom && fp + 2 * sizeof(uintptr_t) <= top && fp % sizeof(uintptr_t) == 0 &&
+         stack.count < MainStack::kMaxFrames) {
+    const uintptr_t next = ((const uintptr_t *)fp)[0];
+    const uintptr_t returnAddress = CodeAddress(((const uintptr_t *)fp)[1]);
+    if (returnAddress == 0) {
+      break;
+    }
+    stack.frames[stack.count++] = returnAddress;
+    if (next <= fp) {
+      break;
+    }
+    fp = next;
+  }
+  thread_resume(thread);
+  return stack.count > 0;
+}
+
+/// A symbol's name as written in its source: Swift's and C++'s names come mangled.
+NSString *ReadableName(const char *name) {
+  using SwiftDemangle = char *(*)(const char *, size_t, char *, size_t *, uint32_t);
+  static SwiftDemangle swiftDemangle = (SwiftDemangle)dlsym(RTLD_DEFAULT, "swift_demangle");
+  char *readable = nullptr;
+  if (strncmp(name, "$s", 2) == 0 && swiftDemangle) {
+    readable = swiftDemangle(name, strlen(name), nullptr, nullptr, 0);
+  } else if (strncmp(name, "_Z", 2) == 0) {
+    int status = 0;
+    readable = abi::__cxa_demangle(name, nullptr, nullptr, &status);
+  }
+  NSString *result = [NSString stringWithUTF8String:readable ? readable : name] ?: @"?";
+  free(readable);
+  // Swift's full names run long; the line stays readable without the parameter list.
+  return result.length > 160 ? [[result substringToIndex:160] stringByAppendingString:@"…"] : result;
+}
+
+/// One line per frame: the library, the nearest symbol and how far past it. Library and offset
+/// let a stripped frame (Chromium's) be looked up later with the framework's own symbols.
+NSString *DescribeStack(const MainStack &stack) {
+  NSMutableArray<NSString *> *lines = [NSMutableArray array];
+  for (int i = 0; i < stack.count; i++) {
+    const uintptr_t address = stack.frames[i];
+    Dl_info info = {};
+    // A return address points just past the call; look up the call itself.
+    if (dladdr((const void *)(i == 0 ? address : address - 1), &info) == 0) {
+      [lines addObject:[NSString stringWithFormat:@"    #%-2d ? 0x%lx", i, (unsigned long)address]];
+      continue;
+    }
+    NSString *library = info.dli_fname ? @(info.dli_fname).lastPathComponent : @"?";
+    const uintptr_t imageOffset = address - (uintptr_t)info.dli_fbase;
+    if (info.dli_sname) {
+      [lines addObject:[NSString stringWithFormat:@"    #%-2d %@  %@ + %lu  (image +0x%lx)", i, library,
+                                                  ReadableName(info.dli_sname),
+                                                  (unsigned long)(address - (uintptr_t)info.dli_saddr),
+                                                  (unsigned long)imageOffset]];
+    } else {
+      [lines addObject:[NSString stringWithFormat:@"    #%-2d %@  +0x%lx", i, library, (unsigned long)imageOffset]];
+    }
+  }
+  return [lines componentsJoinedByString:@"\n"];
+}
+
+/// CPU time the main thread has used, in ms: against the wall clock it tells a main thread
+/// that was working from one that was waiting.
+double MainThreadCPUMs() {
+  thread_basic_info_data_t info;
+  mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+  const mach_port_t thread = pthread_mach_thread_np(pthread_main_thread_np());
+  if (thread_info(thread, THREAD_BASIC_INFO, (thread_info_t)&info, &count) != KERN_SUCCESS) {
+    return 0;
+  }
+  return (info.user_time.seconds + info.system_time.seconds) * 1000.0 +
+         (info.user_time.microseconds + info.system_time.microseconds) / 1000.0;
+}
+
 /// The watcher: pings the main thread, and while an answer is late, notes which section the
-/// main thread is in every 10 ms.
+/// main thread is in every 10 ms, and from 400 ms on takes its call stack every half second.
 void WatchMainThread() {
+  constexpr double kFirstStackMs = 400;
+  constexpr double kStackEveryMs = 500;
+  constexpr size_t kMaxStacksShown = 3;
   uint64_t ping = 0;
   for (;;) {
     usleep(kPingIntervalUs);
     const uint64_t mine = ++ping;
     const CFAbsoluteTime sent = CFAbsoluteTimeGetCurrent();
     const uint64_t pumpRunsBefore = gPumpRuns.load(std::memory_order_relaxed);
+    const double cpuBefore = MainThreadCPUMs();
     dispatch_async(dispatch_get_main_queue(), ^{
       gAppActive.store(NSApp.isActive, std::memory_order_relaxed);
       gAnsweredPing.store(mine, std::memory_order_release);
     });
 
     std::unordered_map<const char *, int> samples;
+    // Distinct stacks seen, with how many times each.
+    std::vector<std::pair<MainStack, int>> stacks;
+    double nextStackMs = kFirstStackMs;
     while (gAnsweredPing.load(std::memory_order_acquire) < mine) {
       usleep(kSampleIntervalUs);
       const char *section = gSection.load(std::memory_order_relaxed);
       samples[section ? section : kNoSection]++;
+      const double late = (CFAbsoluteTimeGetCurrent() - sent) * 1000;
+      if (late >= nextStackMs) {
+        nextStackMs += kStackEveryMs;
+        MainStack stack;
+        if (gAnsweredPing.load(std::memory_order_acquire) < mine && SampleMainStack(stack)) {
+          auto seen = std::find_if(stacks.begin(), stacks.end(),
+                                   [&](const auto &entry) { return entry.first == stack; });
+          if (seen != stacks.end()) {
+            seen->second++;
+          } else {
+            stacks.push_back({stack, 1});
+          }
+        }
+      }
     }
 
     const double waited = (CFAbsoluteTimeGetCurrent() - sent) * 1000;
     if (waited < kStallMs) {
       continue;
     }
+    const double cpu = MainThreadCPUMs() - cpuBefore;
     std::vector<std::pair<const char *, int>> ranked(samples.begin(), samples.end());
     std::sort(ranked.begin(), ranked.end(), [](const auto &a, const auto &b) { return a.second > b.second; });
     int total = 0;
@@ -365,10 +509,21 @@ void WatchMainThread() {
                                                    waited * entry.second / std::max(total, 1)]];
     }
     const uint64_t pumpRuns = gPumpRuns.load(std::memory_order_relaxed) - pumpRunsBefore;
-    PerfLog([NSString stringWithFormat:@"main thread stuck %.0f ms (%d browsers, %llu pump runs%@): %@",
-                                       waited, chromium::LiveBrowserCount(), pumpRuns,
-                                       gAppActive.load(std::memory_order_relaxed) ? @"" : @", app in background",
-                                       [shares componentsJoinedByString:@", "]]);
+    NSMutableString *report = [NSMutableString
+        stringWithFormat:@"main thread stuck %.0f ms, %.0f ms of it on the CPU (%d browsers, %llu pump runs%@): %@",
+                         waited, cpu, chromium::LiveBrowserCount(), pumpRuns,
+                         gAppActive.load(std::memory_order_relaxed) ? @"" : @", app in background",
+                         [shares componentsJoinedByString:@", "]];
+    std::sort(stacks.begin(), stacks.end(), [](const auto &a, const auto &b) { return a.second > b.second; });
+    int stackSamples = 0;
+    for (const auto &entry : stacks) {
+      stackSamples += entry.second;
+    }
+    for (size_t i = 0; i < stacks.size() && i < kMaxStacksShown; i++) {
+      [report appendFormat:@"\n  main thread's stack, %d of %d samples:\n%@", stacks[i].second, stackSamples,
+                           DescribeStack(stacks[i].first)];
+    }
+    PerfLog(report);
   }
 }
 
