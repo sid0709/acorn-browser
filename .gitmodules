@@ -4,3 +4,9 @@
 [submodule "codex"]
 	path = codex
 	url = https://github.com/openai/codex.git
+[submodule "AthensAI"]
+	path = AthensAI
+	url = https://github.com/sid0709/AthensAI.git
+[submodule "Oak"]
+	path = Oak
+	url = https://github.com/omnimuh730/Oak.git
