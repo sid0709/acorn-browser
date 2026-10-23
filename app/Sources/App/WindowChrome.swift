@@ -542,6 +542,7 @@ struct WindowShortcuts: View {
             key(",") { store.openPage(.settings) }
             key("\\") { store.toggleSplit() }
             key("c", modifiers: [.command, .shift]) { store.copyLink() }
+            key("b", modifiers: [.command, .shift]) { BrowserSettings.shared.showBookmarksBar.toggle() }
             key("=") { store.active.zoomIn() }
             key("-") { store.active.zoomOut() }
             key("0") { store.active.zoomReset() }

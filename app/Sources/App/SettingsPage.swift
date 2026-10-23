@@ -47,7 +47,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var terms: String {
         switch self {
         case .agent: "model openrouter key api runs agent panel"
-        case .appearance: "theme colors intensity grain dark light mode font size minimum tabs layout sidebar top"
+        case .appearance: "theme colors intensity grain dark light mode font size minimum tabs layout sidebar top bookmarks bar"
         case .search: "search engine google duckduckgo bing kagi custom address bar"
         case .tabs: "start page greeting shortcuts agent rows new tab startup"
         case .privacy: "clear browsing data history cookies cache site data incognito"
@@ -315,6 +315,12 @@ private struct AppearanceSettings: View {
                 .labelsHidden()
                 .pickerStyle(.segmented)
                 .frame(width: 220)
+            }
+            RowDivider()
+            SettingRow("Show the bookmarks bar", detail: "Saved pages under the toolbar (⇧⌘B).") {
+                Toggle("", isOn: $settings.showBookmarksBar)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
             }
             if store.verticalLayout {
                 RowDivider()
