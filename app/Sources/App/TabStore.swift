@@ -100,9 +100,14 @@ final class TabStore: ObservableObject {
     /// The site whose boost is being written, in a sheet.
     @Published var boostTarget: BoostTarget?
 
-    /// The tab being dragged, while it is: drop targets read it instead of the drag's payload,
-    /// which only says "a tab of this app".
+    /// The tab being dragged, while it is.
     @Published var draggedTab: UUID?
+    /// Where it would land if let go now (`TabDrag`).
+    @Published var dropSpot: TabDropSpot?
+    /// The drop targets on screen, and the pointer while a tab is dragged: neither redraws the
+    /// window as it changes.
+    let dropRegions = TabDropRegions()
+    let dragPointer = TabDragPointer()
     /// A group just made by a drag, whose name is waiting to be typed.
     @Published var renamingGroup: UUID?
 

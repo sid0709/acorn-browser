@@ -260,8 +260,8 @@ Browser
 
 ## Tabs: drag and drop, grouping, ungrouping (new `TabDrag.swift`; `TabStore.swift`, `TabStrip.swift`, `Sidebar.swift`)
 
-- Every tab row and pill is `.onDrag` with its id. A `TabDropDelegate` reads where the drop
-  lands on the target, along the main axis:
+- Every tab row and pill takes a drag gesture; each drop target registers its frame, and the
+  target under the pointer decides, along the main axis:
   - **Outer 25% at either end:** reorder, inserting before or after the target.
   - **Middle 50% of a tab:** group the two tabs. A new group appears with a highlight pulse, and
     the name field focuses.

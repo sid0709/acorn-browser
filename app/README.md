@@ -224,11 +224,15 @@ with its switch, a search, and a page of details (what it may reach, its id and 
 also holds site boosts (`Boosts.swift`): styles and a script of the person's own put into a
 site's pages when they load, never into the agent's tab.
 
-Tabs are dragged (`TabDrag.swift`): onto either end of another tab to move there, taking its
-group and pin; onto its middle to make a group of the two (the new folder's name opens for
-typing); onto a group's label or folder to join it; onto the open space below the sidebar's tabs
-to leave a group or a pin; among the pinned tiles to pin. The agent's tab neither moves nor
-takes a drop.
+Tabs are dragged (`TabDrag.swift`), in both layouts: onto either end of another tab to move
+there, taking its group and pin; onto its middle to make a group of the two, or to join the
+group that tab is in (a new folder's name opens for typing); onto a group's label or folder to
+join it; onto the open space below the sidebar's tabs or at the end of the tab row to leave a
+group or a pin; among the pinned tiles to pin; onto the page's right side to open it in a split.
+The agent's tab neither moves nor takes a drop. The drag is the app's own (a drag gesture, and
+the targets' frames looked up under the pointer) rather than AppKit's drag and drop, which went
+through the pasteboard with a type the system did not know, and lost the drop over the page to
+the Chromium view.
 
 ⌘\ (or the ⋮ menu, or a tab dropped on a page's right edge) puts two tabs side by side
 (`SplitView.swift`), each with its own toolbar and a handle between them; the pane clicked last
