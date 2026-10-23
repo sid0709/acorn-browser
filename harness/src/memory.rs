@@ -172,6 +172,7 @@ pub(crate) fn describe(action: &Action) -> String {
                 Kind::TripleClick { .. } => "triple_click",
                 Kind::RightClick { .. } => "right_click",
                 Kind::Hover { .. } => "hover",
+                Kind::Drag { .. } => "drag",
                 Kind::Upload { .. } => "upload",
                 _ => "action",
             };
@@ -261,7 +262,7 @@ mod tests {
     #[test]
     fn a_summary_line_names_the_step_and_its_actions() {
         let actions = vec![
-            Action::new("a", Kind::Click { x: 10.0, y: 20.0 }),
+            Action::new("a", Kind::Click { x: 10.0, y: 20.0, modifiers: String::new() }),
             Action::new("b", Kind::Type { text: "hello".into(), secret: false }),
             Action::new("c", Kind::Type { text: "pw".into(), secret: true }),
         ];
