@@ -12,11 +12,15 @@ Each stage ends with `cargo test` in `harness/` and `runner/`, `scripts/build.sh
 a `bench/run.py --mode dom` run whose numbers go into `docs/harness-log.md`. A stage that lowers
 the pass rate is not done.
 
-Status: stage 0 is done (`feat/answer-in-words`, #17) and stage 1 is in progress
-(`feat/intake-overlap`): the reading of the request runs while the site opens, and the intake
-may go to a faster model; folding the reading into the router's first call and loading the
-first guess in a background tab wait for the router of stage 2. `docs/harness-log.md` has each
-stage's numbers.
+Status: stage 0 is done (`feat/answer-in-words`, #17), stage 1 is done (`feat/intake-overlap`,
+#18: the reading of the request runs while the site opens, and the intake may go to a faster
+model), and stage 2 is in progress (`feat/whole-page-map`). The measurements shaped stage 2:
+the `read` move needed no new move, since the map holds every node of the page and only
+rendered one screen of it, so the map now lists the whole page and the model acts on any node
+by number without scrolling; the person's messages needed only a way to reach the runner,
+since the harness had `Agent::say`. A router apart from the driving model, the first guess
+loaded in a background tab and candidates read in parallel wait for the model tiers of stage
+4, where a fast model makes them pay. `docs/harness-log.md` has each stage's numbers.
 
 ## Why: where the time goes
 

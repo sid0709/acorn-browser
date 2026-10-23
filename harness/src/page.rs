@@ -188,28 +188,40 @@ impl PageMap {
         self.nodes.iter().filter(|n| n.is_control()).count()
     }
 
-    /// Whether each node is in view: a control when its centre is, text when any of it is, a
-    /// node with no box when its parent is.
-    fn in_view(&self, viewport: &Viewport) -> Vec<bool> {
+    /// Where each node lies against the view: on it (a control when its centre is, text when
+    /// any of it is), above it or below it. A node with no box follows its parent.
+    fn placements(&self, viewport: &Viewport) -> Vec<Place> {
         let top = viewport.scroll_y;
         let bottom = viewport.scroll_y + viewport.height as f64;
-        let mut seen = Vec::with_capacity(self.nodes.len());
+        let mut out = Vec::with_capacity(self.nodes.len());
         // The nearest line above at each depth, to find a node's parent.
-        let mut parents: Vec<bool> = Vec::new();
+        let mut parents: Vec<Place> = Vec::new();
         for node in &self.nodes {
             parents.truncate(node.depth as usize);
-            let shown = if node.boxless() {
-                parents.last().copied().unwrap_or(true)
+            let place = if node.boxless() {
+                parents.last().copied().unwrap_or(Place::View)
             } else if node.is_text() {
-                node.y + node.h > top && node.y < bottom
+                if node.y + node.h <= top {
+                    Place::Above
+                } else if node.y >= bottom {
+                    Place::Below
+                } else {
+                    Place::View
+                }
             } else {
                 let centre = node.y + node.h / 2.0;
-                centre >= top && centre < bottom
+                if centre < top {
+                    Place::Above
+                } else if centre >= bottom {
+                    Place::Below
+                } else {
+                    Place::View
+                }
             };
-            seen.push(shown);
-            parents.push(shown);
+            out.push(place);
+            parents.push(place);
         }
-        seen
+        out
     }
 
     /// The map as the model reads it, within the default budget.
@@ -217,68 +229,64 @@ impl PageMap {
         self.text_within(viewport, BUDGET)
     }
 
-    /// The map as the model reads it: the view, then a minimap of the rest, within `budget`
-    /// bytes. Over budget, text lines go first, then the minimap is cut short; controls in view
-    /// are always kept.
+    /// The map as the model reads it, within `budget` bytes: the view, then the rest of the
+    /// page in the same form (BELOW THE SCREEN, then ABOVE THE SCREEN), so a page that fits is
+    /// read whole without a scroll and any node of it acted on by number; what does not fit
+    /// is summed up in a minimap, one line per screen's worth. Over budget, the lines farthest
+    /// from the screen go first (the part above it, then the part below from its far end),
+    /// then the text lines of the view from its bottom up, then the minimap is cut short;
+    /// controls in view are always kept.
     pub fn text_within(&self, viewport: &Viewport, budget: usize) -> String {
-        let shown = self.in_view(viewport);
+        let places = self.placements(viewport);
         let top = viewport.scroll_y;
         let bottom = viewport.scroll_y + viewport.height as f64;
         let header = format!("VIEW y={top:.0}..{bottom:.0} of {:.0}", viewport.page_height);
-        let in_view: Vec<&PageNode> = self.nodes.iter().zip(&shown).filter(|(_, seen)| **seen).map(|(node, _)| node).collect();
-        let mut view: Vec<(bool, String)> = fold(&in_view, viewport);
-        let height = (viewport.height as f64).max(1.0);
-        let mut bands: std::collections::BTreeMap<i64, Band> = std::collections::BTreeMap::new();
-        for (node, &seen) in self.nodes.iter().zip(&shown) {
-            if seen || node.is_text() || node.boxless() {
-                continue;
-            }
-            let band = bands.entry((node.y / height).floor() as i64).or_default();
-            if node.is_control() {
-                band.controls += 1;
-                let name = cut(&node.name, MINIMAP_NAME_CHARS);
-                if !name.is_empty() && band.names.len() < MINIMAP_NAMES && !band.names.contains(&name) {
-                    band.names.push(name);
-                }
-            } else if node.role == "heading" && band.headings.len() < MINIMAP_HEADINGS {
-                band.headings.push(cut(&node.name, MINIMAP_HEADING_CHARS));
-            }
-        }
-        let mut minimap: Vec<String> = bands
-            .iter()
-            .filter(|(_, band)| band.controls > 0 || !band.headings.is_empty())
-            .map(|(i, band)| {
-                let mut line = format!("  y={:.0}..{:.0}  {} controls", *i as f64 * height, (*i + 1) as f64 * height, band.controls);
-                if !band.headings.is_empty() {
-                    line.push_str(&format!("  headings: {}", quoted(&band.headings)));
-                }
-                if !band.names.is_empty() {
-                    line.push_str(&format!("  e.g. {}", quoted(&band.names)));
-                }
-                line
-            })
-            .collect();
-
-        let size = |view: &[(bool, String)], minimap: &[String]| header.len() + view.iter().map(|(_, l)| l.len() + 1).sum::<usize>() + minimap.iter().map(|l| l.len() + 1).sum::<usize>() + 8;
+        let of = |place: Place| -> Vec<&PageNode> { self.nodes.iter().zip(&places).filter(|(_, p)| **p == place).map(|(node, _)| node).collect() };
+        let mut view = fold(&of(Place::View), viewport);
+        let mut above = fold(&of(Place::Above), viewport);
+        let mut below = fold(&of(Place::Below), viewport);
+        // Nodes above `above_from`, and from `below_to` down, are not listed and go to the minimap.
+        let mut above_from = f64::NEG_INFINITY;
+        let mut below_to = f64::INFINITY;
+        let mut minimap = self.minimap(viewport, &places, above_from, below_to);
+        let size = |view: &[Line], below: &[Line], above: &[Line], minimap: &[String]| {
+            let lines = |part: &[Line]| part.iter().map(|l| l.line.len() + 1).sum::<usize>();
+            let section = |part: &[Line]| if part.is_empty() { 0 } else { BELOW_HEADER.len() + 1 + lines(part) };
+            header.len() + lines(view) + section(below) + section(above) + if minimap.is_empty() { 0 } else { 8 + minimap.iter().map(|l| l.len() + 1).sum::<usize>() } + 32
+        };
         let mut left_out = 0;
-        // Text lines go first, from the bottom of the view up.
-        while size(&view, &minimap) > budget {
-            match view.iter().rposition(|(text, _)| *text) {
-                Some(i) => {
-                    view.remove(i);
-                    left_out += 1;
-                }
-                None => break,
+        while size(&view, &below, &above, &minimap) > budget {
+            if !above.is_empty() {
+                above.remove(0);
+                above_from = above.first().map(|l| l.y).unwrap_or(f64::INFINITY);
+                minimap = self.minimap(viewport, &places, above_from, below_to);
+            } else if let Some(last) = below.pop() {
+                below_to = last.y;
+                minimap = self.minimap(viewport, &places, above_from, below_to);
+            } else if let Some(i) = view.iter().rposition(|l| l.text) {
+                view.remove(i);
+            } else if minimap.len() > MIN_MINIMAP_LINES {
+                minimap.pop();
+            } else {
+                break;
             }
-        }
-        while size(&view, &minimap) > budget && minimap.len() > MIN_MINIMAP_LINES {
-            minimap.pop();
             left_out += 1;
         }
         let mut out = header;
-        for (_, line) in &view {
+        for line in &view {
             out.push('\n');
-            out.push_str(line);
+            out.push_str(&line.line);
+        }
+        for (name, lines) in [(BELOW_HEADER, &below), (ABOVE_HEADER, &above)] {
+            if lines.is_empty() {
+                continue;
+            }
+            out.push('\n');
+            out.push_str(name);
+            for line in lines {
+                out.push('\n');
+                out.push_str(&line.line);
+            }
         }
         if !minimap.is_empty() {
             out.push_str("\nMINIMAP");
@@ -292,16 +300,77 @@ impl PageMap {
         }
         out
     }
+
+    /// One line per screen's worth of the page for the nodes the map does not list: those above
+    /// `above_from` and those from `below_to` down.
+    fn minimap(&self, viewport: &Viewport, places: &[Place], above_from: f64, below_to: f64) -> Vec<String> {
+        let height = (viewport.height as f64).max(1.0);
+        let mut bands: std::collections::BTreeMap<i64, Band> = std::collections::BTreeMap::new();
+        for (node, &place) in self.nodes.iter().zip(places) {
+            let summed = match place {
+                Place::View => false,
+                Place::Above => node.y < above_from,
+                Place::Below => node.y >= below_to,
+            };
+            if !summed || node.is_text() || node.boxless() {
+                continue;
+            }
+            let band = bands.entry((node.y / height).floor() as i64).or_default();
+            if node.is_control() {
+                band.controls += 1;
+                let name = cut(&node.name, MINIMAP_NAME_CHARS);
+                if !name.is_empty() && band.names.len() < MINIMAP_NAMES && !band.names.contains(&name) {
+                    band.names.push(name);
+                }
+            } else if node.role == "heading" && band.headings.len() < MINIMAP_HEADINGS {
+                band.headings.push(cut(&node.name, MINIMAP_HEADING_CHARS));
+            }
+        }
+        bands
+            .iter()
+            .filter(|(_, band)| band.controls > 0 || !band.headings.is_empty())
+            .map(|(i, band)| {
+                let mut line = format!("  y={:.0}..{:.0}  {} controls", *i as f64 * height, (*i + 1) as f64 * height, band.controls);
+                if !band.headings.is_empty() {
+                    line.push_str(&format!("  headings: {}", quoted(&band.headings)));
+                }
+                if !band.names.is_empty() {
+                    line.push_str(&format!("  e.g. {}", quoted(&band.names)));
+                }
+                line
+            })
+            .collect()
+    }
+}
+
+/// Where a node lies against the view.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Place {
+    Above,
+    View,
+    Below,
+}
+
+const BELOW_HEADER: &str = "BELOW THE SCREEN";
+const ABOVE_HEADER: &str = "ABOVE THE SCREEN";
+
+/// One line of the map's text, with what it stands for: whether it is plain text (the first to
+/// go for room) and where on the page it is.
+struct Line {
+    text: bool,
+    line: String,
+    y: f64,
 }
 
 /// The lines of the view, with runs of blocks of the same shape folded: a list of results is
 /// many cards alike, and the model needs the first few whole and the rest one line each, with
 /// the number to act on. A block is a list item with what is under it, or, with no list round
 /// them, one period of a run of nodes whose roles repeat.
-fn fold(nodes: &[&PageNode], viewport: &Viewport) -> Vec<(bool, String)> {
+fn fold(nodes: &[&PageNode], viewport: &Viewport) -> Vec<Line> {
     let blocks = blocks_of(nodes);
     let mut out = Vec::new();
     let mut i = 0;
+    let whole = |block: &Block| -> Vec<Line> { block.nodes.iter().map(|node| Line { text: node.is_text(), line: node.line_in(viewport), y: node.y }).collect() };
     while i < blocks.len() {
         // How many blocks from here have the same shape as this one.
         let shape = &blocks[i].shape;
@@ -311,14 +380,14 @@ fn fold(nodes: &[&PageNode], viewport: &Viewport) -> Vec<(bool, String)> {
         }
         if run < FOLD_AFTER {
             for block in &blocks[i..i + run] {
-                out.extend(block.nodes.iter().map(|node| (node.is_text(), node.line_in(viewport))));
+                out.extend(whole(block));
             }
         } else {
             for (k, block) in blocks[i..i + run].iter().enumerate() {
                 if k < FULL_BLOCKS {
-                    out.extend(block.nodes.iter().map(|node| (node.is_text(), node.line_in(viewport))));
+                    out.extend(whole(block));
                 } else {
-                    out.push((false, block.folded()));
+                    out.push(Line { text: false, line: block.folded(), y: block.nodes[0].y });
                 }
             }
         }
@@ -426,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn the_map_reads_as_lines_with_live_state_and_a_minimap() {
+    fn the_map_reads_as_lines_with_live_state_and_the_rest_of_the_page_below() {
         let map = govuk();
         let text = map.text(&viewport(0.0));
         assert!(text.starts_with("VIEW y=0..800 of 1170\n"), "{text}");
@@ -438,19 +507,24 @@ mod tests {
         assert!(text.contains("combobox[15] \"Select a country\" value=\"United States\" hasPopup=menu @279,335 103x19\n    option[16] \"Choose\"\n    option[17] \"United States\" selected\n"), "{text}");
         // A pressed div with no role is a clickable, named from its text.
         assert!(text.contains("clickable[19] \"Healthcare worker visa Read about eligibility\" class=card"), "{text}");
-        // The footer is out of view: one line for its screen.
-        assert!(text.ends_with("MINIMAP\n  y=800..1600  5 controls  headings: \"Support links\"  e.g. \"Help\" \"Cookies\" \"Contact\" \"Terms and conditions\""), "{text}");
+        // The footer is out of view, and the page fits: it is listed whole, after the view, to
+        // act on by number without a scroll.
+        assert!(text.contains("\nBELOW THE SCREEN\ncontentinfo[23] @0,916 1280x254\n  heading[24] \"Support links\" level=2 @30,976 1220x28\n"), "{text}");
+        assert!(text.contains("      link[27] \"Help\" @70,1024 33x17"), "{text}");
+        assert!(!text.contains("MINIMAP"), "{text}");
         assert_eq!(map.controls(), 20);
     }
 
     #[test]
-    fn scrolling_moves_the_view_and_the_minimap() {
+    fn scrolling_moves_the_view_and_what_was_passed_is_listed_above() {
         let map = govuk();
         let text = map.text(&viewport(600.0));
         assert!(text.starts_with("VIEW y=600..1400 of 1170\n"));
-        assert!(text.contains("link[27] \"Help\""), "{text}");
-        assert!(!text.contains("radio[10]"), "{text}");
-        assert!(text.contains("MINIMAP\n  y=0..800  "), "{text}");
+        let (view, above) = text.split_once("\nABOVE THE SCREEN\n").unwrap();
+        assert!(view.contains("link[27] \"Help\""), "{text}");
+        assert!(!view.contains("radio[10]"), "{text}");
+        assert!(above.contains("radio[10] \"Work, academic visit or business\""), "{text}");
+        assert!(!text.contains("MINIMAP"), "{text}");
     }
 
     /// The same page, captured by the reference builder scrolled to its foot (370 px down), with
@@ -468,9 +542,10 @@ mod tests {
         assert_eq!((header.x, header.y), (30.0, 12.0));
         let text = map.text(&viewport);
         assert!(text.starts_with("VIEW y=370..1170 of 1170\n"), "{text}");
-        assert!(text.contains("link[27] \"Help\""), "{text}");
-        assert!(!text.contains("radio[10]"), "{text}");
-        assert!(text.contains("MINIMAP\n  y=0..800  "), "{text}");
+        let (view, above) = text.split_once("\nABOVE THE SCREEN\n").unwrap();
+        assert!(view.contains("link[27] \"Help\""), "{text}");
+        assert!(!view.contains("radio[10]"), "{text}");
+        assert!(above.contains("radio[10]"), "{text}");
     }
 
     /// The table's last row sat half below the screen in a run: the map held its cells, so the
@@ -531,20 +606,42 @@ mod tests {
         assert!(!text.contains("button[33]"), "{text}");
         // The controls above the list are untouched.
         assert!(text.contains("searchbox[2] \"Search Shopmart\" value=\"laptop\""), "{text}");
-        let lines = text.lines().count();
+        let (view, below) = text.split_once("\nBELOW THE SCREEN\n").unwrap();
+        let lines = view.lines().count();
         assert!(lines < 60, "{lines} lines:\n{text}");
+        // The rest of the page follows in the same form, folded alike, down to the pagination,
+        // which the model can press without scrolling to it.
+        assert!(below.contains("· button[82] \"Add to cart\"  \"$274.00\""), "{text}");
+        assert!(below.contains("link[129] \"Next\""), "{text}");
     }
 
     #[test]
-    fn over_budget_text_goes_first_then_the_minimap_and_controls_stay() {
+    fn over_budget_the_far_part_of_the_page_goes_first_then_text_in_view_and_controls_stay() {
         let map = govuk();
         let full = map.text(&viewport(0.0));
+        // A little over: the last lines below the screen go, summed up in the minimap instead;
+        // the view keeps its text.
         let small = map.text_within(&viewport(0.0), full.len() - 40);
-        assert!(small.len() <= full.len() - 40 + 40, "{small}");
-        assert!(!small.contains("\"You need a visa if you are coming for more than 6 months.\""), "{small}");
-        assert!(small.contains("button[20] \"Continue\""), "{small}");
+        assert!(small.contains("\"You need a visa if you are coming for more than 6 months.\""), "{small}");
+        assert!(small.contains("\nBELOW THE SCREEN\ncontentinfo[23]"), "{small}");
+        assert!(!small.contains("link[34]"), "{small}");
+        assert!(small.contains("\nMINIMAP\n  y=800..1600  "), "{small}");
         assert!(small.ends_with("lines left out for room)"), "{small}");
+        // Far over: the text in view goes too; the controls in view stay, and the rest of the
+        // page is a minimap line.
         let tiny = map.text_within(&viewport(0.0), 1);
-        assert!(tiny.contains("button[20] \"Continue\""));
+        assert!(tiny.contains("button[20] \"Continue\""), "{tiny}");
+        assert!(!tiny.contains("\"You need a visa"), "{tiny}");
+        assert!(!tiny.contains("BELOW THE SCREEN") && tiny.contains("MINIMAP\n  y=800..1600  5 controls"), "{tiny}");
+    }
+
+    #[test]
+    fn a_long_page_lists_the_nearest_screens_whole_and_sums_up_the_rest() {
+        let map: PageMap = serde_json::from_str(include_str!("fixtures/shop.page.json")).unwrap();
+        let viewport = Viewport { width: 1280, height: 800, page_width: 1280.0, page_height: 1600.0, ..Default::default() };
+        let text = map.text_within(&viewport, 2500);
+        assert!(text.contains("button[4] \"Search\""), "{text}");
+        assert!(text.contains("\nMINIMAP\n  y=800..1600  ") && text.ends_with("lines left out for room)"), "{text}");
+        assert!(text.len() <= 2500 + 40, "{}", text.len());
     }
 }

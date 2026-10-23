@@ -118,13 +118,14 @@ struct ChatSidebar: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Give the agent a task", text: $draft, axis: .vertical)
+            // The field stays open while the agent works: a message sent then reaches it with
+            // its next look, so the person can steer or correct it without stopping it.
+            TextField(runner.isRunning ? "Tell the agent something while it works" : "Give the agent a task", text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13.5))
                 .foregroundStyle(palette.ink)
                 .lineLimit(1...8)
                 .focused($composerFocused)
-                .disabled(runner.isRunning)
                 .onSubmit(send)
                 .padding(.horizontal, 4)
             HStack(spacing: 8) {
@@ -132,6 +133,9 @@ struct ChatSidebar: View {
                 modeSwitch
                 Spacer()
                 modelSummary
+                if runner.isRunning {
+                    stopButton
+                }
                 sendButton
             }
         }
@@ -143,16 +147,28 @@ struct ChatSidebar: View {
     }
 
     private var sendButton: some View {
-        Button(action: runner.isRunning ? runner.stop : send) {
-            Image(systemName: runner.isRunning ? "stop.fill" : "arrow.up")
+        Button(action: send) {
+            Image(systemName: "arrow.up")
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(palette.onAccent)
                 .frame(width: 28, height: 28)
-                .background(Circle().fill(palette.accent.opacity(runner.isRunning || canSend ? 1 : 0.3)))
+                .background(Circle().fill(palette.accent.opacity(canSend ? 1 : 0.3)))
         }
         .buttonStyle(.plain)
-        .disabled(!runner.isRunning && !canSend)
-        .help(runner.isRunning ? "Stop the agent" : "Send")
+        .disabled(!canSend)
+        .help(runner.isRunning ? "Send to the agent while it works" : "Send")
+    }
+
+    private var stopButton: some View {
+        Button(action: runner.stop) {
+            Image(systemName: "stop.fill")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(palette.ink)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(palette.hover))
+        }
+        .buttonStyle(.plain)
+        .help("Stop the agent")
     }
 
     /// Opens the searchable list of OpenRouter's models. The pick drives the next run; the

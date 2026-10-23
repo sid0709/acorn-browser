@@ -58,11 +58,26 @@ final class AgentRunner: ObservableObject {
         return Bundle.main.resourceURL?.appendingPathComponent("acorn-runner")
     }
 
+    /// Starts a run with the text, or, while one runs, hands the text to it: the harness reads
+    /// it with its next look, stops a plan running without the model, and lets the model
+    /// change course.
     func submit(_ text: String) {
         let task = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !task.isEmpty, !isRunning else { return }
+        guard !task.isEmpty else { return }
         messages.append(ChatMessage(kind: .person, text: task))
-        start(task)
+        if isRunning {
+            say(task)
+        } else {
+            start(task)
+        }
+    }
+
+    private var input: Pipe?
+
+    /// Sends a message to the running harness, one JSON line on its standard input.
+    private func say(_ text: String) {
+        guard let input, let data = try? JSONSerialization.data(withJSONObject: ["say": text]) else { return }
+        input.fileHandleForWriting.write(data + Data([0x0A]))
     }
 
     func stop() {
@@ -102,8 +117,11 @@ final class AgentRunner: ObservableObject {
         ]
         let output = Pipe()
         let errors = Pipe()
+        let input = Pipe()
         process.standardOutput = output
         process.standardError = errors
+        process.standardInput = input
+        self.input = input
 
         // Every event the runner prints is also kept in the run's folder, for looking back.
         let eventsFile = runDirectory.appendingPathComponent("events.jsonl")
@@ -165,6 +183,8 @@ final class AgentRunner: ObservableObject {
     private func ended(status: Int32, errorText: String) {
         isRunning = false
         process = nil
+        try? input?.fileHandleForWriting.close()
+        input = nil
         if stopped {
             messages.append(ChatMessage(kind: .agent, text: "Stopped."))
         } else if !finished && status != 0 {

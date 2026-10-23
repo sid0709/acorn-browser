@@ -7,6 +7,53 @@ and why that rather than a patch; and what the bench said afterwards. A commit m
 the what; this log keeps the why, so that a rule in the code can be traced to the run that
 asked for it. Newest first.
 
+## 2026-10-23 — Stage 2 of the agent plan: the page read whole, and the person heard while the agent works
+
+Branch `feat/whole-page-map`. Stage 2 of `docs/agent-plan.md` as the measurements shaped it:
+the plan's `read` move (the whole text of a page at once) turned out to need no new move,
+since the map already holds every node of the page and only rendered one screen of it; and
+the person's messages needed no new channel in the harness, which had `Agent::say` and an
+inbox the model reads with its next look, only a way for them to reach the runner.
+
+**Observed.** On the bench, DOM-mode runs scrolled to read: L1 took two scrolls to reach the
+baggage table that was in the map from the first look, and every mission spent steps on
+`scroll to` with nothing else in them. The sidebar's field was disabled while a run went on,
+so the person could only stop the agent, never correct it.
+
+**Causes.**
+1. `PageMap::text` rendered the nodes on the screen in full and summed the rest up as a
+   minimap, so the model had to scroll a screen at a time to see what the browser already
+   had, and could not act on a node below the screen by number without first scrolling to it,
+   although the browser scrolls a numbered node into view itself before acting on it.
+2. The app's `AgentRunner` started the runner without a standard input, and the sidebar
+   disabled its field while `isRunning`.
+
+**Changed.**
+1. The map lists the whole page: the view first, then BELOW THE SCREEN and ABOVE THE SCREEN
+   in the same form (folded alike), as far as the 24 KB budget allows; what does not fit is
+   the minimap as before. Over budget, the lines farthest from the screen go first (above,
+   then below from the far end), then the view's text, then the minimap; controls in view
+   always stay. The prompt says to act on any listed node by number and to scroll only for the
+   minimap, for pages that load as they scroll, and to bring the proof into view. Tests cover
+   the listing, the order of what goes, and a long page.
+2. The runner collects `{"say": "..."}` lines from its standard input on a thread and hands
+   them to the harness before each look (`Agent::say`), which reads them with that look and
+   stops a plan running on its own; the app pipes the sidebar's field to it while the run goes
+   on, with a stop button beside the send button.
+
+**Bench after.** `bench/results/20261023-162044.md`, DOM mode: 4 of 5 on the screen, 4 of 5
+answers right, 467 s of which 241 s waiting on the models (from 656 s and 403 s in
+`20261023-151826`, and 951 s in `20261023-145326`): L1 pass, 6 steps, 58 s; L2 pass, 5 steps,
+59 s; L4 pass, 26 steps, 168 s; L5 pass, 11 steps, 72 s, the capture of 2 January 2005 and
+its tsunami appeal reported; L3 found The Banter Thread with 5,518 replies on the sorted list,
+opened it, and ended `stuck` because the done check reads the page the run is on, where the
+count is not, so two "done"s went unconfirmed. The harness's own time came to 3.6 s a step.
+
+**Left open.** A proof that spans two pages (the sorted list, then the item opened) is not
+confirmed from the last page alone; the done check should see the look before as well, or
+take the answer's figure with the list that showed it. The judge picks eight screenshots and
+can drop the list's, which failed L3 on the screen too.
+
 ## 2026-10-23 — Stage 1 of the agent plan: the request read while the site opens
 
 Branch `feat/intake-overlap`. Stage 1 of `docs/agent-plan.md` takes the serial preamble apart:
