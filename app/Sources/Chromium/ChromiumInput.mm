@@ -9,6 +9,10 @@ namespace {
 /// The keyboard input source that was selected before the agent switched to a Latin one.
 TISInputSourceRef gSavedInputSource = nullptr;
 
+/// The buttons the agent holds down (bit 0 left, bit 1 right), kept here rather than read from
+/// the system, which learns of a posted event a moment later.
+NSUInteger gHeldButtons = 0;
+
 CGEventType MouseType(ChromiumMouseButton button, BOOL down) {
   if (button == ChromiumMouseButtonRight) {
     return down ? kCGEventRightMouseDown : kCGEventRightMouseUp;
@@ -107,7 +111,7 @@ void Post(CGEventRef event) {
     return NO;
   }
   // While a button is held the move is a drag, which is how the page sees a stroke.
-  const NSUInteger held = NSEvent.pressedMouseButtons;
+  const NSUInteger held = gHeldButtons;
   CGEventType type = kCGEventMouseMoved;
   CGMouseButton button = kCGMouseButtonLeft;
   if (held & 1) {
@@ -136,6 +140,8 @@ void Post(CGEventRef event) {
   CGEventSetIntegerValueField(event, kCGMouseEventClickState, clickCount);
   CGEventSetFlags(event, flags);
   Post(event);
+  const NSUInteger bit = button == ChromiumMouseButtonRight ? 2 : 1;
+  gHeldButtons = down ? (gHeldButtons | bit) : (gHeldButtons & ~bit);
   return YES;
 }
 
