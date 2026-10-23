@@ -37,8 +37,10 @@ with no sites or key points; run it with `--no-judge`.
 
 For each run the table shows the agent's own verdict (`done`, `need_person`, `stuck`), the
 judge's verdict (`pass` or `fail`, with its reason), the steps, the time and the cost. The
-judge is given the request, the key points, up to eight screenshots spread over the run with
-the last one always in, and the timeline of actions; it needs `OPENROUTER_API_KEY` (from the
+judge is given the request, the key points, up to eight screenshots (the last one always, the
+ones where a focused field had just changed its value, since a wrong pick in a dropdown and its
+correction a step later look the same in an even spread, and the rest spread over the run), and
+the timeline of actions; it needs `OPENROUTER_API_KEY` (from the
 environment, the app's `.env`, or `kit/.env`). The judge's pass rate is the number to compare
 with the benchmark's leaders; Aside reports 99.0% over all 300 tasks with GPT-5.5 (100% easy,
 99.3% medium, 97.4% hard) in its own grading.

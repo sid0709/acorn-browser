@@ -109,6 +109,10 @@ def run_mission(runner, task_file, trace_dir, extra):
             row["understood"] = event.get("summary", "")
             print(f"  understood: {row['understood']}  [{event.get('startUrl') or '(current page)'}]")
             print(f"  done when: {event.get('doneWhen', '')}")
+            for n, line in enumerate(event.get('approach') or [], 1):
+                print(f"  approach {n}: {line}")
+            for line in event.get('watchOut') or []:
+                print(f"  watch out: {line}")
         elif kind == "step":
             row["steps"] = event.get("number", row["steps"])
             print(f"  step {event.get('number')}: {event.get('message', '')}")
@@ -139,12 +143,49 @@ def trace_evidence(trace_dir, run_id):
             return [], ""
         folder = candidates[-1]
     shots = sorted(p for p in folder.glob("*.jpg") if ".marked." not in p.name and ".survey" not in p.name)
-    if len(shots) > JUDGE_SHOTS:
-        step = (len(shots) - 1) / (JUDGE_SHOTS - 1)
-        shots = [shots[round(i * step)] for i in range(JUDGE_SHOTS)]
+    shots = pick_shots(shots, [field_value(p.with_suffix(".json")) for p in shots], JUDGE_SHOTS)
     timeline = folder / "timeline.txt"
+
     actions = timeline.read_text() if timeline.exists() else ""
     return shots, actions[-6000:]
+
+
+def field_value(entry):
+    """What the focused field showed when the screenshot was taken, or None when none was
+    focused; read from the trace entry beside the screenshot."""
+    try:
+        focus = json.loads(entry.read_text()).get("focus") or {}
+    except (OSError, ValueError):
+        return None
+    if not focus:
+        return None
+    return (focus.get("label", ""), focus.get("value", ""), focus.get("checked"))
+
+
+def pick_shots(shots, values, limit):
+    """At most `limit` of the screenshots, in order: the last one always; then the ones where
+    the focused field had just changed its value, newest first, since a wrong pick in a
+    dropdown and its correction a step later look the same in an even spread (a judge once
+    saw the wrong country and never the right one); the rest spread evenly over the run."""
+    if len(shots) <= limit:
+        return shots
+    chosen = {len(shots) - 1}
+    changed = [i for i in range(1, len(shots)) if values[i] is not None and values[i] != values[i - 1]]
+    for i in reversed(changed):
+        if len(chosen) >= max(1, limit // 2):
+            break
+        chosen.add(i)
+    step = (len(shots) - 1) / (limit - 1)
+    for i in range(limit):
+        if len(chosen) >= limit:
+            break
+        chosen.add(round(i * step))
+    # The even spread may already hold a chosen one; fill the rest from the newest down.
+    for i in reversed(range(len(shots))):
+        if len(chosen) >= limit:
+            break
+        chosen.add(i)
+    return [shots[i] for i in sorted(chosen)]
 
 
 def judge(key, request, key_points, shots, actions):
