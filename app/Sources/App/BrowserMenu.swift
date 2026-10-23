@@ -119,7 +119,12 @@ struct FindBar: View {
         .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
         .padding(.top, 8)
         .padding(.trailing, 24)
-        .onAppear { focused = true }
+        .onAppear {
+            // Claiming focus in the same beat the bar is inserted loses the race against
+            // its own entrance transition (and the page underneath, which is glad to take
+            // the keystrokes instead): give the transition a moment to finish first.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { focused = true }
+        }
         .onExitCommand { tab.stopFinding() }
     }
 }

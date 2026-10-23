@@ -131,7 +131,7 @@ private struct BrowserCard: View {
     var body: some View {
         VStack(spacing: 0) {
             addressRow
-            ZStack(alignment: .topTrailing) {
+            ZStack(alignment: .top) {
                 BrowserPane(view: tab.view)
                 ProgressView(value: tab.isLoading ? tab.progress : 0)
                     .progressViewStyle(.linear)
@@ -141,9 +141,10 @@ private struct BrowserCard: View {
                     // Clear of the page's own vertical scrollbar, which draws in this
                     // same top strip and would otherwise cut into the bar.
                     .padding(.trailing, 16)
-                    .frame(maxWidth: .infinity, alignment: .top)
                 if tab.isFinding {
-                    FindBar(tab: tab).transition(.move(edge: .top).combined(with: .opacity))
+                    FindBar(tab: tab)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
         }
