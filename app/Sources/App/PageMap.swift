@@ -186,17 +186,17 @@ extension AgentDriver {
         ((value as? [Any]) ?? []).map { ($0 as? NSNumber)?.intValue ?? -1 }
     }
 
-    /// Reads the snapshot's columns into one entry per node. Layout bounds are relative to the
-    /// document's own scroll, and a child document's to its frame: both offsets are added, so
-    /// every box is in page coordinates.
+    /// Reads the snapshot's columns into one entry per node. Layout bounds are in the coordinates
+    /// of the node's own document, wherever that document is scrolled to: the main document's
+    /// are page coordinates as they are. A child document sits where the iframe that holds it
+    /// is, less what the child has scrolled; that offset moves its boxes onto the page.
     nonisolated private static func readSnapshot(_ reply: [String: Any], scale: Double) -> Snapshot {
         let strings = (reply["strings"] as? [String]) ?? []
         let documents = (reply["documents"] as? [[String: Any]]) ?? []
         let str = { (i: Int) -> String in i >= 0 && i < strings.count ? strings[i] : "" }
         var snap = Snapshot()
         var offsets = [(x: Double, y: Double)](repeating: (0, 0), count: documents.count)
-        // Where each child document sits: the box of the iframe that holds it, plus its own
-        // document's offset. Documents are listed parents first; a second pass catches the rest.
+        // Documents are listed parents first; a second pass catches the rest.
         for _ in 0..<2 {
             for (d, doc) in documents.enumerated() {
                 let nodes = (doc["nodes"] as? [String: Any]) ?? [:]
@@ -205,13 +205,14 @@ extension AgentDriver {
                 let indexes = ints(content["index"]), values = ints(content["value"])
                 let laidIndex = ints(layout["nodeIndex"])
                 let bounds = (layout["bounds"] as? [[Any]]) ?? []
-                let sx = (doc["scrollOffsetX"] as? NSNumber)?.doubleValue ?? 0
-                let sy = (doc["scrollOffsetY"] as? NSNumber)?.doubleValue ?? 0
                 for (k, i) in indexes.enumerated() where k < values.count && values[k] < documents.count {
                     guard let at = laidIndex.firstIndex(of: i), at < bounds.count, bounds[at].count == 4 else { continue }
+                    let child = documents[values[k]]
                     let x = ((bounds[at][0] as? NSNumber)?.doubleValue ?? 0) / scale
                     let y = ((bounds[at][1] as? NSNumber)?.doubleValue ?? 0) / scale
-                    offsets[values[k]] = (offsets[d].x + x + sx, offsets[d].y + y + sy)
+                    let sx = (child["scrollOffsetX"] as? NSNumber)?.doubleValue ?? 0
+                    let sy = (child["scrollOffsetY"] as? NSNumber)?.doubleValue ?? 0
+                    offsets[values[k]] = (offsets[d].x + x - sx, offsets[d].y + y - sy)
                 }
             }
         }
@@ -240,8 +241,6 @@ extension AgentDriver {
                     snap.frameParent[v[k]] = d
                 }
             }
-            let sx = (doc["scrollOffsetX"] as? NSNumber)?.doubleValue ?? 0
-            let sy = (doc["scrollOffsetY"] as? NSNumber)?.doubleValue ?? 0
             let attrsOf = { (i: Int) -> [String: String] in
                 var out: [String: String] = [:]
                 guard i < attributes.count else { return out }
@@ -260,7 +259,7 @@ extension AgentDriver {
                 var entry = Laid()
                 if k < bounds.count, bounds[k].count == 4 {
                     let b = bounds[k].map { (($0 as? NSNumber)?.doubleValue ?? 0) / scale }
-                    entry.box = (b[0] + sx + offsets[d].x, b[1] + sy + offsets[d].y, b[2], b[3])
+                    entry.box = (b[0] + offsets[d].x, b[1] + offsets[d].y, b[2], b[3])
                 }
                 let st = k < styles.count ? ints(styles[k]).map(str) : []
                 if st.count == 4 {
@@ -302,8 +301,11 @@ extension AgentDriver {
         return picked.isEmpty ? nil : picked
     }
 
+    /// The text on one line, cut to `max` characters. A cut ends with an ellipsis: the harness
+    /// numbers such a line, and `read` fetches the whole of it.
     nonisolated private static func clean(_ text: String, _ max: Int) -> String {
-        String(text.split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(max))
+        let one = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return one.count <= max ? one : String(one.prefix(max - 1)) + "…"
     }
 
     /// Walks the accessibility tree with the snapshot beside it and writes the lines.
@@ -338,8 +340,9 @@ extension AgentDriver {
         private func walk(_ ax: [String: Any], depth: Int) {
             let role = ((ax["role"] as? [String: Any])?["value"] as? String) ?? ""
             // Text keeps more of itself than a name does.
-            let text = AgentDriver.clean(((ax["name"] as? [String: Any])?["value"] as? String) ?? "", AgentDriver.maxText)
-            let name = String(text.prefix(AgentDriver.maxName))
+            let computed = ((ax["name"] as? [String: Any])?["value"] as? String) ?? ""
+            let text = AgentDriver.clean(computed, AgentDriver.maxText)
+            let name = AgentDriver.clean(computed, AgentDriver.maxName)
             let ignored = (ax["ignored"] as? Bool) ?? false
             let backendId = (ax["backendDOMNodeId"] as? NSNumber)?.intValue ?? -1
             let laid = snap.laid[backendId]

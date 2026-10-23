@@ -222,7 +222,8 @@ fn aim(input: &RawAction, vp: &Viewport, page: Option<&PageMap>) -> Result<Optio
     let Some(id) = input.target else { return Ok(None) };
     let Some(page) = page else { return Err(format!("target [{id}] named, but the look carried no page map")) };
     let Some(node) = page.nodes.iter().find(|node| node.id == id) else { return Err(format!("there is no node [{id}] on the page map")) };
-    if node.is_text() {
+    // Text is read, never pressed.
+    if node.is_text() && input.kind != "read" {
         return Err(format!("node [{id}] is plain text, not a control"));
     }
     let point = Point { x: node.x + node.w / 2.0 - vp.scroll_x, y: node.y + node.h / 2.0 - vp.scroll_y };
@@ -634,10 +635,14 @@ mod tests {
             raw(r#"{"kind":"read","target":3}"#),
             raw(r#"{"kind":"read"}"#),
             raw(r#"{"kind":"click","x":5,"y":5,"check":"the list is open"}"#),
+            raw(r#"{"kind":"read","target":2}"#),
         ];
         let (valid, dropped) = check_actions(1, written, &vp, 30, &[], Some(&page));
         let ids: Vec<&str> = valid.iter().map(|a| a.id.as_str()).collect();
-        assert_eq!(ids, vec!["s1a1", "s1a4", "s1a5", "s1a6", "s1a8"]);
+        assert_eq!(ids, vec!["s1a1", "s1a4", "s1a5", "s1a6", "s1a8", "s1a9"]);
+        // Text is read, never pressed: the click on it is refused, the read of it is not.
+        assert_eq!(valid[5].kind, Kind::Read);
+        assert_eq!(valid[5].target.as_ref().map(|t| (t.id, t.role.as_str())), Some((2, "text")));
         // The point is the node's centre in screenshot pixels, off screen or not.
         assert_eq!(valid[0].kind, Kind::Click { x: 110.0, y: 210.0, modifiers: String::new() });
         assert_eq!(valid[0].target, Some(Target { id: 1, role: "radio".into(), name: "Work".into(), frame: 0 }));

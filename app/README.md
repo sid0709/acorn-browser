@@ -41,8 +41,16 @@ the harness cannot tell this browser from the Playwright one.
   input method commits them, and the page's input context uses a Latin layout while the agent
   types, whatever the person's keyboard is set to. Chords the system owns (`Meta+q`,
   `Meta+Tab`, ...) are refused.
-- A look waits for the page to settle: no DOM change for 250 ms, the document loaded, and
-  none of the page's requests (fetch, XHR, images; not sockets or event streams) still open.
+- A look waits for the page to settle: its document parsed, no DOM change for 250 ms, and none
+  of the requests that can still fill it (the page's own document, XHR, fetch and scripts, from
+  the page's own site) still open. The load event is not waited for, nor are fonts, pictures,
+  pixels, sockets, or anything a third party serves (tag managers, chat widgets, captchas): a
+  page may go on loading those for a minute after a person could read it. After a navigation
+  the look first waits for the browser to report the new document, since the old one is
+  settled as it was.
+- A scroll to a height is made through the scrolling element's own position (a page may put a
+  function of its own in `window.scrollTo`) and measured afterwards: a page that did not move
+  is reported as such, never assumed scrolled.
 - While the harness is connected, the page's dialogs are answered (alert and beforeunload
   accepted, confirm and prompt dismissed), downloads are noted, and a window the page tries to
   open is opened in this tab; all of it is reported in `notes`. When the connection ends the
