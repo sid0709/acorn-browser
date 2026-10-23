@@ -12,6 +12,9 @@
 //!   --viewport <WxH>         the window size (default 1280x720)
 //! ```
 //!
+//! The key may also sit in a `.env` file beside this crate (`OPENROUTER_API_KEY=sk-or-...`); a
+//! variable already set in the environment wins.
+//!
 //! Exit code 0 when the task is done, 1 when the run stopped for the person or got stuck, 2 when
 //! something failed.
 
@@ -111,9 +114,32 @@ fn main() {
     }
 }
 
+/// Reads `KEY=VALUE` lines from `.env` beside this crate into the environment, for the keys not
+/// set already. Comments and blank lines are skipped; quotes round a value are dropped.
+fn load_dotenv() {
+    let Ok(text) = std::fs::read_to_string(kit_dir().join(".env")) else { return };
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else { continue };
+        let key = key.trim().trim_start_matches("export ").trim();
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        if !key.is_empty() && std::env::var_os(key).is_none() {
+            // Set before any thread starts: the runner is single-threaded here.
+            unsafe { std::env::set_var(key, value) };
+        }
+    }
+}
+
 fn run() -> Result<i32, String> {
     let options = options()?;
-    let key = std::env::var("OPENROUTER_API_KEY").ok().filter(|k| !k.trim().is_empty()).ok_or("set OPENROUTER_API_KEY to your OpenRouter key")?;
+    load_dotenv();
+    let key = std::env::var("OPENROUTER_API_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty())
+        .ok_or("set OPENROUTER_API_KEY in the environment or in kit/.env (see .env.example)")?;
     let loaded = taskfile::load(&options.task)?;
     let facts = std::fs::read_to_string(&options.profile).unwrap_or_else(|_| DEFAULT_FACTS.to_string());
     let start_url = loaded.task.start_url.clone().ok_or("the task file needs a url: line")?;

@@ -11,7 +11,7 @@ kit/
   src/decide.rs      the harness's Decider trait over OpenRouter's chat API
   src/taskfile.rs    a task as a Markdown file: a few key: value lines, then the goal
   browser/           the Node side: one Playwright page that looks and does
-  tasks/*.md         five tasks to try
+  tasks/*.md         five simple tasks to try, none needing an account
   pages/form.html    a local form the first task fills, so the kit runs with no internet
   profile.md         who the run acts as (no passwords: the harness holds none)
   traces/            one folder per run, written while it goes (not committed)
@@ -22,14 +22,14 @@ kit/
 - Rust (stable) and Node 18 or newer.
 - `cd kit/browser && npm install` (Playwright, and its Chromium unless you already have one;
   `npx playwright install chromium` fetches it when npm did not).
-- An OpenRouter key in `OPENROUTER_API_KEY`.
+- An OpenRouter key: `cp .env.example .env` and put it there, or set `OPENROUTER_API_KEY`.
 
 ## Run a task
 
 ```bash
 cd kit
-OPENROUTER_API_KEY=sk-or-... cargo run -- tasks/local-form.md            # works offline
-OPENROUTER_API_KEY=sk-or-... cargo run -- tasks/todomvc.md --headed      # watch the window
+cargo run -- tasks/local-form.md            # works offline
+cargo run -- tasks/todomvc.md --headed      # watch the window
 cargo run -- --help
 ```
 
@@ -47,6 +47,11 @@ Options: `--model <id>` and `--decider <id>` pick the driving and the decision m
 decision model answers yes/no questions about screenshots: a cheap, quick one does; `--decider
 none` turns the checks off and the run plans six actions at a time), `--reasoning low|medium|high`,
 `--profile <file>`, `--trace <dir>`, `--viewport 1280x720`.
+
+The tasks: `local-form.md` fills the local page (offline), `todomvc.md` adds items on
+Playwright's TodoMVC demo, `wikipedia.md` finds an article and reads a fact, `wikipedia-chinese.md`
+finds an article and switches it to Chinese, `google-search.md` searches and opens a result.
+Google sometimes shows a check to a headless browser; `--headed` helps.
 
 ## A task file
 
