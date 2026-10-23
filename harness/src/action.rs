@@ -76,11 +76,45 @@ pub struct Point {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Kind {
-    Click { x: f64, y: f64 },
-    DoubleClick { x: f64, y: f64 },
-    TripleClick { x: f64, y: f64 },
-    RightClick { x: f64, y: f64 },
-    Hover { x: f64, y: f64 },
+    /// A click at the point, with the `modifiers` held meanwhile (`Shift`, `Meta+Shift`; empty
+    /// for none), as every pointing kind below.
+    Click {
+        x: f64,
+        y: f64,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        modifiers: String,
+    },
+    DoubleClick {
+        x: f64,
+        y: f64,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        modifiers: String,
+    },
+    TripleClick {
+        x: f64,
+        y: f64,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        modifiers: String,
+    },
+    RightClick {
+        x: f64,
+        y: f64,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        modifiers: String,
+    },
+    Hover {
+        x: f64,
+        y: f64,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        modifiers: String,
+    },
+    /// The mouse button goes down at the first point of `path`, moves through the rest, and
+    /// comes up at the last: moving a slider or a card, sweeping over text, drawing a stroke.
+    Drag {
+        path: Vec<Point>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        modifiers: String,
+    },
     /// Typed into the focused control.
     Type {
         text: String,
@@ -114,28 +148,36 @@ pub enum Kind {
         file_name: String,
     },
     Wait { ms: u64 },
+    /// Go to an address: another site, or another page of this one, when no link leads there.
+    Navigate { url: String },
+    /// Go back to the page before this one.
+    Back,
     /// Not sent to the browser: the model asks for the next look to be a survey of the whole page.
     Survey,
+    /// Not sent to the browser: the model asks for the rest of its kept plan to run as planned.
+    Resume,
 }
 
 impl Kind {
     /// The point the action acts at, when it has one. A scroll's point is where the wheel
     /// turns, not a target, so it is not one.
     pub fn point(&self) -> Option<Point> {
-        match *self {
-            Kind::Click { x, y }
-            | Kind::DoubleClick { x, y }
-            | Kind::TripleClick { x, y }
-            | Kind::RightClick { x, y }
-            | Kind::Hover { x, y }
-            | Kind::Upload { x, y, .. } => Some(Point { x, y }),
+        match self {
+            Kind::Click { x, y, .. }
+            | Kind::DoubleClick { x, y, .. }
+            | Kind::TripleClick { x, y, .. }
+            | Kind::RightClick { x, y, .. }
+            | Kind::Hover { x, y, .. }
+            | Kind::Upload { x, y, .. } => Some(Point { x: *x, y: *y }),
+            // A drag's point is where it takes hold.
+            Kind::Drag { path, .. } => path.first().copied(),
             _ => None,
         }
     }
 
     /// Whether the browser carries this action out. The rest are requests to the harness.
     pub fn is_for_browser(&self) -> bool {
-        !matches!(self, Kind::Survey)
+        !matches!(self, Kind::Survey | Kind::Resume)
     }
 }
 
@@ -335,7 +377,7 @@ mod tests {
     use super::*;
 
     fn click(id: &str, check: &str) -> Action {
-        let mut a = Action::new(id, Kind::Click { x: 1.0, y: 2.0 });
+        let mut a = Action::new(id, Kind::Click { x: 1.0, y: 2.0, modifiers: String::new() });
         a.check = check.to_string();
         a
     }

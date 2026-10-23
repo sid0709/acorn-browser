@@ -1,7 +1,7 @@
 //! The loop: one step from an observation to the next batch of actions, with the stall checks,
 //! the gate slot, and the end of the run.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -611,9 +611,16 @@ impl Agent {
         let (planned, mut dropped) = model::check_actions(number, std::mem::take(&mut reply.actions), &obs.viewport, self.config.plan_limit(checks), &screens);
         // How many actions of the plan could not be carried out: the click that sends the page
         // waits for them.
-        let mut lost = written - planned.len();
+        // A survey or a resume is a request the harness grants, not an action lost.
+        let mut lost = written.saturating_sub(planned.len());
         let (mut planned, survey_asked) = without_survey(planned);
-        lost -= usize::from(survey_asked);
+        // A plan kept at an unsure check goes on where it stopped when the model says resume.
+        let (kept, resume) = without_resume(planned);
+        planned = kept;
+        let resume = resume && reply.status == Status::Working && planned.is_empty() && !s.plan.is_empty();
+        if !resume {
+            s.plan.clear();
+        }
         // A run that did not turn surveys on is not told they exist; one the model asks for anyway is ignored.
         let survey_asked = survey_asked && s.task.survey;
         action::inherit_zones(&mut planned);
@@ -635,7 +642,7 @@ impl Agent {
         s.note_commit_planned(&planned, &obs);
         // What this plan fills in, by zone, for the reviews of its zones.
         s.plan_gen += 1;
-        s.expect = review::expectations_of(&planned, &obs);
+        s.expect = BTreeMap::new();
         s.expect_url = observe::without_fragment(&obs.url).to_string();
         s.plan_scroll_y = obs.viewport.scroll_y;
         if let Some(settled) = &reply.settled {
@@ -646,10 +653,13 @@ impl Agent {
         // the batch that goes out first.
         let summary = memory::summary_line(number, &s.message, &planned);
 
-        let (actions, dropped) = if reply.status != Status::Working {
+        let (actions, mut dropped) = if reply.status != Status::Working {
             // A run that ends may still scroll what the person must act on into view.
             s.forget_plan();
             (scroll_only(planned, MAX_STOP_SCROLLS), dropped)
+        } else if resume {
+            let plan = std::mem::take(&mut s.plan);
+            self.send_batch(s, plan, dropped)
         } else {
             if planned.is_empty() && !survey_asked {
                 // A working run with nothing valid to do waits and looks again.
@@ -665,6 +675,10 @@ impl Agent {
         // The gate may have asked the person for leave: that question goes with the step too.
         let mut questions = questions;
         questions.extend(s.asked_now.drain(..));
+        // What the harness held back since the model last looked, so the trace shows it.
+        let mut withheld = std::mem::take(&mut s.withheld);
+        withheld.append(&mut dropped);
+        let dropped = withheld;
         let survey = reply.status == Status::Working && self.survey_next(s, survey_asked);
         let step = Step {
             status: reply.status,
@@ -768,6 +782,20 @@ impl Agent {
 /// The most scroll actions a step that ends the run may still carry, to bring what the person
 /// must act on into view.
 const MAX_STOP_SCROLLS: usize = 2;
+
+/// Takes the resume requests out of a plan and says whether there was one.
+fn without_resume(actions: Vec<Action>) -> (Vec<Action>, bool) {
+    let mut asked = false;
+    let kept = actions
+        .into_iter()
+        .filter(|action| {
+            let is_resume = matches!(action.kind, Kind::Resume);
+            asked |= is_resume;
+            !is_resume
+        })
+        .collect();
+    (kept, asked)
+}
 
 /// Takes the survey requests out of a plan and says whether there was one.
 fn without_survey(actions: Vec<Action>) -> (Vec<Action>, bool) {

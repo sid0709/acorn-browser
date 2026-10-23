@@ -86,8 +86,17 @@ pub struct Session {
     pub memory: Memory,
     /// Results of actions sent since the model last looked, which may be several batches.
     pub carried: Vec<ActionResult>,
-    /// What the model planned and has not yet been sent, one batch per check.
+    /// What the model planned and has not yet been sent, one batch per check; and what of the
+    /// plan has been sent, in order, which the reviews are built from.
     pub plan: Vec<Batch>,
+    pub sent_actions: Vec<Action>,
+    /// Actions the harness held back since the model last looked, with why: they go out with the
+    /// next step as dropped, so the trace shows them.
+    pub withheld: Vec<String>,
+    /// The points the checker has doubted on this page (by position and label): a doubt it has
+    /// raised before is not raised again, and does not ask for another survey.
+    pub doubted: BTreeSet<String>,
+    pub doubted_url: String,
     /// What the screen should show after the batch just sent, until that batch is checked.
     pub verify: String,
     /// The actions of the model's latest plan by id, to match a result to its action.
@@ -195,6 +204,10 @@ impl Session {
             checks_off: false,
             viewport: Viewport::default(),
             plan_gen: 0,
+            sent_actions: Vec::new(),
+            withheld: Vec::new(),
+            doubted: BTreeSet::new(),
+            doubted_url: String::new(),
             expect: BTreeMap::new(),
             expect_url: String::new(),
             plan_scroll_y: 0.0,
@@ -249,6 +262,7 @@ impl Session {
     /// Drops the model's plan and the count of it: nothing of it is sent or checked again.
     pub fn forget_plan(&mut self) {
         self.plan.clear();
+        self.sent_actions.clear();
         self.verify.clear();
         self.planned = 0;
         self.sent = 0;

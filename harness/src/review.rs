@@ -166,14 +166,14 @@ impl Reviews {
 /// What the plan fills in, by zone: a field the plan clicked on (the point has a label) and typed
 /// into. A secret is not asked about. A field the plan fills more than once is asked about for
 /// the last value only: that is what it should show.
-pub fn expectations_of(planned: &[Action], obs: &Observation) -> BTreeMap<u32, Vec<Expectation>> {
+pub fn expectations_of(planned: &[Action], scroll_y: f64) -> BTreeMap<u32, Vec<Expectation>> {
     let mut out: BTreeMap<u32, Vec<Expectation>> = BTreeMap::new();
     let mut label = String::new();
     let mut y = 0.0;
     for action in planned {
         if let Some(point) = action.point() {
             label = action.label.trim().to_string();
-            y = action.scroll_to.unwrap_or(obs.viewport.scroll_y) + point.y;
+            y = action.scroll_to.unwrap_or(scroll_y) + point.y;
             continue;
         }
         if let Kind::Type { text, secret: false } = &action.kind
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn a_plan_expects_each_typed_field_to_show_its_last_value() {
         let obs = Observation { viewport: Viewport { scroll_y: 100.0, ..Default::default() }, ..Default::default() };
-        let mut name = Action::new("a1", Kind::Click { x: 10.0, y: 20.0 });
+        let mut name = Action::new("a1", Kind::Click { x: 10.0, y: 20.0, modifiers: String::new() });
         name.label = "Full name".into();
         name.zone = 1;
         let mut typed = Action::new("a2", Kind::Type { text: " A. Person ".into(), secret: false });
@@ -401,7 +401,7 @@ mod tests {
         let mut pass = name.clone();
         pass.label = "Password".into();
         pass.zone = 2;
-        let exps = expectations_of(&[name.clone(), typed, name, again, pass, secret], &obs);
+        let exps = expectations_of(&[name.clone(), typed, name, again, pass, secret], obs.viewport.scroll_y);
         assert_eq!(exps.get(&1), Some(&vec![Expectation { label: "Full name".into(), value: "B. Person".into(), y: 120.0 }]));
         assert!(exps.get(&2).is_none());
     }

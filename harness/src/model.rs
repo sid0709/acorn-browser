@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::action::{Action, Commit, Kind};
+use crate::action::{Action, Commit, Kind, Point};
 use crate::observe::Viewport;
 use crate::run::{Status, StopInfo};
 
@@ -16,8 +16,12 @@ pub const MAX_MEMO_CHARS: usize = 2000;
 // Limits on what one step may ask for.
 const MAX_TYPE_CHARS: usize = 2000;
 const MAX_KEY_TOKENS: usize = 12;
+/// The most points a drag's path may have: a long stroke is many close points.
+const MAX_PATH_POINTS: usize = 400;
 const MIN_WAIT_MS: u64 = 100;
-const MAX_WAIT_MS: u64 = 10_000;
+const MAX_WAIT_MS: u64 = 30_000;
+/// The longest address the model may go to.
+const MAX_URL_CHARS: usize = 2000;
 const MAX_SCROLL_PAGES: f64 = 3.0;
 const MAX_CHECK_CHARS: usize = 300;
 const MAX_LABEL_CHARS: usize = 80;
@@ -108,10 +112,33 @@ pub struct RawAction {
     pub label: Option<String>,
     #[serde(default)]
     pub commit: Option<String>,
+    /// Keys held during a click or a drag: "Shift", "Meta+Shift".
+    #[serde(default)]
+    pub modifiers: Option<String>,
+    /// A drag's points, in order.
+    #[serde(default)]
+    pub path: Option<Vec<RawPoint>>,
+    /// Where to go, for a navigate.
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// A point of a drag's path as the model writes it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RawPoint {
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
 }
 
 /// Reads the model's answer. The answer may carry text before the JSON; it is skipped.
 pub fn parse_reply(content: &str) -> Result<Reply, String> {
+    parse_json(content)
+}
+
+/// Reads a JSON object of any shape from a model's answer, past any text before it.
+pub fn parse_json<T: serde::de::DeserializeOwned>(content: &str) -> Result<T, String> {
     let content = content.trim();
     if content.is_empty() {
         return Err("the model sent an empty answer".to_string());
@@ -161,23 +188,41 @@ fn fill(input: &RawAction, vp: &Viewport) -> Result<Kind, String> {
     Ok(match input.kind.as_str() {
         "click" => {
             let (x, y) = point(input, vp)?;
-            Kind::Click { x, y }
+            Kind::Click { x, y, modifiers: modifiers(input)? }
         }
         "double_click" => {
             let (x, y) = point(input, vp)?;
-            Kind::DoubleClick { x, y }
+            Kind::DoubleClick { x, y, modifiers: modifiers(input)? }
         }
         "triple_click" => {
             let (x, y) = point(input, vp)?;
-            Kind::TripleClick { x, y }
+            Kind::TripleClick { x, y, modifiers: modifiers(input)? }
         }
         "right_click" => {
             let (x, y) = point(input, vp)?;
-            Kind::RightClick { x, y }
+            Kind::RightClick { x, y, modifiers: modifiers(input)? }
         }
         "hover" => {
             let (x, y) = point(input, vp)?;
-            Kind::Hover { x, y }
+            Kind::Hover { x, y, modifiers: modifiers(input)? }
+        }
+        "drag" => {
+            let raw = input.path.as_deref().unwrap_or(&[]);
+            if raw.len() < 2 {
+                return Err("a drag needs a path of at least two points".to_string());
+            }
+            if raw.len() > MAX_PATH_POINTS {
+                return Err(format!("the path has more than {MAX_PATH_POINTS} points"));
+            }
+            let mut path = Vec::with_capacity(raw.len());
+            for p in raw {
+                match (p.x, p.y) {
+                    (Some(x), Some(y)) if inside(x, y, vp) => path.push(Point { x, y }),
+                    (Some(x), Some(y)) => return Err(format!("the point ({x:.0}, {y:.0}) lies outside the {}x{} screenshot", vp.width, vp.height)),
+                    _ => return Err("a point of the path has no x or y".to_string()),
+                }
+            }
+            Kind::Drag { path, modifiers: modifiers(input)? }
         }
         "upload" => {
             let (x, y) = point(input, vp)?;
@@ -221,9 +266,47 @@ fn fill(input: &RawAction, vp: &Viewport) -> Result<Kind, String> {
             }
         }
         "wait" => Kind::Wait { ms: input.ms.unwrap_or(DEFAULT_WAIT_MS).clamp(MIN_WAIT_MS, MAX_WAIT_MS) },
+        "navigate" => {
+            let url = input.url.as_deref().unwrap_or("").trim().to_string();
+            if url.is_empty() {
+                return Err("there is no address to go to".to_string());
+            }
+            if url.chars().count() > MAX_URL_CHARS {
+                return Err("the address is too long".to_string());
+            }
+            let lower = url.to_ascii_lowercase();
+            if !(lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("file://")) {
+                return Err(format!("{url:?} is not a web address: write it whole, starting with https://"));
+            }
+            Kind::Navigate { url }
+        }
+        "back" => Kind::Back,
         "survey" => Kind::Survey,
+        "resume" => Kind::Resume,
         _ => return Err("that is not an action the harness can send".to_string()),
     })
+}
+
+/// The keys held during the action, in one spelling (`Shift+Meta`), or empty for none.
+fn modifiers(input: &RawAction) -> Result<String, String> {
+    let text = input.modifiers.as_deref().unwrap_or("").trim();
+    if text.is_empty() {
+        return Ok(String::new());
+    }
+    let mut held: Vec<&str> = Vec::new();
+    for part in text.split('+').map(str::trim).filter(|p| !p.is_empty()) {
+        let name = match part.to_ascii_lowercase().as_str() {
+            "shift" => "Shift",
+            "control" | "ctrl" => "Control",
+            "alt" | "option" => "Alt",
+            "meta" | "command" | "cmd" => "Meta",
+            _ => return Err(format!("{part:?} is not a key that can be held (Shift, Control, Alt, Meta)")),
+        };
+        if !held.contains(&name) {
+            held.push(name);
+        }
+    }
+    Ok(held.join("+"))
 }
 
 /// The action's point, when it has one inside the screenshot.
@@ -312,13 +395,31 @@ pub fn reply_schema(survey: bool, checks: bool) -> Value {
         }
         object(fields)
     };
+    let held = json!({"anyOf": [{"type": "null"}, {"type": "string", "enum": ["Shift", "Control", "Alt", "Meta", "Shift+Meta", "Shift+Control", "Shift+Alt"]}]});
+    let mut drag = vec![("kind", kind_enum(&["drag"]))];
+    if survey {
+        drag.push(("screen", json!({"type": ["integer", "null"]})));
+    }
+    drag.push(("path", json!({"type": "array", "items": object(vec![("x", number.clone()), ("y", number.clone())])})));
+    drag.push(("label", null_string.clone()));
+    drag.push(("modifiers", held.clone()));
+    if checks {
+        drag.push(("check", null_string.clone()));
+    }
     let mut shapes = vec![
-        point(&["click", "double_click", "triple_click", "right_click", "hover"], vec![("commit", json!({"anyOf": [{"type": "null"}, {"type": "string", "enum": ["next", "send", "pay", "post", "delete", "create_account"]}]}))]),
+        point(&["click", "double_click", "triple_click", "right_click", "hover"], vec![
+            ("commit", json!({"anyOf": [{"type": "null"}, {"type": "string", "enum": ["next", "send", "pay", "post", "delete", "create_account"]}]})),
+            ("modifiers", held),
+        ]),
+        object(drag),
         point(&["upload"], vec![("resource", null_string.clone())]),
         plain("type", vec![("text", string.clone()), ("secret", json!({"type": ["boolean", "null"]}))]),
         plain("key", vec![("keys", string.clone())]),
         plain("scroll", vec![("x", null_number.clone()), ("y", null_number.clone()), ("dx", number.clone()), ("dy", number.clone())]),
         object(vec![("kind", kind_enum(&["wait"])), ("ms", json!({"type": "integer"}))]),
+        plain("navigate", vec![("url", string.clone())]),
+        plain("back", vec![]),
+        object(vec![("kind", kind_enum(&["resume"]))]),
     ];
     if survey {
         shapes.push(object(vec![("kind", kind_enum(&["survey"]))]));
@@ -387,10 +488,21 @@ mod tests {
             raw(r#"{"kind":"click","x":900,"y":50}"#),
             raw(r#"{"kind":"survey"}"#),
             raw(r#"{"kind":"dance"}"#),
+            raw(r#"{"kind":"drag","screen":1,"path":[{"x":10,"y":10},{"x":50,"y":60}],"modifiers":"shift+cmd","label":"Brush"}"#),
+            raw(r#"{"kind":"drag","path":[{"x":10,"y":10}]}"#),
+            raw(r#"{"kind":"click","x":5,"y":5,"modifiers":"Hyper"}"#),
+            raw(r#"{"kind":"navigate","url":"https://example.test/a"}"#),
+            raw(r#"{"kind":"navigate","url":"example.test"}"#),
+            raw(r#"{"kind":"back"}"#),
         ];
         let (valid, dropped) = check_actions(3, raw, &vp, 30, &[0.0, 500.0]);
         let ids: Vec<&str> = valid.iter().map(|a| a.id.as_str()).collect();
-        assert_eq!(ids, vec!["s3a1", "s3a3", "s3a4", "s3a6"]);
+        assert_eq!(ids, vec!["s3a1", "s3a3", "s3a4", "s3a6", "s3a8", "s3a11", "s3a13"]);
+        assert_eq!(valid[5].kind, Kind::Navigate { url: "https://example.test/a".to_string() });
+        assert_eq!(valid[6].kind, Kind::Back);
+        assert_eq!(valid[4].kind, Kind::Drag { path: vec![Point { x: 10.0, y: 10.0 }, Point { x: 50.0, y: 60.0 }], modifiers: "Shift+Meta".to_string() });
+        assert_eq!(valid[4].zone, 1);
+        assert_eq!(valid[4].label, "Brush");
         assert_eq!(valid[0].scroll_to, Some(500.0));
         assert_eq!(valid[0].zone, 2);
         assert_eq!(valid[0].commit, Commit::Send);
@@ -398,7 +510,7 @@ mod tests {
         assert_eq!(valid[1].kind, Kind::Wait { ms: 100 });
         assert_eq!(valid[2].kind, Kind::Scroll { x: Some(400.0), y: Some(300.0), dx: 0.0, dy: 1800.0 });
         assert_eq!(valid[3].kind, Kind::Survey);
-        assert_eq!(dropped.len(), 3);
+        assert_eq!(dropped.len(), 6);
     }
 
     #[test]

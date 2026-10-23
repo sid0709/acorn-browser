@@ -97,7 +97,26 @@ impl Agent {
         if doubted.is_empty() {
             return;
         }
-        s.notes.push(doubtful_points_note(planned, &doubted));
+        // A doubt the checker raised before about the same point on this page is the model's
+        // answer already: it chose the point again having read the doubt. It is not raised
+        // again, and does not ask for another survey.
+        let page = crate::observe::without_fragment(&obs.url).to_string();
+        if s.doubted_url != page {
+            s.doubted.clear();
+            s.doubted_url = page;
+        }
+        let new: BTreeSet<String> = doubted
+            .into_iter()
+            .filter(|id| {
+                let Some(action) = planned.iter().find(|a| &a.id == id) else { return false };
+                let point = action.point().unwrap_or_default();
+                s.doubted.insert(format!("{:.0},{:.0}:{}:{}", point.x, point.y, action.zone, action.label.trim()))
+            })
+            .collect();
+        if new.is_empty() {
+            return;
+        }
+        s.notes.push(doubtful_points_note(planned, &new));
         s.survey_again = true;
     }
 }

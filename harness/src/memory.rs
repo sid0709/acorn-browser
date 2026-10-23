@@ -163,7 +163,10 @@ pub(crate) fn describe(action: &Action) -> String {
         Kind::Key { keys } => format!("key {keys}"),
         Kind::Scroll { dx, dy, .. } => format!("scroll {dx:.0},{dy:.0}"),
         Kind::Wait { ms } => format!("wait {ms}ms"),
+        Kind::Navigate { url } => format!("go to {url}"),
+        Kind::Back => "go back".to_string(),
         Kind::Survey => "survey".to_string(),
+        Kind::Resume => "resume the kept plan".to_string(),
         Kind::Upload { x, y, file_name, .. } if !file_name.is_empty() => format!("upload {file_name} at {x:.0},{y:.0}"),
         other => {
             let name = match other {
@@ -172,6 +175,7 @@ pub(crate) fn describe(action: &Action) -> String {
                 Kind::TripleClick { .. } => "triple_click",
                 Kind::RightClick { .. } => "right_click",
                 Kind::Hover { .. } => "hover",
+                Kind::Drag { .. } => "drag",
                 Kind::Upload { .. } => "upload",
                 _ => "action",
             };
@@ -261,7 +265,7 @@ mod tests {
     #[test]
     fn a_summary_line_names_the_step_and_its_actions() {
         let actions = vec![
-            Action::new("a", Kind::Click { x: 10.0, y: 20.0 }),
+            Action::new("a", Kind::Click { x: 10.0, y: 20.0, modifiers: String::new() }),
             Action::new("b", Kind::Type { text: "hello".into(), secret: false }),
             Action::new("c", Kind::Type { text: "pw".into(), secret: true }),
         ];

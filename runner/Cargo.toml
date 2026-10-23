@@ -1,0 +1,11 @@
+[package]
+name = "acorn-runner"
+version = "0.1.0"
+edition = "2024"
+description = "Runs one task with the harness against the Acorn Browser app, over its agent socket."
+license = "MIT"
+
+[dependencies]
+harness = { path = "../harness" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
