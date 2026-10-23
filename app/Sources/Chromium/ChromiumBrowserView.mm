@@ -10,6 +10,7 @@
 #include "include/cef_jsdialog_handler.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context.h"
+#include "include/cef_request_context_handler.h"
 
 namespace {
 
