@@ -161,6 +161,13 @@ typing); onto a group's label or folder to join it; onto the open space below th
 to leave a group or a pin; among the pinned tiles to pin. The agent's tab neither moves nor
 takes a drop.
 
+⌘\ (or the ⋮ menu, or a tab dropped on a page's right edge) puts two tabs side by side
+(`SplitView.swift`), each with its own toolbar and a handle between them; the pane clicked last
+is the active tab. When the harness takes the agent's tab while the person is on another, the
+agent's page docks beside theirs (watch mode), so Chromium keeps painting it and they can watch
+it work; it keeps the width it had before there was a split as far as the window allows, and
+undocks when the harness lets go.
+
 ⌘N opens another window and ⇧⌘N an incognito one, each with tabs of its own; only the main
 window has the agent. An incognito window's tabs share one in-memory profile
 (`ChromiumBrowserView initWithURL:incognito:`), which goes when the last of them does; it wears

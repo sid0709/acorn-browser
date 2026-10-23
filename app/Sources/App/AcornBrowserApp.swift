@@ -74,6 +74,9 @@ struct BrowserCommands: Commands {
                 .disabled(store?.verticalLayout != true)
             Button(store?.showAgent == true ? "Hide Agent" : "Show Agent") { store?.toggleAgent() }
                 .keyboardShortcut("k")
+                .disabled(store?.hasAgent != true)
+            Button(store?.shownSplit == nil ? "Open Split View" : "Close Split View") { store?.toggleSplit() }
+                .keyboardShortcut("\\")
             Divider()
         }
         CommandMenu("Tab") {

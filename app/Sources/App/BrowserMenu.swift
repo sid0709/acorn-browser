@@ -55,6 +55,8 @@ struct BrowserMenu: View {
                 }
                 row(tab.isPinned ? "Unpin Tab" : "Pin Tab", tab.isPinned ? "pin.slash" : "pin") { store.togglePin(tab) }
                     .disabled(isAgent)
+                row(store.shownSplit == nil ? "Open in Split View" : "Close Split View", "rectangle.split.2x1",
+                    shortcut: "⌘\\") { store.toggleSplit() }
                 row("Find in Page\u{2026}", "doc.text.magnifyingglass", shortcut: "⌘F") { tab.startFinding() }
                 row("Translate to \(settings.translateLanguageName)", "character.bubble") { tab.translate() }
                     .disabled(!isWeb)
@@ -220,6 +222,11 @@ struct BrowserMenu: View {
                     row("Add to \u{201C}\(group.name)\u{201D}", "folder") { store.addToGroup(tab, groupID: group.id) }
                         .disabled(isAgent)
                 }
+            }
+            if store.shownSplit != nil {
+                divider
+                row("Swap Sides", "arrow.left.arrow.right") { store.swapSplit() }
+                row("Close Split View", "rectangle") { store.closeSplit() }
             }
             divider
             row("Close Other Tabs", "xmark.square") { store.closeOthers(keeping: tab) }

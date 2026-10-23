@@ -144,6 +144,11 @@ private struct TabPill: View {
         } else {
             HStack(spacing: 7) {
                 TabIcon(tab: tab, isAgent: isAgent)
+                if store.split?.contains(tab.id) == true {
+                    Image(systemName: "rectangle.split.2x1").font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(palette.inkTertiary)
+                        .help("In a split view")
+                }
                 Text(tab.title.isEmpty ? "New Tab" : tab.title)
                     .font(isActive ? Theme.Text.bodyStrong : Theme.Text.body)
                     .foregroundStyle(isActive ? palette.ink : palette.inkSecondary)
@@ -204,6 +209,8 @@ struct TabContextMenu: View {
     var body: some View {
         Button("Duplicate Tab") { store.duplicate(tab) }
         Button(tab.isPinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab) }
+        Button("Open Beside Current Tab") { store.openSplit(with: tab) }
+            .disabled(store.activeID == tab.id)
         Divider()
         if tab.groupID != nil {
             Button("Remove from Group") { store.removeFromGroup(tab) }

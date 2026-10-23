@@ -227,6 +227,9 @@ struct CommandBar: View {
             command("Copy Link", "link", "⇧⌘C") { store.copyLink() },
             command("Translate Page", "character.bubble") { tab.translate() },
             command("Show History", "clock", "⌘Y") { store.showingHistory = true },
+            command(store.shownSplit == nil ? "Open Split View" : "Close Split View", "rectangle.split.2x1", "⌘\\") {
+                store.toggleSplit()
+            },
             command(store.showAgent ? "Hide Agent" : "Show Agent", "sparkles", "⌘K") { store.toggleAgent() },
             command(store.verticalLayout ? "Use Tabs Across the Top" : "Use a Sidebar for Tabs",
                     store.verticalLayout ? "menubar.rectangle" : "sidebar.left") {

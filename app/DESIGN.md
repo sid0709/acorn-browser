@@ -2,8 +2,8 @@
 
 The plan the interface is being rebuilt to, phase by phase. Phases 1 (tokens, palette, theme
 picker, dark mode) , 2 (the shell in both layouts), 3 (command bar, menu bar,
-history, bookmarks, settings), 4 (the ⋮ menu, boosts), 5 (tabs by drag and drop) and the windows of 7 (new window,
-incognito) are in; the rest follow in order, each judged by `bench/run.py` afterwards.
+history, bookmarks, settings), 4 (the ⋮ menu, boosts), 5 (tabs by drag and drop), 6 (split view, agent watch mode)
+and the windows of 7 (new window, incognito) are in; the rest follow in order, each judged by `bench/run.py` afterwards.
 
 ## Context
 

@@ -237,6 +237,7 @@ struct WindowShortcuts: View {
             key("p") { store.active.printPage() }
             key("d") { store.toggleBookmark() }
             key("y") { store.showingHistory = true }
+            key("\\") { store.toggleSplit() }
             key("c", modifiers: [.command, .shift]) { store.copyLink() }
             key("=") { store.active.zoomIn() }
             key("-") { store.active.zoomOut() }

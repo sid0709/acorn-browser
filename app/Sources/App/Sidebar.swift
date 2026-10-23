@@ -17,6 +17,26 @@ struct Sidebar: View {
 
     private var favorites: [BrowserModel] { store.tabs.filter { $0.isPinned && !store.isAgentTab($0) } }
 
+    /// A tab the list shows on its own row: not pinned, not the agent's.
+    private func listed(_ tab: BrowserModel) -> Bool { !tab.isPinned && !store.isAgentTab(tab) }
+
+    /// The list's runs. A split's two tabs share one row, at the left one's place, when both
+    /// would be listed.
+    private var listRuns: [TabRun] {
+        store.runs { tab in
+            guard listed(tab) else { return false }
+            if let split = store.split, split.right == tab.id,
+               let left = store.tabs.first(where: { $0.id == split.left }), listed(left) { return false }
+            return true
+        }
+    }
+
+    private func splitPartner(of tab: BrowserModel) -> BrowserModel? {
+        guard let split = store.split, split.left == tab.id,
+              let right = store.tabs.first(where: { $0.id == split.right }), listed(right) else { return nil }
+        return right
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             topRow
@@ -31,10 +51,14 @@ struct Sidebar: View {
                         Label("New Tab", systemImage: "plus").foregroundStyle(palette.inkSecondary)
                     }
                     .buttonStyle(.row)
-                    ForEach(store.runs(where: { !$0.isPinned && !store.isAgentTab($0) })) { run in
+                    ForEach(listRuns) { run in
                         switch run {
                         case .tab(let tab):
-                            SidebarTabRow(tab: tab, store: store)
+                            if let partner = splitPartner(of: tab) {
+                                SidebarSplitRow(left: tab, right: partner, store: store)
+                            } else {
+                                SidebarTabRow(tab: tab, store: store)
+                            }
                         case .group(let group, let members):
                             SidebarFolder(group: group, members: members, store: store)
                         }
@@ -241,6 +265,49 @@ private struct SidebarTabRow: View {
         .onDrop(of: [TabDrag.type], delegate: TabDropDelegate(target: tab, store: store, axis: .vertical,
                                                              extent: Self.height, zone: $zone))
         .dropIndicator(zone, axis: .vertical, color: palette.accent)
+    }
+}
+
+/// A split's two tabs on one row, as halves; a click on either shows the split with that one
+/// in use.
+private struct SidebarSplitRow: View {
+    @ObservedObject var left: BrowserModel
+    @ObservedObject var right: BrowserModel
+    @ObservedObject var store: TabStore
+    @Environment(\.palette) private var palette
+    @State private var hovering = false
+
+    private var isActive: Bool { store.activeID == left.id || store.activeID == right.id }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            half(left)
+            Rectangle().fill(palette.hairline).frame(width: 1, height: 18)
+            half(right)
+        }
+        .frame(height: 34)
+        .background(SidebarRowBackground(active: isActive, hovering: hovering))
+        .onHover { hovering = $0 }
+        .contextMenu {
+            Button("Swap Sides") { store.swapSplit() }
+            Button("Close Split View") { store.closeSplit() }
+        }
+    }
+
+    private func half(_ tab: BrowserModel) -> some View {
+        HStack(spacing: 7) {
+            TabIcon(tab: tab, size: 14)
+            Text(tab.title.isEmpty ? "New Tab" : tab.title)
+                .font(store.activeID == tab.id ? Theme.Text.bodyStrong : Theme.Text.body)
+                .foregroundStyle(store.activeID == tab.id ? palette.ink : palette.inkSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Theme.Space.s)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { store.select(tab) }
+        .help(tab.title)
     }
 }
 

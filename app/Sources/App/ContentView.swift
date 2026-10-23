@@ -38,7 +38,7 @@ private struct Shell: View {
 
     /// While the harness drives the agent's tab and it is the one shown, the sidebar steps
     /// aside: the page the agent sees stays as wide as it was before there was a sidebar.
-    private var agentHoldsPage: Bool { agentTab.isDriven && store.isAgentTab(store.active) }
+    private var agentHoldsPage: Bool { store.hasAgent && agentTab.isDriven && store.isShowing(agentTab) }
     private var showsSidebar: Bool { store.verticalLayout && !store.sidebarHidden && !agentHoldsPage }
 
     var body: some View {
@@ -65,6 +65,7 @@ private struct Shell: View {
         .ignoresSafeArea(.container, edges: .top)
         .animation(Theme.layout, value: showsSidebar)
         .onChange(of: showsSidebar) { _, shown in if shown { peeking = false } }
+        .onChange(of: agentTab.isDriven) { _, driven in store.agentDrivingChanged(driven) }
     }
 
     // MARK: Sidebar layout
@@ -161,8 +162,13 @@ private struct Shell: View {
 
     private func pagesAndAgent(toolbar: Bool) -> some View {
         HStack(alignment: .top, spacing: Theme.gutter) {
-            PageCard(tab: store.active, store: store, showsToolbar: toolbar)
-                .id(store.activeID)
+            if let pair = store.shownSplit, let left = store.tabs.first(where: { $0.id == pair.left }),
+               let right = store.tabs.first(where: { $0.id == pair.right }) {
+                SplitView(store: store, left: left, right: right)
+            } else {
+                PageCard(tab: store.active, store: store, showsToolbar: toolbar)
+                    .id(store.activeID)
+            }
             if showAgent && store.hasAgent {
                 ChatSidebar(runner: runner, onClose: { withAnimation(Theme.layout) { showAgent = false } })
                     .frame(width: Self.agentPanelWidth)
@@ -184,14 +190,17 @@ private struct ThemeButton: View {
     }
 }
 
-/// The page in a card: its toolbar on top in the top layout (the sidebar carries navigation in
-/// the other), a hairline of progress while it loads, the find bar over it, and the agent's
-/// ring round it while the agent works in it.
-private struct PageCard: View {
+/// The page in a card: its toolbar on top in the top layout and in a split (the sidebar
+/// carries navigation otherwise), a hairline of progress while it loads, the find bar over it,
+/// the agent's ring round it while the agent works in it, and the accent's edge on the pane in
+/// use of a split. While a tab is dragged, its right edge takes it to open a split.
+struct PageCard: View {
     @ObservedObject var tab: BrowserModel
     @ObservedObject var store: TabStore
     var showsToolbar: Bool
+    var focused = false
     @Environment(\.palette) private var palette
+    @State private var splitTargeted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -218,8 +227,33 @@ private struct PageCard: View {
         }
         .card()
         .overlay {
-            if tab.isDriven { AgentGlow().transition(.opacity) }
+            if tab.isDriven {
+                AgentGlow().transition(.opacity)
+            } else if focused {
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .strokeBorder(palette.accent.opacity(0.8), lineWidth: 1.5)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .trailing) {
+            if store.draggedTab != nil && store.shownSplit == nil { splitDropZone }
         }
         .animation(Theme.layout, value: tab.isDriven)
+    }
+
+    private var splitDropZone: some View {
+        RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+            .fill(palette.accent.opacity(splitTargeted ? 0.18 : 0.06))
+            .overlay {
+                Label("Open in split view", systemImage: "rectangle.split.2x1")
+                    .font(Theme.Text.bodyStrong)
+                    .foregroundStyle(palette.accent)
+                    .opacity(splitTargeted ? 1 : 0.6)
+            }
+            .frame(width: 220)
+            .padding(Theme.Space.s)
+            .contentShape(Rectangle())
+            .onDrop(of: [TabDrag.type], delegate: SplitDropDelegate(store: store, host: tab, targeted: $splitTargeted))
+            .transition(.opacity)
     }
 }

@@ -23,6 +23,13 @@ struct WindowRequest: Codable, Hashable {
     var id = UUID()
 }
 
+/// Two tabs side by side.
+struct SplitPair: Equatable {
+    var left: UUID
+    var right: UUID
+    func contains(_ id: UUID) -> Bool { left == id || right == id }
+}
+
 enum CommandBarMode: Hashable {
     case newTab
     case tab(UUID)
@@ -90,6 +97,12 @@ final class TabStore: ObservableObject {
     /// A group just made by a drag, whose name is waiting to be typed.
     @Published var renamingGroup: UUID?
 
+    /// Two tabs shown side by side whenever either is the active one, and the left's share.
+    @Published var split: SplitPair?
+    @Published var splitRatio: CGFloat = 0.5
+    /// The split was made to show the agent at work (watch mode), and goes when it is done.
+    @Published private(set) var agentDocked = false
+
     static let groupColors: [Color] = [.red, .orange, .yellow, .green, .blue, .purple, .pink]
 
     var active: BrowserModel { tabs.first { $0.id == activeID } ?? tabs.first ?? BrowserModel.shared }
@@ -145,6 +158,10 @@ final class TabStore: ObservableObject {
         withAnimation(.snappy) {
             tabs.remove(at: index)
             if activeID == tab.id, !tabs.isEmpty { activeID = tabs[min(index, tabs.count - 1)].id }
+        }
+        if split?.contains(tab.id) == true {
+            split = nil
+            agentDocked = false
         }
         tab.view.destroyBrowser()
         // A window of the person's own goes with its last tab, as in other browsers. The
@@ -357,6 +374,88 @@ extension TabStore {
             select(tab)
             tab.view.focusBrowser()
         }
+    }
+}
+
+// MARK: - Split view
+
+extension TabStore {
+    /// The pair on screen: the split, when the active tab is in it.
+    var shownSplit: SplitPair? {
+        guard let split, split.contains(activeID) else { return nil }
+        return split
+    }
+
+    /// Whether a tab's page is on screen in this window.
+    func isShowing(_ tab: BrowserModel) -> Bool {
+        activeID == tab.id || shownSplit?.contains(tab.id) == true
+    }
+
+    /// Puts the active tab beside `partner`, or beside the next tab (a new one if there is none).
+    func openSplit(with partner: BrowserModel? = nil) {
+        let left = active
+        let right: BrowserModel
+        if let partner, partner !== left {
+            right = partner
+        } else if let index = tabs.firstIndex(where: { $0 === left }), index + 1 < tabs.count {
+            right = tabs[index + 1]
+        } else if let other = tabs.last(where: { $0 !== left }) {
+            right = other
+        } else {
+            newTab()
+            right = active
+            activeID = left.id
+        }
+        withAnimation(Theme.layout) {
+            split = SplitPair(left: left.id, right: right.id)
+            splitRatio = 0.5
+            agentDocked = false
+        }
+    }
+
+    func closeSplit() {
+        withAnimation(Theme.layout) {
+            split = nil
+            agentDocked = false
+        }
+    }
+
+    func toggleSplit() { shownSplit == nil ? openSplit() : closeSplit() }
+
+    func swapSplit() {
+        guard let pair = split else { return }
+        withAnimation(Theme.layout) {
+            split = SplitPair(left: pair.right, right: pair.left)
+            splitRatio = 1 - splitRatio
+        }
+    }
+
+    /// Watch mode: when the harness takes the agent's tab while the person is on another, the
+    /// agent's page docks beside theirs, where Chromium keeps painting it and they can watch it
+    /// work; it undocks when the harness lets go, unless the person made the split themselves.
+    func agentDrivingChanged(_ driven: Bool) {
+        guard hasAgent else { return }
+        let agent = BrowserModel.shared
+        if driven, !isShowing(agent) {
+            withAnimation(Theme.layout) {
+                split = SplitPair(left: active.id, right: agent.id)
+                splitRatio = 0.4
+                agentDocked = true
+            }
+        } else if !driven, agentDocked {
+            closeSplit()
+        }
+    }
+
+    /// The left pane's width out of `available`. While the agent is docked its pane keeps the
+    /// width its page had before there was a split, as far as the window allows.
+    func splitLeftWidth(in available: CGFloat) -> CGFloat {
+        var left = available * splitRatio
+        if agentDocked, split?.right == BrowserModel.shared.id {
+            let agentWidth = max(available - left, min(896, available * 0.75))
+            left = available - agentWidth
+        }
+        return min(max(left, available * 0.2), available * 0.8)
     }
 }
 
