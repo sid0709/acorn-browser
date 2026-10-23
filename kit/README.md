@@ -12,7 +12,7 @@ kit/
   src/taskfile.rs    a task as a Markdown file: a few key: value lines, then the goal
   browser/           the Node side: one Playwright page that looks and does
   tasks/*.md         five simple tasks to try, none needing an account
-  pages/form.html    a local form the first task fills, so the kit runs with no internet
+  pages/form.html    a local form the integration test drives, with no model and no internet
   profile.md         who the run acts as (no passwords: the harness holds none)
   traces/            one folder per run, written while it goes (not committed)
 ```
@@ -28,8 +28,8 @@ kit/
 
 ```bash
 cd kit
-cargo run -- tasks/local-form.md            # works offline
 cargo run -- tasks/todomvc.md --headed      # watch the window
+cargo run -- tasks/wikipedia.md
 cargo run -- --help
 ```
 
@@ -48,9 +48,9 @@ decision model answers yes/no questions about screenshots: a cheap, quick one do
 none` turns the checks off and the run plans six actions at a time), `--reasoning low|medium|high`,
 `--profile <file>`, `--trace <dir>`, `--viewport 1280x720`.
 
-The tasks: `local-form.md` fills the local page (offline), `todomvc.md` adds items on
-Playwright's TodoMVC demo, `wikipedia.md` finds an article and reads a fact, `wikipedia-chinese.md`
-finds an article and switches it to Chinese, `google-search.md` searches and opens a result.
+The tasks: `todomvc.md` adds items on Playwright's TodoMVC demo, `wikipedia.md` finds an
+article and reads a fact, `wikipedia-chinese.md` finds an article and switches it to Chinese,
+`google-search.md` searches and opens a result, `hacker-news.md` reads the top story.
 Google sometimes shows a check to a headless browser; `--headed` helps.
 
 ## A task file
