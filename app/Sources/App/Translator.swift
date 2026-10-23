@@ -74,14 +74,14 @@ final class Translator {
     }
 
     /// "zh-CN" stays itself (the two Chinese scripts differ); "en-GB" is "en".
-    static func base(_ code: String) -> String {
+    nonisolated static func base(_ code: String) -> String {
         if code.lowercased().hasPrefix("zh") {
             return code.lowercased().contains("tw") || code.lowercased().contains("hant") ? "zh-TW" : "zh-CN"
         }
         return String(code.split(separator: "-").first ?? Substring(code)).lowercased()
     }
 
-    static func name(of code: String) -> String {
+    nonisolated static func name(of code: String) -> String {
         Locale.current.localizedString(forIdentifier: code) ?? code
     }
 

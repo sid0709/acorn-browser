@@ -166,7 +166,7 @@ final class FaviconCache {
     private var missing: Set<String> = []
 
     /// "https://www.youtube.com/watch" as "youtube.com".
-    static func host(of url: String) -> String? {
+    nonisolated static func host(of url: String) -> String? {
         guard let host = URL(string: url)?.host(), !host.isEmpty else { return nil }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }

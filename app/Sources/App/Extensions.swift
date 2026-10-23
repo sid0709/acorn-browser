@@ -100,7 +100,7 @@ final class ExtensionStore: ObservableObject {
         return url.pathComponents.last(where: isID)
     }
 
-    static func isID(_ text: String) -> Bool {
+    nonisolated static func isID(_ text: String) -> Bool {
         text.count == 32 && text.allSatisfy { ("a"..."p").contains($0) }
     }
 

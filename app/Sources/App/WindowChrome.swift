@@ -47,13 +47,11 @@ struct WindowConfigurator: NSViewRepresentable {
             ]
             for name in names {
                 observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
-                    self?.place()
+                    MainActor.assumeIsolated { self?.place() }
                 })
             }
             DispatchQueue.main.async { [weak self] in self?.place() }
         }
-
-        deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 
         func place() {
             guard let window, !window.styleMask.contains(.fullScreen),
