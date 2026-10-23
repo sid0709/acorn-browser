@@ -9,6 +9,8 @@
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_jsdialog_handler.h"
 #include "include/cef_parser.h"
+#include "include/cef_request_context.h"
+#include "include/cef_request_context_handler.h"
 
 namespace {
 
@@ -584,6 +586,13 @@ class BrowserClient : public CefClient,
 
 #pragma mark - ChromiumBrowserView
 
+// The private views' one profile, made when the first opens and dropped with the last.
+static CefRefPtr<CefRequestContext> gIncognitoContext;
+static NSInteger gIncognitoViews = 0;
+// Set when the engine refused a Chrome-style browser in a view of ours: later views go
+// straight to Alloy instead of asking again.
+static BOOL gChromeStyleRefused = NO;
+
 @implementation ChromiumBrowserView {
   CefRefPtr<BrowserClient> _client;
   CefRefPtr<CefBrowser> _browser;
@@ -601,8 +610,16 @@ class BrowserClient : public CefClient,
 }
 
 - (instancetype)initWithURL:(NSString *)url {
+  return [self initWithURL:url incognito:NO];
+}
+
+- (instancetype)initWithURL:(NSString *)url incognito:(BOOL)incognito {
   self = [super initWithFrame:NSZeroRect];
   if (self) {
+    _isIncognito = incognito;
+    if (incognito) {
+      gIncognitoViews++;
+    }
     _client = new BrowserClient(self);
     _pendingURL = [url copy];
     _currentURL = [url copy];
@@ -628,6 +645,9 @@ class BrowserClient : public CefClient,
 
 - (void)dealloc {
   [self destroyBrowser];
+  if (_isIncognito && --gIncognitoViews == 0) {
+    gIncognitoContext = nullptr;
+  }
 }
 
 #pragma mark Layout
@@ -676,14 +696,49 @@ class BrowserClient : public CefClient,
   CefWindowInfo windowInfo;
   windowInfo.SetAsChild((__bridge void *)self,
                         CefRect(0, 0, (int)bounds.size.width, (int)bounds.size.height));
-  windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+  const BOOL wantsChrome = _usesChromeStyle && !gChromeStyleRefused;
+  windowInfo.runtime_style = wantsChrome ? CEF_RUNTIME_STYLE_CHROME : CEF_RUNTIME_STYLE_ALLOY;
 
   CefBrowserSettings browserSettings;
+  CefRefPtr<CefRequestContext> context;
+  if (_isIncognito) {
+    if (!gIncognitoContext) {
+      // No cache path: cookies, storage and cache stay in memory.
+      CefRequestContextSettings contextSettings;
+      gIncognitoContext = CefRequestContext::CreateContext(contextSettings, nullptr);
+    }
+    context = gIncognitoContext;
+  }
   CefRefPtr<CefBrowser> browser = CefBrowserHost::CreateBrowserSync(
-      windowInfo, _client.get(), ToCefString(_pendingURL), browserSettings, nullptr, nullptr);
+      windowInfo, _client.get(), ToCefString(_pendingURL), browserSettings, nullptr, context);
+  if (!browser && wantsChrome) {
+    // This engine would not make a Chrome-style browser inside one of our views (CEF on
+    // macOS): make the page a plain one rather than leave it blank, and stop asking.
+    gChromeStyleRefused = YES;
+    NSLog(@"ChromiumBrowserView: the engine refused a Chrome-style browser here; using Alloy.");
+    windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+    browser = CefBrowserHost::CreateBrowserSync(
+        windowInfo, _client.get(), ToCefString(_pendingURL), browserSettings, nullptr, context);
+  }
   if (browser) {
     [self cef_didCreateBrowser:browser];
+    NSLog(@"ChromiumBrowserView: asked for %@ style, got %@.", _usesChromeStyle ? @"Chrome" : @"Alloy",
+          self.isChromeStyle ? @"Chrome" : @"Alloy");
+  } else {
+    NSLog(@"ChromiumBrowserView: no browser was made.");
   }
+}
+
++ (BOOL)chromeStyleRefused {
+  return gChromeStyleRefused;
+}
+
+- (BOOL)hasBrowser {
+  return _browser.get() != nullptr && !_destroyed;
+}
+
+- (BOOL)isChromeStyle {
+  return self.hasBrowser && _browser->GetHost()->GetRuntimeStyle() == CEF_RUNTIME_STYLE_CHROME;
 }
 
 - (void)requestClose {
@@ -860,9 +915,11 @@ class BrowserClient : public CefClient,
 
   // The popup keeps its window.opener link, so sign-in flows (Google, Apple, etc.)
   // can report back to this page.
-  ChromiumBrowserView *popup = [[ChromiumBrowserView alloc] initWithURL:@"about:blank"];
+  ChromiumBrowserView *popup = [[ChromiumBrowserView alloc] initWithURL:@"about:blank"
+                                                              incognito:self.isIncognito];
   popup->_isPopupHost = YES;
   popup.frame = self.bounds;
+  popup.usesChromeStyle = self.isChromeStyle;
   popup.allowsPopups = self.allowsPopups;
   popup.allowsDragAndDrop = self.allowsDragAndDrop;
   popup.allowsTooltips = self.allowsTooltips;
@@ -876,7 +933,8 @@ class BrowserClient : public CefClient,
   const NSRect bounds = popup.bounds;
   windowInfo.SetAsChild((__bridge void *)popup,
                         CefRect(0, 0, (int)bounds.size.width, (int)bounds.size.height));
-  windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+  // A popup must have its opener's style: the one the opener actually got.
+  windowInfo.runtime_style = self.isChromeStyle ? CEF_RUNTIME_STYLE_CHROME : CEF_RUNTIME_STYLE_ALLOY;
   client = popup->_client.get();
   [_pendingPopups setObject:popup forKey:@(popupID)];
   return NO;

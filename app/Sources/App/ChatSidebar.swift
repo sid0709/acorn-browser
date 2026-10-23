@@ -9,6 +9,7 @@ struct ChatSidebar: View {
     @State private var choosingModel = false
     @FocusState private var composerFocused: Bool
     @ObservedObject private var catalog = ModelCatalog.shared
+    @Environment(\.palette) private var palette
 
     private static let suggestions: [(icon: String, text: String)] = [
         ("magnifyingglass", "Find the best-reviewed option on this page and summarize why"),
@@ -25,7 +26,7 @@ struct ChatSidebar: View {
             conversation
             composer
         }
-        .card(radius: 18)
+        .card(radius: Theme.Radius.popover)
         .task { await catalog.refresh() }
         .task { await runTaskFromLaunchArguments() }
     }
@@ -38,11 +39,11 @@ struct ChatSidebar: View {
                 Circle().fill(Theme.sparkle).frame(width: 22, height: 22)
                 Image(systemName: "sparkles").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
             }
-            Text("Agent").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
+            Text("Agent").font(Theme.Text.title).foregroundStyle(palette.ink)
             if runner.isRunning {
                 HStack(spacing: 5) {
                     ProgressView().controlSize(.mini)
-                    Text("Working").font(.caption).foregroundStyle(.secondary)
+                    Text("Working").font(Theme.Text.caption).foregroundStyle(palette.inkSecondary)
                 }
             }
             Spacer()
@@ -52,7 +53,7 @@ struct ChatSidebar: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 48)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(palette.hairline).frame(height: 1) }
     }
 
     // MARK: Conversation
@@ -86,23 +87,23 @@ struct ChatSidebar: View {
                 Image(systemName: "sparkles").font(.system(size: 26)).foregroundStyle(Theme.sparkle)
             }
             VStack(spacing: 4) {
-                Text("What should I do for you?").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
+                Text("What should I do for you?").font(.system(size: 16, weight: .semibold)).foregroundStyle(palette.ink)
                 Text("I work in the agent tab and report each step here. You can also paste a task file with url: and done_when: lines.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .font(Theme.Text.secondary)
+                    .foregroundStyle(palette.inkSecondary)
                     .multilineTextAlignment(.center)
             }
             VStack(spacing: 8) {
                 ForEach(Self.suggestions, id: \.text) { suggestion in
                     Button { draft = suggestion.text; composerFocused = true } label: {
                         HStack(spacing: 10) {
-                            Image(systemName: suggestion.icon).frame(width: 18).foregroundStyle(Theme.accent)
+                            Image(systemName: suggestion.icon).frame(width: 18).foregroundStyle(palette.accent)
                             Text(suggestion.text).font(.system(size: 12.5)).multilineTextAlignment(.leading)
                             Spacer(minLength: 0)
                         }
-                        .foregroundStyle(Theme.ink)
+                        .foregroundStyle(palette.ink)
                         .padding(10)
-                        .background(Color.black.opacity(0.035), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        .background(palette.hover, in: RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous))
                     }
                     .buttonStyle(.plain)
                 }
@@ -119,6 +120,7 @@ struct ChatSidebar: View {
             TextField("Give the agent a task", text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13.5))
+                .foregroundStyle(palette.ink)
                 .lineLimit(1...8)
                 .focused($composerFocused)
                 .disabled(runner.isRunning)
@@ -132,10 +134,10 @@ struct ChatSidebar: View {
             }
         }
         .padding(12)
-        .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(composerFocused ? Theme.accent.opacity(0.3) : Theme.hairline, lineWidth: composerFocused ? 1.5 : 1))
-        .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
+        .background(palette.raised, in: RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous)
+            .strokeBorder(composerFocused ? palette.accent.opacity(0.45) : palette.hairline, lineWidth: composerFocused ? 1.5 : 1))
+        .shadow(color: .black.opacity(palette.isDark ? 0.3 : 0.05), radius: 8, y: 2)
         .padding(10)
     }
 
@@ -143,9 +145,9 @@ struct ChatSidebar: View {
         Button(action: runner.isRunning ? runner.stop : send) {
             Image(systemName: runner.isRunning ? "stop.fill" : "arrow.up")
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(palette.onAccent)
                 .frame(width: 28, height: 28)
-                .background(Circle().fill(Theme.accent.opacity(runner.isRunning || canSend ? 1 : 0.3)))
+                .background(Circle().fill(palette.accent.opacity(runner.isRunning || canSend ? 1 : 0.3)))
         }
         .buttonStyle(.plain)
         .disabled(!runner.isRunning && !canSend)
@@ -161,10 +163,10 @@ struct ChatSidebar: View {
                 Text(shortName(runner.model)).lineLimit(1).font(.system(size: 12, weight: .medium))
                 Image(systemName: "chevron.up.chevron.down").font(.system(size: 8))
             }
-            .foregroundStyle(Theme.ink.opacity(0.75))
+            .foregroundStyle(palette.inkSecondary)
             .padding(.horizontal, 9)
             .frame(height: 26)
-            .background(Color.black.opacity(0.05), in: Capsule())
+            .background(palette.hover, in: Capsule())
         }
         .buttonStyle(.plain)
         .disabled(runner.isRunning)
@@ -212,20 +214,20 @@ struct ChatSidebar: View {
         case .person:
             Text(message.text)
                 .font(.system(size: 13))
-                .foregroundStyle(.white)
+                .foregroundStyle(palette.onAccent)
                 .textSelection(.enabled)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
-                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(palette.accent, in: RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous))
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.leading, 40)
         case .step:
             HStack(alignment: .top, spacing: 9) {
                 Circle().fill(Theme.sparkle).frame(width: 6, height: 6).padding(.top, 6)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(message.text).font(.system(size: 12.5)).foregroundStyle(Theme.ink)
+                    Text(message.text).font(.system(size: 12.5)).foregroundStyle(palette.ink)
                     if !message.detail.isEmpty {
-                        Text(message.detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text(message.detail).font(Theme.Text.caption).foregroundStyle(palette.inkSecondary)
                     }
                 }
             }
@@ -240,23 +242,23 @@ struct ChatSidebar: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(message.kind == .done ? Color.green : Color.orange)
                 }
-                Text(message.text).font(.system(size: 13)).foregroundStyle(Theme.ink)
+                Text(message.text).font(Theme.Text.body).foregroundStyle(palette.ink)
                 if !message.detail.isEmpty {
-                    Text(message.detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(message.detail).font(Theme.Text.caption).foregroundStyle(palette.inkSecondary)
                 }
             }
             .textSelection(.enabled)
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(tint(message.kind), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(tint(message.kind), in: RoundedRectangle(cornerRadius: Theme.Radius.popover, style: .continuous))
         }
     }
 
     private func tint(_ kind: ChatMessage.Kind) -> Color {
         switch kind {
-        case .done: Color.green.opacity(0.13)
-        case .problem: Color.orange.opacity(0.16)
-        default: Color.black.opacity(0.045)
+        case .done: Color.green.opacity(palette.isDark ? 0.2 : 0.13)
+        case .problem: Color.orange.opacity(palette.isDark ? 0.22 : 0.16)
+        default: palette.hover
         }
     }
 

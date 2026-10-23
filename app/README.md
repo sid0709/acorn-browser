@@ -130,8 +130,85 @@ Needs Xcode (for `swiftc` and `clang++`), no CMake.
 
 ## Interface
 
-The window is a pastel wash behind rounded cards: a tab strip on top, the page with its address
-row in one card, and the agent panel in another (toggled with the Ask AI button or ⌘K). Tabs are
-real, `⌘T` opens one. The first tab is the agent's: it is marked with a sparkle, cannot be
-closed, and is the page `AgentDriver` and the harness work in. Theme and shared styles are in
-`Theme.swift`, tab state in `TabStore.swift`, the strip in `TabStrip.swift`.
+The window is a tinted canvas behind rounded cards: the page in one, the agent panel in another
+(⌘K). The tabs go either across the top, where the page's card carries navigation and the
+address, or down a sidebar on the left, Arc's way (the layout is chosen in the ⋮ menu): pinned
+tabs as tiles, the agent's tab, then groups as folders and the open tabs. In that layout one row
+runs along the window's top whether the sidebar shows or not (`SidebarTopBar`): the window's
+buttons, the sidebar toggle and back, forward and reload on the left, and the page's title and
+site centered over the page, which a click or ⌘L opens for editing in place, with suggestions.
+⌘S puts the sidebar away; the window's left edge brings it out below that row while the pointer
+is near. The window's close, minimize and zoom buttons are the system's own, moved by
+`WindowConfigurator` into the top row and kept there through resizing and full screen.
+
+The command bar (`CommandBar.swift`) is how anything is opened: ⌘T for a new tab, ⌘L or a click
+on the address for the tab shown. It ranks, from what the browser already knows, the address or
+search, open tabs, bookmarks, history and the window's commands, and offers the words to the
+agent as a task. History (⌘Y), bookmarks (⌘D) and the search engine and translate language are
+in `Library.swift`, kept as JSON beside the runs; pages the agent opens while it drives are not
+written to history. The menu bar lists every command; the keys are also held by
+`WindowShortcuts` inside the window, so they work with the page focused. Settings (⌘,) holds
+the theme, the layout, search, translation and clearing data.
+
+The ⋮ menu follows Chromium's: New tab, New window and Incognito as tiles; zoom in place with full
+screen beside it, bookmark, pin, find, translate, print and copy link; then Bookmarks, History, Tab and Extensions,
+which open inside the menu; About and Settings at the foot. The person's tabs are Chrome-style
+views (`usesChromeStyle`), which run Chrome's extension system; the agent's tab stays an Alloy
+view, the plain page `AgentDriver` was built for, and runs none (Settings can turn Chrome style
+off for new tabs). Extensions come from the Chrome Web Store (`Extensions.swift`): its own Add
+button where it can install into this browser, and otherwise "Add to Acorn" in the address of an
+extension's Store page, which fetches the Store's package, unpacks it beside the runs keeping
+the Store's id, and loads it at the next launch (`ChromiumEngine.extensionDirectories`, as
+`--load-extension`). The puzzle piece beside the address lists them and opens their popups;
+`chrome://extensions` manages the rest. Extensions also holds site boosts (`Boosts.swift`):
+styles and a script of the person's own put into a site's pages when they load, never into the
+agent's tab.
+
+Tabs are dragged (`TabDrag.swift`): onto either end of another tab to move there, taking its
+group and pin; onto its middle to make a group of the two (the new folder's name opens for
+typing); onto a group's label or folder to join it; onto the open space below the sidebar's tabs
+to leave a group or a pin; among the pinned tiles to pin. The agent's tab neither moves nor
+takes a drop.
+
+⌘\ (or the ⋮ menu, or a tab dropped on a page's right edge) puts two tabs side by side
+(`SplitView.swift`), each with its own toolbar and a handle between them; the pane clicked last
+is the active tab. When the harness takes the agent's tab while the person is on another, the
+agent's page docks beside theirs (watch mode), so Chromium keeps painting it and they can watch
+it work; it keeps the width it had before there was a split as far as the window allows, and
+undocks when the harness lets go.
+
+Translation works as Chrome's does, in place (`Translator.swift`). When a load ends in one of
+the person's tabs, the page's language is told from its text (`NLLanguageRecognizer`); if it is
+not the one Settings names, the address offers a translation. Translating hands the page's text
+nodes out in batches, the visible ones first, has them translated by Google's translator (the
+app makes the request, so no site's security policy stops it), and swaps each node's text where
+it stands, keeping the original for Show Original. Text that appears later is translated as it
+comes (the page calls back through a DevTools binding). Always and never are kept per language.
+The agent's tab is never translated.
+
+⌘N opens another window and ⇧⌘N an incognito one, each with tabs of its own; only the main
+window has the agent. An incognito window's tabs share one in-memory profile
+(`ChromiumBrowserView initWithURL:incognito:`), which goes when the last of them does; it wears
+a fixed dark theme and writes no history.
+
+The app opens on a start page (`StartPage.swift`) instead of a website: a greeting, a search
+that suggests what the command bar does, a dial of the sites visited most (with their icons
+cached from earlier visits, so it needs no network and looks the same offline), and a way to
+ask the agent. It is drawn by the app over an empty page (`about:blank`), which stays mounted
+underneath, so the harness can navigate the tab at any moment; it goes as soon as the tab goes
+anywhere. The ⋮ menu and the command bar bring it back; ⌘T still opens the command bar.
+
+The first tab is the agent's: it is marked with a sparkle, cannot be closed, and is the page
+`AgentDriver` and the harness work in. While the harness has it (from its first request to the
+end of the connection) its card wears a slowly turning ring in the agent's colors, and, if it is
+the tab shown, the sidebar steps aside so the page the agent sees is no narrower than it was
+before there was a sidebar.
+
+The tint is the person's: the palette button opens the theme picker (presets, a pad where one
+to three colors are set, intensity, grain, light or dark). No view draws with a fixed color;
+each reads a `Palette` derived from the theme (`ThemeStore.swift`), whose text and accent are
+picked to stay readable in either appearance. Spacing, radii, type and the shared button styles
+are in `Theme.swift`, tab state in `TabStore.swift`, the strip in `TabStrip.swift`, the sidebar
+in `Sidebar.swift`, and the pieces both layouts share (the window's buttons, the address, the page
+toolbar, the agent's ring, the shortcuts) in `WindowChrome.swift`. Where the interface is going
+next is in `DESIGN.md`.

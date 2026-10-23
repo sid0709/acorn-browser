@@ -21,6 +21,10 @@ NS_SWIFT_UI_ACTOR
 /// page by several seconds. Must be set before `start`. Defaults to YES.
 @property (class, nonatomic) BOOL usesSystemKeychain;
 
+/// Unpacked extensions (folders with a manifest.json) to load at start, as Chromium's
+/// --load-extension does. They run in Chrome-style views. Must be set before `start`.
+@property (class, nonatomic, copy) NSArray<NSString *> *extensionDirectories;
+
 /// Ends the app right away. Chromium is not shut down gracefully (its helper processes exit
 /// with the app); the only thing done first is a quick flush of the cookie store so a recent
 /// login isn't lost. Never returns normally: the process exits within about a second.
@@ -96,11 +100,15 @@ typedef NS_ENUM(NSInteger, ChromiumScreenshotArea) {
 NS_SWIFT_UI_ACTOR
 @interface ChromiumBrowserView : NSView
 
-- (instancetype)initWithURL:(NSString *)url NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithURL:(NSString *)url;
+/// A private view: its cookies, storage and cache are kept in memory, shared by the private
+/// views open at the same time, and gone once the last of them is.
+- (instancetype)initWithURL:(NSString *)url incognito:(BOOL)incognito NS_DESIGNATED_INITIALIZER;
 - (instancetype)initWithFrame:(NSRect)frameRect NS_UNAVAILABLE;
 - (nullable instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
 
 @property (nonatomic, weak, nullable) id<ChromiumBrowserViewDelegate> delegate;
+@property (nonatomic, readonly) BOOL isIncognito;
 
 @property (nonatomic, readonly, copy) NSString *currentURL;
 @property (nonatomic, readonly, copy) NSString *title;
@@ -112,6 +120,18 @@ NS_SWIFT_UI_ACTOR
 /// The site's favicon, or nil until one has loaded.
 @property (nonatomic, readonly, nullable) NSImage *favicon;
 
+/// Chrome style instead of Alloy: Chrome's own browser features in this view, extensions and
+/// the Web Store among them. Alloy (NO, the default) is the plain view the agent drives. Must be
+/// set before the view joins a window; a page's popups take the style of their opener.
+@property (nonatomic) BOOL usesChromeStyle;
+/// Whether the browser exists yet (it is made when the view first joins a window).
+@property (nonatomic, readonly) BOOL hasBrowser;
+/// The style the browser actually got, which may differ from the one asked for: YES only for a
+/// live Chrome-style browser.
+@property (nonatomic, readonly) BOOL isChromeStyle;
+/// YES once the engine has refused a Chrome-style browser in one of these views; they are all
+/// made Alloy from then on, and run no extensions.
+@property (class, nonatomic, readonly) BOOL chromeStyleRefused;
 @property (nonatomic) BOOL allowsPopups;
 @property (nonatomic) BOOL allowsDragAndDrop;
 @property (nonatomic) BOOL allowsTooltips;

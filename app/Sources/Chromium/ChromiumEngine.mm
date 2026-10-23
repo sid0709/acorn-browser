@@ -76,6 +76,7 @@ bool gPumpReentrant = false;
 bool gRunning = false;
 bool gReady = false;
 bool gUsesSystemKeychain = true;
+NSArray<NSString *> *gExtensionDirectories = @[];
 
 void SchedulePumpWorkOnMain(int64_t delayMs);
 
@@ -151,6 +152,13 @@ class ChromiumApp : public CefApp, public CefBrowserProcessHandler {
     // Only the browser process touches the Keychain.
     if (process_type.empty() && !gUsesSystemKeychain) {
       command_line->AppendSwitch("use-mock-keychain");
+    }
+    // Extensions the app installed itself, unpacked. Chromium turns --load-extension off by
+    // default now; the feature that does so is turned off with it.
+    if (process_type.empty() && gExtensionDirectories.count > 0) {
+      NSString *joined = [gExtensionDirectories componentsJoinedByString:@","];
+      command_line->AppendSwitchWithValue("load-extension", joined.UTF8String);
+      command_line->AppendSwitchWithValue("disable-features", "DisableLoadExtensionCommandLineSwitch");
     }
   }
 
@@ -304,6 +312,14 @@ void BrowserClosed() {
 
 + (void)setUsesSystemKeychain:(BOOL)usesSystemKeychain {
   gUsesSystemKeychain = usesSystemKeychain;
+}
+
++ (NSArray<NSString *> *)extensionDirectories {
+  return gExtensionDirectories;
+}
+
++ (void)setExtensionDirectories:(NSArray<NSString *> *)extensionDirectories {
+  gExtensionDirectories = [extensionDirectories copy];
 }
 
 + (NSString *)chromiumVersion {

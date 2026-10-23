@@ -69,6 +69,7 @@ final class AgentDriver {
     private func attach() async {
         if !attached {
             attached = true
+            model.isDriven = true
             view.dialogHandler = { [weak self] kind, message, _ in
                 MainActor.assumeIsolated {
                     // An alert only informs, and leaving a page is what the plan asked for; a
@@ -103,6 +104,7 @@ final class AgentDriver {
     func detach() async {
         guard attached else { return }
         attached = false
+        model.isDriven = false
         await releaseHeld()
         view.releasePointer()
         view.showPointer(false)
