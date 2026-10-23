@@ -42,6 +42,8 @@ struct Suggestions {
     }
 
     func items(for query: String, historyWhenEmpty: Bool = true) -> [CommandItem] {
+        ChromiumPerf.enter("suggestions")
+        defer { ChromiumPerf.leave() }
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let words = text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
         func matches(_ haystack: String) -> Bool {
@@ -216,6 +218,8 @@ struct SuggestionList: View {
     @Binding var selection: Int
     let run: (Int) -> Void
     @Environment(\.palette) private var palette
+    /// The row under the pointer, which selects itself and is never scrolled to.
+    @State private var hovered: Int?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -233,14 +237,24 @@ struct SuggestionList: View {
                         SuggestionRow(item: item, selected: index == selection)
                             .id(index)
                             .onTapGesture { run(index) }
-                            .onHover { if $0 { selection = index } }
+                            .onHover { inside in
+                                HoverWatch.flipped("a suggestion")
+                                if inside {
+                                    hovered = index
+                                    selection = index
+                                } else if hovered == index {
+                                    hovered = nil
+                                }
+                            }
                     }
                 }
                 .padding(Theme.Space.s - 2)
             }
             .frame(maxHeight: 400)
             .fixedSize(horizontal: false, vertical: true)
-            .onChange(of: selection) { _, now in proxy.scrollTo(now) }
+            // For the arrow keys only: scrolling to the row the pointer selected moved another
+            // row under the pointer, which selected that one and scrolled again.
+            .onChange(of: selection) { _, now in if now != hovered { proxy.scrollTo(now) } }
         }
     }
 }

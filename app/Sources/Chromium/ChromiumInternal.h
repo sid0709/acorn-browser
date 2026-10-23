@@ -10,6 +10,17 @@ int LiveBrowserCount();
 void BrowserCreated();
 void BrowserClosed();
 
+/// Marks a stretch of the main thread's work for `ChromiumPerf`, for as long as it lives.
+/// `section` must outlive the app: a string literal. `reportsSlow` NO keeps a long stretch
+/// from being written on its own (the watcher still counts time spent in it).
+class PerfScope {
+ public:
+  explicit PerfScope(const char *section, bool reportsSlow = true);
+  ~PerfScope();
+  PerfScope(const PerfScope &) = delete;
+  PerfScope &operator=(const PerfScope &) = delete;
+};
+
 }  // namespace chromium
 
 /// Shared between the browser view and its input category (ChromiumInput.mm).

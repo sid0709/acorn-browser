@@ -39,6 +39,32 @@ NS_SWIFT_UI_ACTOR
 
 @end
 
+/// Finds the moments the window stops answering, and what held the main thread meanwhile.
+///
+/// A watcher thread asks the main thread to answer every 100 ms. When an answer is late by
+/// more than a quarter of a second, it writes one line: how long the window was stuck, how
+/// many browsers were alive, and the share of that time spent in each section the main thread
+/// was in (sampled every 10 ms). Code marks its sections with `enter:` and `leave`; time in
+/// none is AppKit's and SwiftUI's own. A section that alone takes over 30 ms is written too.
+///
+/// Lines go to the system log (filter on "acorn-perf") and to `perf.log` in the app's folder
+/// in Application Support. On by default; `defaults write com.acorn.browser perfWatch -bool NO`
+/// turns the watcher off.
+NS_SWIFT_UI_ACTOR
+@interface ChromiumPerf : NSObject
+
+/// Starts the watcher thread. Safe to call more than once.
++ (void)startWatching;
+
+/// The main thread enters a named section. Sections nest; each `enter:` needs one `leave`.
++ (void)enter:(NSString *)section;
++ (void)leave;
+
+/// Writes a line to the log on its own, prefixed like the watcher's.
++ (void)note:(NSString *)message;
+
+@end
+
 NS_SWIFT_UI_ACTOR
 @protocol ChromiumBrowserViewDelegate <NSObject>
 

@@ -41,8 +41,8 @@ struct HistoryEntry: Codable, Identifiable, Hashable, Sendable {
     var id: String { url }
 
     /// How likely this is the page meant: visited often and lately.
-    var score: Double {
-        let days = max(Date().timeIntervalSince(lastVisit) / 86_400, 0)
+    func score(at now: Date) -> Double {
+        let days = max(now.timeIntervalSince(lastVisit) / 86_400, 0)
         return Double(visits).squareRoot() / (1 + days / 3)
     }
 }
@@ -63,6 +63,8 @@ final class HistoryStore: ObservableObject {
 
     func record(url: String, title: String) {
         guard url.hasPrefix("http://") || url.hasPrefix("https://") else { return }
+        ChromiumPerf.enter("history record")
+        defer { ChromiumPerf.leave() }
         if let index = stored.firstIndex(where: { $0.url == url }) {
             var entry = stored.remove(at: index)
             entry.visits += 1
@@ -96,14 +98,20 @@ final class HistoryStore: ObservableObject {
 
     /// The entries whose title or address holds every word, best first.
     func matches(_ words: [String], limit: Int) -> [HistoryEntry] {
-        guard !words.isEmpty else { return Array(entries.sorted { $0.score > $1.score }.prefix(limit)) }
-        return Array(entries
-            .filter { entry in
-                let haystack = (entry.title + " " + entry.url).lowercased()
-                return words.allSatisfy { haystack.contains($0) }
-            }
-            .sorted { $0.score > $1.score }
-            .prefix(limit))
+        ChromiumPerf.enter("history ranking")
+        defer { ChromiumPerf.leave() }
+        let found = words.isEmpty ? entries : entries.filter { entry in
+            let haystack = (entry.title + " " + entry.url).lowercased()
+            return words.allSatisfy { haystack.contains($0) }
+        }
+        // Each entry scored once, against one clock: sorting on the score itself worked it out
+        // twice per comparison, with a fresh clock each time, over as many as 5,000 entries.
+        let now = Date()
+        return Array(found
+            .map { ($0, $0.score(at: now)) }
+            .sorted { $0.1 > $1.1 }
+            .prefix(limit)
+            .map { $0.0 })
     }
 }
 
@@ -187,6 +195,8 @@ final class FaviconCache {
     /// Keeps a site's icon, once per launch.
     func remember(_ image: NSImage, forURL url: String) {
         guard let host = Self.host(of: url), images[host] == nil else { return }
+        ChromiumPerf.enter("favicon save")
+        defer { ChromiumPerf.leave() }
         images[host] = image
         missing.remove(host)
         guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),

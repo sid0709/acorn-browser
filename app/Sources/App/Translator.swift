@@ -41,7 +41,11 @@ final class Translator {
             """)
             guard let json = value as? String, let data = json.data(using: .utf8),
                   let page = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return }
-            let language = Self.language(text: page["text"] ?? "", declared: page["lang"] ?? "")
+            // Off the main thread: the recognizer takes a while, more so the first time.
+            let text = page["text"] ?? "", declared = page["lang"] ?? ""
+            let language = await Task.detached(priority: .utility) {
+                Self.language(text: text, declared: declared)
+            }.value
             tab.pageLanguage = language
             if let language, BrowserSettings.shared.alwaysTranslate.contains(Self.base(language)),
                offers(tab) {
@@ -60,7 +64,7 @@ final class Translator {
     }
 
     /// The language the text is written in, or failing that the one the page declares.
-    private static func language(text: String, declared: String) -> String? {
+    nonisolated private static func language(text: String, declared: String) -> String? {
         let recognizer = NLLanguageRecognizer()
         recognizer.processString(text)
         if let detected = recognizer.dominantLanguage, detected != .undetermined {

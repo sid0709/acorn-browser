@@ -15,7 +15,7 @@ private struct TabFrameKey: PreferenceKey {
 /// line of its color beneath them.
 struct TabStrip: View {
     @ObservedObject var store: TabStore
-    @State private var frames: [UUID: CGRect] = [:]
+    @State private var frames = TabFrames()
     @State private var middleClickMonitor: Any?
 
     var body: some View {
@@ -35,7 +35,7 @@ struct TabStrip: View {
                 .buttonStyle(.chrome)
                 .help("New tab (⌘T)")
         }
-        .onPreferenceChange(TabFrameKey.self) { frames = $0 }
+        .onPreferenceChange(TabFrameKey.self) { frames.value = $0 }
         .onAppear { installMiddleClickMonitor() }
         .onDisappear { removeMiddleClickMonitor() }
     }
@@ -46,7 +46,7 @@ struct TabStrip: View {
             guard event.buttonNumber == 2 else { return event }
             let height = event.window?.contentView?.bounds.height ?? 0
             let point = CGPoint(x: event.locationInWindow.x, y: height - event.locationInWindow.y)
-            if let hitID = frames.first(where: { $0.value.contains(point) })?.key,
+            if let hitID = frames.value.first(where: { $0.value.contains(point) })?.key,
                let tab = store.tabs.first(where: { $0.id == hitID }), !store.isAgentTab(tab) {
                 store.close(tab)
             }
@@ -58,6 +58,13 @@ struct TabStrip: View {
         if let monitor = middleClickMonitor { NSEvent.removeMonitor(monitor) }
         middleClickMonitor = nil
     }
+}
+
+/// The pills' frames, kept where a change redraws nothing: they move on every frame of a tab's
+/// animation, and only a middle click reads them. Kept as state, the whole strip was drawn
+/// again on each of those frames, and hit-tested again under the pointer.
+private final class TabFrames {
+    var value: [UUID: CGRect] = [:]
 }
 
 /// A group's label, which collapses its tabs to a count, then the tabs over a line of its color.
@@ -125,7 +132,10 @@ private struct TabPill: View {
             )
             .contentShape(shape)
             .onTapGesture { store.select(tab) }
-            .onHover { hovering = $0 }
+            .onHover {
+                HoverWatch.flipped("a tab in the strip")
+                hovering = $0
+            }
             .help(isAgent ? "The agent's tab" : tab.title)
             .animation(Theme.hover, value: isActive)
             .animation(Theme.hover, value: hovering)
@@ -154,12 +164,19 @@ private struct TabPill: View {
                     .foregroundStyle(isActive ? palette.ink : palette.inkSecondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                if !isAgent && (hovering || isActive) {
+                if !isAgent {
+                    // Always laid out, and shown under the pointer or on the active tab. Coming
+                    // and going with the hover, it moved the tabs in a tight strip: the pointer
+                    // was then over another tab, whose hover moved them back, over and over,
+                    // and the window stopped for seconds.
+                    let shown = hovering || isActive
                     Button { store.close(tab) } label: {
                         Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
                     }
                     .buttonStyle(ChromeButtonStyle(size: 18))
                     .help("Close tab (⌘W)")
+                    .opacity(shown ? 1 : 0)
+                    .allowsHitTesting(shown)
                 }
             }
             .padding(.leading, 10)

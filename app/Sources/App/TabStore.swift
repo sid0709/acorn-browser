@@ -83,7 +83,13 @@ final class TabStore: ObservableObject {
     @Published var showAgent = true
 
     /// The command bar, when open: for a new tab (⌘T) or to send one tab elsewhere (⌘L).
-    @Published var commandBar: CommandBarMode?
+    @Published var commandBar: CommandBarMode? {
+        didSet { if let commandBar, commandBar != oldValue { commandBarOpening = UUID() } }
+    }
+    /// One per opening of the command bar (or change of what it is for), as its identity. With
+    /// its mode as identity, a bar for a new tab opened while the last one was still fading out
+    /// was taken for that one and kept its state: the last tab's query was already typed in.
+    private(set) var commandBarOpening = UUID()
 
     /// The tab whose address opens for editing (⌘L), wherever that address is shown.
     @Published var editingAddress: UUID?
@@ -136,6 +142,9 @@ final class TabStore: ObservableObject {
 
     /// A tab on `url`, or on the search engine's page.
     func newTab(url: String? = nil) {
+        ChromiumPerf.note("new tab, \(tabs.count + 1) open")
+        ChromiumPerf.enter("new tab")
+        defer { ChromiumPerf.leave() }
         let tab = BrowserModel(url: url ?? BrowserSettings.shared.searchEngine.home, incognito: isIncognito)
         withAnimation(.snappy) {
             tabs.append(tab)

@@ -71,7 +71,7 @@ private struct Shell: View {
         .overlay {
             if let mode = store.commandBar {
                 CommandBar(store: store, runner: runner, mode: mode)
-                    .id(mode)
+                    .id(store.commandBarOpening)
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
         }

@@ -88,7 +88,10 @@ private struct ChromeButtonBody: View {
                     .fill(configuration.isPressed ? palette.pressed : hovering && isEnabled ? palette.hover : .clear)
             )
             .contentShape(Rectangle())
-            .onHover { hovering = $0 }
+            .onHover {
+                HoverWatch.flipped("a toolbar button")
+                hovering = $0
+            }
             .animation(Theme.hover, value: hovering)
     }
 }
@@ -121,7 +124,10 @@ private struct RowButtonBody: View {
                     .fill(configuration.isPressed ? palette.pressed : hovering && isEnabled ? palette.hover : .clear)
             )
             .contentShape(Rectangle())
-            .onHover { hovering = $0 }
+            .onHover {
+                HoverWatch.flipped("a row button")
+                hovering = $0
+            }
     }
 }
 
