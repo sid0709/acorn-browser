@@ -14,6 +14,9 @@
     #file { position: fixed; top: 4px; left: 360px; width: 220px; }
     #ask { position: fixed; top: 4px; left: 600px; width: 100px; }
     #pop { position: fixed; top: 4px; left: 720px; width: 100px; display: inline-block; }
+    #canvas { position: fixed; top: 40px; left: 360px; width: 300px; height: 120px; border: 1px solid #888; background: #fff; }
+    #drag { position: fixed; top: 170px; left: 360px; width: 60px; height: 40px; background: #fc6; line-height: 40px; text-align: center; cursor: grab; }
+    #drop { position: fixed; top: 170px; left: 520px; width: 120px; height: 40px; border: 2px dashed #888; line-height: 40px; text-align: center; }
   </style>
 </head>
 <body>
@@ -26,6 +29,9 @@
   <input id="file" type="file">
   <button id="ask">Ask</button>
   <a id="pop" href="page.html#bottom" target="_blank">New window</a>
+  <canvas id="canvas" width="300" height="120"></canvas>
+  <div id="drag" draggable="true">Card</div>
+  <div id="drop">Drop here</div>
   <div class="spacer"></div>
   <h2 id="bottom">Bottom of the page</h2>
   <script>
@@ -42,6 +48,36 @@
     document.getElementById('ask').addEventListener('click', () => {
       alert('Hello from the page');
       log(confirm('Go on?') ? 'confirmed' : 'declined');
+    });
+    // A stroke on the canvas is drawn and counted, and its count is put in the name field,
+    // which is focused: the only way a test with no page access can read it.
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const name = document.getElementById('name');
+    let stroke = null;
+    canvas.addEventListener('pointerdown', (e) => {
+      stroke = { points: 1, shift: e.shiftKey };
+      ctx.beginPath(); ctx.moveTo(e.offsetX, e.offsetY);
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!stroke || e.buttons !== 1) return;
+      stroke.points += 1;
+      ctx.lineTo(e.offsetX, e.offsetY); ctx.stroke();
+    });
+    canvas.addEventListener('pointerup', () => {
+      if (!stroke) return;
+      name.value = 'drew ' + stroke.points + ' points shift=' + stroke.shift;
+      stroke = null;
+      name.focus();
+    });
+    const drag = document.getElementById('drag');
+    const drop = document.getElementById('drop');
+    drag.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/plain', 'card'));
+    drop.addEventListener('dragover', (e) => e.preventDefault());
+    drop.addEventListener('drop', (e) => {
+      e.preventDefault();
+      name.value = 'dropped ' + e.dataTransfer.getData('text/plain');
+      name.focus();
     });
     window.addEventListener('scroll', () => {
       document.getElementById('keys').textContent = 'scrollY=' + Math.round(window.scrollY);

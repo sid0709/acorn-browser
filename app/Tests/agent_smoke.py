@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Drives the running app over its agent socket, with the kit's protocol, and checks the results.
 
-    scripts/build.sh run          # start the app first
-    Tests/agent_smoke.py
+    scripts/build.sh run          # start the app first; allow it under Accessibility when asked
+    Tests/agent_smoke.py          # and keep the hands off the mouse while it runs
 
 Exits 0 when every check passed.
 """
 import base64
 import json
+import re
 import os
 import socket
 import sys
@@ -166,6 +167,29 @@ def main():
     notes = " | ".join(o.get("notes", []))
     check("popup opened in this tab", o["url"].endswith("#bottom"), o["url"])
     check("popup reported", "it was opened in this tab instead" in notes, notes)
+
+    # A stroke on the canvas: the button goes down, the pointer moves through the path, and
+    # the button comes up, with a pointermove for every few pixels, as a drawing tool needs.
+    results = c.act({"kind": "drag", "path": [{"x": 400, "y": 60}, {"x": 500, "y": 140}, {"x": 600, "y": 60}]})
+    check("drag ok", results[0]["ok"], str(results[0]))
+    o = c.look("9-stroke")
+    value = (o.get("focus") or {}).get("value", "")
+    m = re.match(r"drew (\d+) points shift=false", value)
+    check("stroke drawn with many points", bool(m) and int(m.group(1)) >= 20, value)
+
+    # A click with Shift held: the page sees the key.
+    results = c.act({"kind": "click", "x": 510, "y": 100, "modifiers": "Shift"})
+    check("shift click ok", results[0]["ok"], str(results[0]))
+    o = c.look("10-shift-click")
+    value = (o.get("focus") or {}).get("value", "")
+    check("shift reached the page", value == "drew 1 points shift=true", value)
+
+    # Dragging a card onto a drop zone: the page's own drag and drop.
+    results = c.act({"kind": "drag", "path": [{"x": 390, "y": 190}, {"x": 480, "y": 195}, {"x": 580, "y": 190}]})
+    check("drag and drop ok", results[0]["ok"], str(results[0]))
+    o = c.look("11-dropped")
+    value = (o.get("focus") or {}).get("value", "")
+    check("card dropped", value == "dropped card", value)
 
     results = c.act({"kind": "bogus"})
     check("unknown action fails cleanly", results[0]["ok"] is False, str(results[0]))

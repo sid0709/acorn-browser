@@ -73,6 +73,11 @@ typedef NSString *_Nullable (^ChromiumDialogHandler)(ChromiumDialogKind kind,
 /// A DevTools protocol event for a domain the page enabled (`Network.enable`, `Page.enable`).
 typedef void (^ChromiumDevToolsEventHandler)(NSString *method, NSDictionary *_Nullable params);
 
+typedef NS_ENUM(NSInteger, ChromiumMouseButton) {
+  ChromiumMouseButtonLeft,
+  ChromiumMouseButtonRight,
+};
+
 typedef NS_ENUM(NSInteger, ChromiumScreenshotArea) {
   /// What's currently on screen in the tab.
   ChromiumScreenshotAreaVisible,
@@ -145,6 +150,43 @@ NS_SWIFT_UI_ACTOR
 /// a tab for (its delegate declined, or popups are off), with the window's URL. The handler
 /// may open it in this tab.
 @property (nonatomic, copy, nullable) void (^blockedPopupHandler)(NSString *url);
+
+#pragma mark Real input
+
+/// Whether the app may post mouse and keyboard events to the system (the Accessibility
+/// permission). With `ask`, macOS shows the person the prompt to allow it once.
++ (BOOL)canSendInput:(BOOL)ask;
+
+/// Brings the window to the front and gives the page the keyboard: what the real events
+/// below need, since they go to whatever is under the pointer and in front.
+- (void)takeFront;
+
+/// Switches to a Latin keyboard layout while the agent types (a Korean or Japanese input
+/// source would turn its keys into other characters), and back when it is done.
+- (void)useLatinKeyboard;
+- (void)restoreKeyboard;
+
+/// The events a person's mouse would send, posted to the system as if from the hardware: the
+/// pointer really moves, and the page gets them the way it gets any click. Points are CSS pixels
+/// of the page, from its top left. `flags` are the modifier keys held meanwhile. Each returns
+/// NO when the view is not on screen.
+- (BOOL)pointerMoveToX:(double)x y:(double)y flags:(CGEventFlags)flags;
+- (BOOL)pointerButton:(ChromiumMouseButton)button
+                 down:(BOOL)down
+                    x:(double)x
+                    y:(double)y
+           clickCount:(NSInteger)clickCount
+                flags:(CGEventFlags)flags;
+/// One turn of the wheel at the pointer: positive deltas scroll right and down, in pixels.
+- (BOOL)wheelAtX:(double)x y:(double)y deltaX:(double)deltaX deltaY:(double)deltaY flags:(CGEventFlags)flags;
+
+/// A key going down or up, by its macOS virtual key code, with the characters it types (nil
+/// for a key that types none) and the modifier keys held.
+- (BOOL)keyCode:(CGKeyCode)keyCode down:(BOOL)down flags:(CGEventFlags)flags characters:(nullable NSString *)characters;
+
+/// Hands the focused control text as an input method would when it commits a composition: how
+/// characters a keyboard cannot type (Chinese, say) arrive. NO when nothing takes text.
+- (BOOL)insertText:(NSString *)text;
 
 /// Renders the page inside Chromium (no screen recording involved, so it works while the
 /// window is hidden from capture). Calls back on the main thread with PNG data and an

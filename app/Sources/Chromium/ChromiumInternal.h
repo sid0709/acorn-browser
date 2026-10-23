@@ -11,3 +11,9 @@ void BrowserCreated();
 void BrowserClosed();
 
 }  // namespace chromium
+
+/// Shared between the browser view and its input category (ChromiumInput.mm).
+@interface ChromiumBrowserView (Internal)
+/// Gives the page keyboard focus, whatever has it now.
+- (void)cef_focusPage;
+@end

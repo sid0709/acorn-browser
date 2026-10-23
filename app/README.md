@@ -17,9 +17,20 @@ own observation and action shapes. Everything goes through Chromium's DevTools p
 the harness cannot tell this browser from the Playwright one.
 
 - Screenshots are JPEGs at one pixel to a CSS pixel, so a point in the picture is a point to click.
-- Actions: click, double/triple/right click, hover, type, key chords (`Enter`, `Meta+a`),
-  scroll, wait, upload (the file picker is intercepted and the task's file handed to the page;
-  a plain click that opens the picker reports `opened: file_picker`).
+- Actions: click, double/triple/right click (with modifier keys held), hover, drag along a path,
+  type, key chords (`Enter`, `Meta+a`), scroll, wait, upload (the file picker is intercepted and
+  the task's file handed to the page; a plain click that opens the picker reports
+  `opened: file_picker`).
+- **The input is real.** Mouse and keyboard events are posted to the system as the hardware
+  would send them (`CGEventPost`), not injected through DevTools: the pointer moves across the
+  screen, a drag is a button held through a path of moves a few pixels apart, a double click is
+  two clicks the system counts, and keys are the keys of the keyboard, so a page cannot tell
+  them from a person's. A drawing tool gets a stroke, a drag-and-drop list gets a drop. This
+  needs the Accessibility permission (macOS asks the first time; the app is signed ad hoc, so a
+  rebuild may ask again), the window on screen in front, and the mouse left alone while a run
+  goes. While the agent types, a non-Latin keyboard input source is switched to a Latin one and
+  back after. Characters a keyboard cannot type (Chinese, say) are committed the way an input
+  method commits them. Chords the system owns (`Meta+q`, `Meta+Tab`, ...) are refused.
 - A look waits for the page to settle: no DOM change for 250 ms, the document loaded, and
   none of the page's requests (fetch, XHR, images; not sockets or event streams) still open.
 - While the harness is connected, the page's dialogs are answered (alert and beforeunload
@@ -56,7 +67,8 @@ Each run keeps a folder under `~/Library/Application Support/com.acorn.browser/r
 `AcornBrowser --run-task <file>` submits a task file at launch, for trying it without typing.
 
 Known limits: Chromium only paints a visible window, so the window is brought on screen when
-a picture is needed; there is one tab, so a window the page opens takes this tab's place.
+a picture is needed, and the real input needs it in front and the mouse left alone; there is one
+tab, so a window the page opens takes this tab's place.
 
 ```text
 Sources/App/        SwiftUI: window, toolbar, chat sidebar, one tab's state

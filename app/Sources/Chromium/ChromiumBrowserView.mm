@@ -757,6 +757,12 @@ class BrowserClient : public CefClient,
   _browser->GetHost()->SetFocus(true);
 }
 
+- (void)cef_focusPage {
+  if (_browser && !_destroyed) {
+    _browser->GetHost()->SetFocus(true);
+  }
+}
+
 #pragma mark Settings
 
 - (void)setAudioMuted:(BOOL)audioMuted {
