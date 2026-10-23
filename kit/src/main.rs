@@ -5,7 +5,10 @@
 //! OPENROUTER_API_KEY=... cargo run -- tasks/local-form.md
 //!   --headed                 show the browser window
 //!   --model <id>             the driving model (default openai/gpt-6-luna)
-//!   --decider <id> | none    the decision model (default: the driving model; none turns checks off)
+//!   --decider <id> | none    the decision model on a Decisions API (default openai/gpt-6-luna-decisions
+//!                            on OpenRouter; none turns the checks off)
+//!   --decisions openrouter | openai
+//!                            whose Decisions API answers (OpenAI's needs OPENAI_API_KEY; default openrouter)
 //!   --reasoning <effort>     none, low, medium or high for the driving model (default low)
 //!   --profile <file>         who the run acts as (default profile.md beside this crate)
 //!   --trace <dir>            where to write the run's trace (default traces/ beside this crate)
@@ -34,7 +37,7 @@ use harness::run::{Agent, Config, Status, Step};
 use harness::task::Task;
 
 use crate::browser::Playwright;
-use crate::decide::OpenRouterDecider;
+use crate::decide::{Decisions, Meter, Metered, Tally, Wire};
 
 const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL: &str = "openai/gpt-6-luna";
@@ -48,6 +51,7 @@ struct Options {
     headed: bool,
     model: String,
     decider: Option<String>,
+    decisions: Wire,
     reasoning: String,
     profile: PathBuf,
     trace: PathBuf,
@@ -65,6 +69,7 @@ fn options() -> Result<Options, String> {
         headed: false,
         model: DEFAULT_MODEL.to_string(),
         decider: None,
+        decisions: Wire::OpenRouter,
         reasoning: DEFAULT_REASONING.to_string(),
         profile: kit_dir().join("profile.md"),
         trace: kit_dir().join("traces"),
@@ -80,6 +85,13 @@ fn options() -> Result<Options, String> {
                 let named = value("--decider")?;
                 decider_named = true;
                 out.decider = if named == "none" { None } else { Some(named) };
+            }
+            "--decisions" => {
+                out.decisions = match value("--decisions")?.as_str() {
+                    "openrouter" => Wire::OpenRouter,
+                    "openai" => Wire::OpenAI,
+                    other => return Err(format!("--decisions is openrouter or openai, not {other:?}")),
+                }
             }
             "--reasoning" => out.reasoning = value("--reasoning")?,
             "--profile" => out.profile = PathBuf::from(value("--profile")?),
@@ -98,12 +110,15 @@ fn options() -> Result<Options, String> {
         return Err(USAGE.to_string());
     }
     if !decider_named {
-        out.decider = Some(out.model.clone());
+        out.decider = Some(match out.decisions {
+            Wire::OpenRouter => decide::OPENROUTER_DECISION_MODEL,
+            Wire::OpenAI => decide::OPENAI_DECISION_MODEL,
+        }.to_string());
     }
     Ok(out)
 }
 
-const USAGE: &str = "usage: harness-kit <task.md> [--headed] [--model <id>] [--decider <id>|none] [--reasoning <effort>] [--profile <file>] [--trace <dir>] [--viewport <WxH>]";
+const USAGE: &str = "usage: harness-kit <task.md> [--headed] [--model <id>] [--decider <id>|none] [--decisions openrouter|openai] [--reasoning <effort>] [--profile <file>] [--trace <dir>] [--viewport <WxH>]";
 
 fn main() {
     match run() {
@@ -145,10 +160,18 @@ fn run() -> Result<i32, String> {
     let facts = std::fs::read_to_string(&options.profile).unwrap_or_else(|_| DEFAULT_FACTS.to_string());
     let start_url = loaded.task.start_url.clone().ok_or("the task file needs a url: line")?;
 
-    let model = OpenRouter::new(key.clone(), options.model.clone(), OPENROUTER_URL, options.reasoning.clone(), Box::new(UreqTransport::default()));
+    let model_meter = Meter::default();
+    let check_meter = Meter::default();
+    let model = Metered { inner: OpenRouter::new(key.clone(), options.model.clone(), OPENROUTER_URL, options.reasoning.clone(), Box::new(UreqTransport::default())), meter: model_meter.clone() };
     let mut agent = Agent::new(Config::default(), Box::new(model)).with_trace_dir(&options.trace);
     if let Some(decider) = &options.decider {
-        agent = agent.with_decider(Box::new(OpenRouterDecider::new(&key, decider, OPENROUTER_URL)));
+        let (decision_key, url) = match options.decisions {
+            Wire::OpenRouter => (key.clone(), decide::OPENROUTER_DECISIONS_URL),
+            Wire::OpenAI => (std::env::var("OPENAI_API_KEY").ok().filter(|k| !k.trim().is_empty()).ok_or("set OPENAI_API_KEY (in the environment or kit/.env) for OpenAI's Decisions API")?, decide::OPENAI_DECISIONS_URL),
+        };
+        let mut checker = Decisions::new(&decision_key, decider, url, options.decisions);
+        checker.meter = check_meter.clone();
+        agent = agent.with_decider(Box::new(checker));
     }
     let script = kit_dir().join("browser").join("browser.mjs");
     let mut browser = Playwright::launch(&script, options.headed, options.viewport.0, options.viewport.1).map_err(|e| e.to_string())?.with_resources(loaded.files);
@@ -178,7 +201,7 @@ fn run() -> Result<i32, String> {
         survey = step.survey;
         browser.after(&step);
     };
-    conclude(&last, started.elapsed().as_secs_f64());
+    conclude(&last, started.elapsed().as_secs_f64(), model_meter.read(), check_meter.read());
     Ok(if last.status == Status::Done { 0 } else { 1 })
 }
 
@@ -191,7 +214,10 @@ fn announce(task: &Task, options: &Options) {
         "model: {} ({}), checker: {}, surveys {}, at most {} steps",
         options.model,
         options.reasoning,
-        options.decider.as_deref().unwrap_or("none"),
+        match &options.decider {
+            Some(model) => format!("{model} on {}", if options.decisions == Wire::OpenAI { "openai" } else { "openrouter" }),
+            None => "none".to_string(),
+        },
         if task.survey { "on" } else { "off" },
         task.persistence.max_steps
     );
@@ -240,9 +266,26 @@ fn describe(action: &harness::action::Action) -> String {
 }
 
 /// The end of the run, for the terminal: the outcome and the report.
-fn conclude(last: &Step, elapsed: f64) {
+fn conclude(last: &Step, elapsed: f64, model: Tally, checks: Tally) {
     println!();
     println!("{} ({elapsed:.1}s in all)", last.message);
+    let line = |what: &str, t: Tally| {
+        if t.calls > 0 {
+            println!(
+                "{what}: {} calls, {:.1}s waited ({:.1}s each), {} in (cached {}), {} out, ${:.4}",
+                t.calls,
+                t.waited.as_secs_f64(),
+                t.waited.as_secs_f64() / t.calls as f64,
+                t.usage.input_tokens,
+                t.usage.cached_tokens,
+                t.usage.output_tokens,
+                t.usage.cost
+            );
+        }
+    };
+    line("model", model);
+    line("checks", checks);
+    println!("browser and harness: {:.1}s", (elapsed - model.waited.as_secs_f64() - checks.waited.as_secs_f64()).max(0.0));
     if let Some(stop) = &last.stop {
         println!("{} {}", stop.problem, stop.action);
     }
@@ -259,6 +302,6 @@ fn conclude(last: &Step, elapsed: f64) {
         if !report.not_seen.is_empty() {
             println!("not seen: {} part(s) of the last page", report.not_seen.len());
         }
-        println!("{} steps, {} tokens in, {} out, ${:.4}", report.steps, report.usage.input_tokens, report.usage.output_tokens, report.usage.cost);
+        println!("{} steps, ${:.4} in all", report.steps, report.usage.cost);
     }
 }

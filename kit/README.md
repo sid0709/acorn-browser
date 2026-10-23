@@ -8,7 +8,7 @@ Node process, an OpenRouter model to drive and to check, and a few tasks as Mark
 kit/
   src/main.rs        the runner: reads a task file, starts the browser, loops look -> step -> act
   src/browser.rs     the harness's Browser trait over a Node process (JSON lines on stdin/stdout)
-  src/decide.rs      the harness's Decider trait over OpenRouter's chat API
+  src/decide.rs      the harness's Decider trait over a Decisions API (OpenRouter's or OpenAI's), metered
   src/taskfile.rs    a task as a Markdown file: a few key: value lines, then the goal
   browser/           the Node side: one Playwright page that looks and does
   tasks/*.md         five simple tasks to try, none needing an account
@@ -43,10 +43,18 @@ with its actions drawn on it, what it was told and answered, every model call wi
 `timeline.txt`. The files are those Acorn's `tracesum` reads, so `go run ./cmd/tracesum` in
 `Acorn/acorn-agent` sums a run of the kit too.
 
-Options: `--model <id>` and `--decider <id>` pick the driving and the decision model (the
-decision model answers yes/no questions about screenshots: a cheap, quick one does; `--decider
-none` turns the checks off and the run plans six actions at a time), `--reasoning low|medium|high`,
-`--profile <file>`, `--trace <dir>`, `--viewport 1280x720`.
+The checks (checkpoints between batches, reviews, "done" and "stop") go to a Decisions API: a
+state and typed questions in, a probability per question out, nothing generated, so a check is
+quick and cheap. By default that is `openai/gpt-6-luna-decisions` on OpenRouter, on the same key.
+`--decisions openai` uses OpenAI's own Decisions API with `OPENAI_API_KEY` (it reports no cost).
+`--decider none` turns the checks off and the run plans six actions at a time.
+
+The last lines of a run say what it cost and where the time went, from what the providers
+reported: the driving model's calls and the checks, each with calls, seconds waited, tokens and
+dollars, and the rest, which is the browser and the harness.
+
+Other options: `--model <id>`, `--reasoning none|low|medium|high`, `--profile <file>`,
+`--trace <dir>`, `--viewport 1280x720`.
 
 The tasks: `todomvc.md` adds items on Playwright's TodoMVC demo, `wikipedia.md` finds an
 article and reads a fact, `wikipedia-chinese.md` finds an article and switches it to Chinese,
