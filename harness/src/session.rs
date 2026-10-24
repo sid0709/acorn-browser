@@ -66,6 +66,11 @@ pub struct Session {
     /// Whether the last actions sent only read the page (`read`), which leaves it as it was:
     /// the look after them is not a page that failed to change.
     pub last_plan_read_only: bool,
+    /// In hybrid mode, why a picture of the screen joins the next look, when a signal asked
+    /// for one; taken when the look is made.
+    pub picture_due: Option<String>,
+    /// How many checks in a row the checker could not tell: the second asks for a picture.
+    pub unsure_checks: u32,
     /// The click that sends the page, as the last plan kept it; how many times a send was held
     /// on this page for the to-do list; and that the page refused the last send, so the next is
     /// held for one look.
@@ -191,6 +196,8 @@ impl Session {
             leave_held: false,
             answer_asked: false,
             last_plan_read_only: false,
+            picture_due: None,
+            unsure_checks: 0,
             commit: CommitState::default(),
             list_hold: ListHold::default(),
             send_refused: false,

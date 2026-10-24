@@ -328,6 +328,7 @@ impl Agent {
             Outcome::Continue => {
                 s.carried = results.to_vec();
                 s.stale = 0;
+                s.unsure_checks = 0;
                 s.last_signature = Some(sig.clone());
                 s.load_waits = 0;
                 s.verify.clear();
@@ -361,6 +362,11 @@ impl Agent {
                 None
             }
             Outcome::Unsure(reason) => {
+                // Twice unsure on the map alone: in hybrid mode the next look brings a picture.
+                s.unsure_checks += 1;
+                if s.unsure_checks >= 2 && s.task.hybrid() {
+                    s.picture_due = Some("the checker could not tell twice from the map what the page showed".to_string());
+                }
                 self.suspend(s, &format!("The checker could not tell whether the screen showed what you expected ({expect}): {reason}."));
                 None
             }

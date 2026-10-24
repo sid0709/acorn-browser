@@ -199,6 +199,7 @@ struct ChatSidebar: View {
         Picker("", selection: $runner.mode) {
             Text("Image").tag("image")
             Text("DOM").tag("dom")
+            Text("Hybrid").tag("hybrid")
         }
         .pickerStyle(.segmented)
         .labelsHidden()

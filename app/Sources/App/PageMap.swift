@@ -494,7 +494,9 @@ extension AgentDriver {
     /// else (a banner, a dialog) is refused rather than clicked through.
     func locate(_ target: [String: Any]) async throws -> (x: Double, y: Double, backend: Int) {
         guard let ref = await node(for: target) else { throw ActionFailure(message: "\(describe(target)) is no longer on the page") }
-        _ = try? await call("DOM.scrollIntoViewIfNeeded", ["backendNodeId": ref.backend])
+        // Brought to the middle of the screen at once: a page's own smooth scrolling would still
+        // be moving when the box is measured, and a point measured mid-way lands on nothing.
+        _ = try? await callOn(ref.backend, "function() { (this.scrollIntoView ? this : this.parentElement).scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }); }")
         await settled(cap: Self.scrollSettleCap)
         // The box in the page's own viewport: a node in a frame adds the frames' places, which
         // the page gives for its own frames and the snapshot's table for the others.

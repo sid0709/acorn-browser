@@ -7,6 +7,50 @@ and why that rather than a patch; and what the bench said afterwards. A commit m
 the what; this log keeps the why, so that a rule in the code can be traced to the run that
 asked for it. Newest first.
 
+## 2026-10-23 — Stage 3 of the agent plan: a picture when the map is not enough (hybrid mode)
+
+Branch `feat/hybrid-pictures`. DOM mode has no picture by design, so the bench is honest
+about the map's gaps; stage 3 adds a third mode, `hybrid`, for the runs where that honesty
+costs the mission: the map stays the base, and a picture of the screen joins it only on a
+signal that the map was not enough.
+
+**Observed.** In DOM mode a page with no map ends the run `stuck` ("page unreadable"), an
+action that missed what it aimed at ("[79] link "1" is covered by DIV" in L5) left the model
+guessing from the map why, and a done check read the map alone while the judge reads the
+screen. L5 in `20261023-162044` ended `need_person` for a toolbar link "covered" that a
+picture would have shown how to reach.
+
+**Changed.**
+1. `Mode::Hybrid` (`--mode hybrid` in the runner, the bench and the sidebar): the DOM prompt
+   and schema, with a point (`x`, `y`) allowed beside `target` for what the map has no node
+   for.
+2. The signals, kept in the session as the reason for the next look's picture: an action
+   whose result says it missed (covered, no size, no longer on the page, could not be
+   scrolled); a drag; a check the checker could not tell twice in a row; a map with fewer
+   than six nodes; no map at all (which in DOM mode still ends the run). The look's notes say
+   why the picture came, and the picture goes only when the browser could take one.
+3. The done check and the human-check question see the screenshot beside the map in hybrid
+   mode, so the run's end is judged as the person and the judge see it; the checkpoint checks
+   between batches stay on the map.
+4. Tests: the picture joins the map only on a signal, and a page with no map goes on.
+
+**Bench after.** `bench/results/20261023-201155.md`, hybrid mode: 4 of 5 on the screen, 4 of 5
+answers right, 478 s of which 253 s waiting on the models, beside DOM mode's 467 s and 4 of 5
+the same evening (`20261023-162044`): L2 pass, 4 steps, 54 s; L3 pass, 8 steps, 92 s (The
+Banter Thread, found and confirmed); L5 the capture of 1 January 2005 opened and its tsunami
+appeal reported, pass on both counts though the agent called it `stuck`; L4 `need_person` at
+the checker's dual-citizenship question, a judgment the model made differently in every other
+run; L1 pass after a detour of 17 steps through the help pages. Pictures went out on 7 looks
+of L5 whose map had 3 nodes (the archive's redirect pages), and on the looks after an action
+missed. On these five pages the picture neither helps nor hurts the score; it is the mode for
+pages the map cannot read, which DOM mode ends as `stuck`.
+
+**Also fixed.** L1's first click, on a footer link, was reported "covered by nothing": the
+driver scrolled the node into view with `DOM.scrollIntoViewIfNeeded`, which follows the page's
+own smooth scrolling, and measured the box while the page was still moving, so the point
+landed off the screen. The node is now brought to the middle of the screen at once
+(`scrollIntoView` with `behavior: 'instant'`).
+
 ## 2026-10-23 — Stage 2 of the agent plan: the page read whole, and the person heard while the agent works
 
 Branch `feat/whole-page-map`. Stage 2 of `docs/agent-plan.md` as the measurements shaped it:

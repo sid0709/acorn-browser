@@ -287,7 +287,7 @@ def main():
     parser.add_argument("--model", help="the driving model (passed to the runner)")
     parser.add_argument("--intake-model", help="the model that reads the request before the run (passed to the runner)")
     parser.add_argument("--decider", help="the decision model, or none (passed to the runner)")
-    parser.add_argument("--mode", choices=["image", "dom", "both"], default="image", help="how the model sees the page: a screenshot (image), the page map and no picture (dom), or each mission in both, one after the other")
+    parser.add_argument("--mode", choices=["image", "dom", "hybrid", "both"], default="image", help="how the model sees the page: a screenshot (image), the page map and no picture (dom), the map with a picture when a signal asks for one (hybrid), or each mission in image and DOM mode, one after the other (both)")
     parser.add_argument("--no-site", action="store_true", help="do not give the runner the mission's site: it must find it from the request")
     parser.add_argument("--no-judge", action="store_true", help="skip the judge; the agent's own verdict is the score")
     args = parser.parse_args()

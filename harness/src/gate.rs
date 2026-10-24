@@ -202,7 +202,7 @@ impl Agent {
             Question::yes_no("The button that sends this form was just pressed. Does the page still show the same form, with messages that some answers are missing or wrong (text beside fields, or a list of problems), rather than a confirmation, a new step of the form with other questions, or a page that asks for something else?"),
         );
         let started = SystemTime::now();
-        let answered = decider.decide(Decision { state: page_state(obs, s.task.dom_mode()), questions });
+        let answered = decider.decide(Decision { state: page_state(obs, s.task.dom_mode(), false), questions });
         s.pending_calls.push(ModelCall::decision("the page refused the send", answered.as_ref(), started));
         let Ok(verdicts) = answered else { return };
         s.usage.add(verdicts.usage);
@@ -356,7 +356,7 @@ impl Agent {
             Question::yes_no("Does this screen show a check that the person must pass by hand before the page goes on: a box to tick to prove they are a person, a picture or puzzle challenge, or a challenge dialog over the page? Answer no for a small badge, logo or notice, usually in a corner, saying the page is protected by such a service, and for a form that shows only its fields and the button that sends it."),
         );
         let started = SystemTime::now();
-        let answered = decider.decide(Decision { state: page_state(obs, s.task.dom_mode()), questions });
+        let answered = decider.decide(Decision { state: page_state(obs, s.task.dom_mode(), s.task.hybrid()), questions });
         s.pending_calls.push(ModelCall::decision("a check the person must pass by hand is on screen", answered.as_ref(), started));
         let verdicts = answered.ok()?;
         s.usage.add(verdicts.usage);
@@ -372,7 +372,7 @@ impl Agent {
         let decider = self.decider.as_ref()?;
         let started = SystemTime::now();
         let proof = reply.proof.as_deref().map(str::trim).unwrap_or("");
-        let answered = decider.decide(Decision { state: page_state(obs, s.task.dom_mode()), questions: done_question(&s.task, proof) });
+        let answered = decider.decide(Decision { state: page_state(obs, s.task.dom_mode(), s.task.hybrid()), questions: done_question(&s.task, proof) });
         s.pending_calls.push(ModelCall::decision("the page shows the task done", answered.as_ref(), started));
         // A checker that cannot answer is not a reason to refuse the model's word.
         let verdicts = answered.ok()?;
@@ -581,10 +581,20 @@ fn or_none(text: &str) -> &str {
 
 /// What the checker sees: the screenshot, or every screen of the survey when the look is one, so
 /// what is anywhere on the page counts; in DOM mode the page map, and no picture.
-pub(crate) fn page_state(obs: &Observation, dom: bool) -> Vec<Part> {
+pub(crate) fn page_state(obs: &Observation, dom: bool, picture: bool) -> Vec<Part> {
     let mut parts = if dom {
         let map = obs.page.as_ref().map(|page| page.text(&obs.viewport)).unwrap_or_default();
-        vec![Part::Text(format!("The map of a web page the browser is on, as the browser itself reports it: one line per control, heading or text, with its live state, what is on the screen now first and the rest of the page summed up after.\n{map}"))]
+        let mut parts = Vec::new();
+        // In hybrid mode the checks that decide the run's end see the screen as the person
+        // (and the judge) sees it, beside the map.
+        if picture && !obs.screenshot.is_empty() {
+            parts.push(Part::Text("A screenshot of a web page the browser is on, and the map of the same page as the browser itself reports it: one line per control, heading or text, with its live state, what is on the screen now first and the rest of the page after.".to_string()));
+            parts.push(Part::Image(obs.screenshot.clone()));
+            parts.push(Part::Text(map));
+        } else {
+            parts.push(Part::Text(format!("The map of a web page the browser is on, as the browser itself reports it: one line per control, heading or text, with its live state, what is on the screen now first and the rest of the page after.\n{map}")));
+        }
+        parts
     } else if obs.survey.is_empty() {
         vec![Part::Text("A screenshot of a web page the browser is on.".to_string()), Part::Image(obs.screenshot.clone())]
     } else {

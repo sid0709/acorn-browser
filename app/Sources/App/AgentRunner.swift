@@ -112,7 +112,7 @@ final class AgentRunner: ObservableObject {
             "--socket", AgentServer.socketPath,
             "--trace", runDirectory.path,
             "--model", drivingModel,
-            "--mode", mode == "dom" ? "dom" : "image",
+            "--mode", ["dom", "hybrid"].contains(mode) ? mode : "image",
             "--env-file", Self.appDirectory.appendingPathComponent(".env").path,
         ]
         let output = Pipe()
