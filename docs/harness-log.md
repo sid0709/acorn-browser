@@ -35,7 +35,23 @@ wrong pick in `20261023-151826` (the top row before the sort) and L5's wrong cap
 4. The bench passes `--no-notes` to run every mission as a first run, and prints the notes
    known at the start and the lines learned at the end.
 
-**Bench after.** (filled in once the five levels have run twice: once learning, once knowing)
+**Bench after.** Two runs of the five levels in DOM mode, the store empty before the first
+(`bench/results/20261024-044650.md`, then `20261024-045348.md`). Learning: 4 of 5 on the
+screen, 3 of 5 answers right, 383 s of which 187 s on the models; L4 went to the visa guide
+instead of the checker and ended `stuck`, and wrote the guide's address as its note. Knowing:
+4 of 5, 4 of 5 answers right, 412 s of which 216 s on the models; L4, told of the guide, took
+the checker instead, passed in 13 steps and 79 s (from 16 and 94), and wrote the address of
+the checker's result for its answers, the note a third run starts from; L1 and L2 started on
+the pages their notes named. L3 found the thread both times and ended `stuck` both times on
+the done check that reads the thread page alone; L5 wrote no note either time, since a run
+that ends `stuck` seldom writes one, and so picked `web/2005/` again (the last capture of
+2005) in the second run. The notes kept are facts of the sites, in the model's words; two
+near-duplicates (the same fact worded twice) sit beside each other, since a line is kept once
+by its exact text.
+
+**Left open.** A run that ends short is the one with the most to say and says the least: the
+prompt now asks for what to do differently next time after a `stuck` or `need_person`. The
+done check across two pages (the list, then the item) is the next fix.
 
 ## 2026-10-23 — Stage 3 of the agent plan: a picture when the map is not enough (hybrid mode)
 
