@@ -455,8 +455,9 @@ pub fn clip_text(text: &str, max_chars: usize) -> String {
 /// order the model writes them in: the observation first, so it reads the screen before it
 /// decides, and the actions last.
 /// With `dom`, a pointed action names a node by number (`target`) instead of a point, scroll
-/// goes to a height or a node, and `read` exists.
-pub fn reply_schema(survey: bool, checks: bool, dom: bool) -> Value {
+/// goes to a height or a node, and `read` exists. With `points` too (hybrid mode), a pointed
+/// action may name a point of the screen instead, for what the map has no node for.
+pub fn reply_schema(survey: bool, checks: bool, dom: bool, points: bool) -> Value {
     // DOM mode plans from the map: no survey, no screens, no settled parts, no field list.
     let survey = survey && !dom;
     let string = json!({"type": "string"});
@@ -469,7 +470,11 @@ pub fn reply_schema(survey: bool, checks: bool, dom: bool) -> Value {
         if survey {
             fields.push(("screen", json!({"type": ["integer", "null"]})));
         }
-        if dom {
+        if dom && points {
+            fields.push(("target", json!({"type": ["integer", "null"]})));
+            fields.push(("x", null_number.clone()));
+            fields.push(("y", null_number.clone()));
+        } else if dom {
             fields.push(("target", integer.clone()));
         } else {
             fields.push(("x", number.clone()));
@@ -677,16 +682,20 @@ mod tests {
         let reply = parse_reply("{\"status\":\"done\",\"message\":\"\",\"proof\":\"the row shows 25 kg\",\"answer\":\"Economy Classic: 25 kg\",\"actions\":[]}").unwrap();
         assert_eq!(reply.proof.as_deref(), Some("the row shows 25 kg"));
         assert_eq!(reply.answer.as_deref(), Some("Economy Classic: 25 kg"));
-        let schema = reply_schema(true, true, false).to_string();
+        let schema = reply_schema(true, true, false, false).to_string();
         assert!(schema.find("\"observation\"").unwrap() < schema.find("\"actions\"").unwrap());
         assert!(schema.contains("\"proof\""));
         assert!(schema.contains("\"answer\""));
         assert!(schema.contains("\"choose\""));
         assert!(schema.contains("\"survey\""));
         assert!(schema.contains("\"needs_person\""));
-        let plain = reply_schema(false, false, false).to_string();
+        let plain = reply_schema(false, false, false, false).to_string();
         assert!(!plain.contains("\"check\"") && !plain.contains("\"fields\""));
-        let dom = reply_schema(true, true, true).to_string();
+        let dom = reply_schema(true, true, true, false).to_string();
         assert!(dom.contains("\"target\"") && dom.contains("\"read\"") && dom.contains("\"to\"") && !dom.contains("\"survey\"") && !dom.contains("\"screen\""), "{dom}");
+        // A click's shape in DOM mode has no point; in hybrid mode it may have one instead of a target.
+        assert!(!dom.contains("\"x\":{\"type\":[\"number\",\"null\"]}"), "{dom}");
+        let hybrid = reply_schema(true, true, true, true).to_string();
+        assert!(hybrid.contains("\"target\":{\"type\":[\"integer\",\"null\"]}") && hybrid.contains("\"x\":{\"type\":[\"number\",\"null\"]}"), "{hybrid}");
     }
 }

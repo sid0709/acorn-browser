@@ -32,12 +32,14 @@ pub struct Loaded {
     pub files: HashMap<String, PathBuf>,
 }
 
-/// How the model sees the page: `image` (the default) or `dom`.
+/// How the model sees the page: `image` (the default), `dom`, or `hybrid` (the map, and a
+/// picture when a signal asks for one).
 pub fn mode_of(value: &str) -> Result<Mode, String> {
     match value.trim().to_lowercase().as_str() {
         "image" | "" => Ok(Mode::Image),
         "dom" => Ok(Mode::Dom),
-        other => Err(format!("mode is image or dom, not {other:?}")),
+        "hybrid" => Ok(Mode::Hybrid),
+        other => Err(format!("mode is image, dom or hybrid, not {other:?}")),
     }
 }
 

@@ -546,10 +546,29 @@ impl Agent {
             }
         }
         // In DOM mode the model reads the page map and no picture; a page the browser could not
-        // map is one this mode cannot read, and the run says so rather than guessing.
+        // map is one this mode cannot read, and the run says so rather than guessing. In hybrid
+        // mode a picture of the screen joins the map instead, as it does on any sign that the
+        // map was not enough: an action that missed what it aimed at, a drag, a check the
+        // checker could not tell twice, a map too thin for the page.
         let dom = s.task.dom_mode();
+        let hybrid = s.task.hybrid();
         let map = if dom { obs.page.as_ref().map(|page| page.text(&obs.viewport)) } else { None };
-        if dom && obs.page.as_ref().is_none_or(|page| page.nodes.is_empty()) {
+        let unmapped = obs.page.as_ref().is_none_or(|page| page.nodes.is_empty());
+        if hybrid {
+            if let Some(missed) = obs.results.iter().find(|r| !r.ok && MISSED_AIM.iter().any(|sign| r.error.contains(sign))) {
+                s.picture_due = Some(format!("an action missed what it aimed at ({})", missed.error));
+            }
+            if unmapped {
+                s.picture_due = Some("the browser sent no map for this page".to_string());
+            } else if obs.page.as_ref().is_some_and(|page| page.nodes.len() < THIN_MAP_NODES) {
+                s.picture_due = Some("the map is too thin for the page".to_string());
+            }
+        }
+        let picture = hybrid && s.picture_due.is_some() && !obs.screenshot.is_empty();
+        if let Some(why) = s.picture_due.take() {
+            notes.push(format!("A picture of the screen comes with this look, since {why}: read it beside the map, act by number still, and give a point (x, y in the picture's pixels) only for what the map has no node for."));
+        }
+        if dom && unmapped && !picture {
             return Ok(self.end_run(
                 s,
                 &obs,
@@ -564,8 +583,9 @@ impl Agent {
             ));
         }
         let text = prompt::observation_text(number, s.step_limit, &obs, &results, &notes, &s.inbox, &s.memo, stale, map.as_deref());
-        // A survey's screens go to the model with their numbers written on them; DOM mode sends none.
-        let images = if dom {
+        // A survey's screens go to the model with their numbers written on them; DOM mode sends
+        // none, and hybrid mode one when a signal asked for it.
+        let images = if dom && !picture {
             Vec::new()
         } else if obs.survey.is_empty() {
             vec![obs.screenshot.clone()]
@@ -575,7 +595,7 @@ impl Agent {
         let system = prompt::system_prompt(&s.task, &s.profile, &self.config, checks);
         // Fold the oldest turns before building the prompt when the history passes budget.
         s.memory.compact_if_over(self.config.keep_turns, self.config.history_tokens, system.len() / 4);
-        let schema = model::reply_schema(s.task.survey, checks, dom);
+        let schema = model::reply_schema(s.task.survey, checks, dom, hybrid);
         // The prompt may still be too long for the model; one overflow folds the history to its
         // most recent turn and the step is tried once more.
         let mut compacted_for_overflow = false;
@@ -720,6 +740,9 @@ impl Agent {
         let dropped = withheld;
         let survey = reply.status == Status::Working && self.survey_next(s, survey_asked);
         s.last_plan_read_only = !actions.is_empty() && actions.iter().all(|a| matches!(a.kind, Kind::Read));
+        if hybrid && actions.iter().any(|a| matches!(a.kind, Kind::Drag { .. })) {
+            s.picture_due = Some("a drag was made, which the map cannot show the effect of".to_string());
+        }
         let step = Step {
             status: reply.status,
             message: s.message.clone(),
@@ -784,6 +807,13 @@ impl Agent {
         Step { status, message, stop: Some(stop), number: s.step, usage: s.usage, ..Default::default() }
     }
 }
+
+/// Fewer nodes than this in a map is too thin for a page a person would read: in hybrid mode
+/// a picture comes with it.
+const THIN_MAP_NODES: usize = 6;
+/// What the browser says of an action that missed what it aimed at: a sign the map and the
+/// screen disagree, which in hybrid mode asks for a picture.
+const MISSED_AIM: &[&str] = &["is covered by", "has no size on the screen", "is no longer on the page", "could not be scrolled"];
 
 /// The entry of the trace for a look, before the step fills in what it decided.
 fn entry_for(s: &Session, obs: &Observation, stale: u32) -> StepTrace {
@@ -957,6 +987,47 @@ mod tests {
             assert_eq!(step.status, Status::Working);
             assert!(matches!(step.actions[0].kind, Kind::Read), "{:?}", step.actions);
         }
+    }
+
+    /// In hybrid mode the model reads the map, and a picture comes only on a signal: an action
+    /// that missed what it aimed at here, and a page with no map, which ends a DOM-mode run.
+    #[test]
+    fn in_hybrid_mode_a_picture_joins_the_map_only_on_a_signal() {
+        use crate::observe::ActionResult;
+        use crate::page::{PageMap, PageNode};
+        use std::sync::{Arc, Mutex};
+        struct Seeing(Arc<Mutex<Vec<usize>>>);
+        impl Model for Seeing {
+            fn complete(&self, request: ModelRequest) -> Result<ModelResponse, Error> {
+                self.0.lock().unwrap().push(request.messages.last().map(|m| m.images.len()).unwrap_or(0));
+                Ok(ModelResponse { content: r#"{"status":"working","message":"","actions":[{"kind":"wait","ms":100}]}"#.to_string(), ..Default::default() })
+            }
+            fn name(&self) -> &str {
+                "seeing"
+            }
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let agent = Agent::new(Config { max_stale: 100, ..Config::default() }, Box::new(Seeing(seen.clone())));
+        let mut task = Task::new("press go");
+        task.mode = crate::task::Mode::Hybrid;
+        let id = agent.start(task, Profile::default());
+        let page = PageMap {
+            nodes: (1..=8).map(|i| PageNode { id: i, role: "button".into(), name: format!("Go {i}"), x: 10.0, y: 10.0 * i as f64, w: 20.0, h: 8.0, ..Default::default() }).collect(),
+        };
+        let mut obs = look();
+        obs.page = Some(page.clone());
+        assert_eq!(agent.step(&id, obs).unwrap().status, Status::Working);
+        let mut obs = look();
+        obs.page = Some(page.clone());
+        obs.results = vec![ActionResult { id: "s1a1".into(), ok: false, error: "[3] link \"1\" is covered by DIV".into(), ..Default::default() }];
+        assert_eq!(agent.step(&id, obs).unwrap().status, Status::Working);
+        let mut obs = look();
+        obs.page = Some(page);
+        assert_eq!(agent.step(&id, obs).unwrap().status, Status::Working);
+        // No map at all: a DOM-mode run ends, a hybrid one looks at the picture.
+        let step = agent.step(&id, look()).unwrap();
+        assert_eq!(step.status, Status::Working);
+        assert_eq!(*seen.lock().unwrap(), vec![0, 1, 0, 1]);
     }
 
     /// The browser could not photograph a page mid-navigation and the run ended with an error:

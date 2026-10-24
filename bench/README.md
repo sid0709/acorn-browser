@@ -11,6 +11,7 @@ cd .. && bench/run.py                # the five levels, once
 bench/run.py --only L4-govuk-visa --repeat 2
 bench/run.py --missions bench/missions/basics --no-judge
 bench/run.py --mode both              # each mission in image mode, then in DOM mode
+bench/run.py --mode hybrid            # the map, and a picture when a signal asks for one
 ```
 
 ## The missions
@@ -37,7 +38,8 @@ with no sites or key points; run it with `--no-judge`.
 ## The score
 
 For each run the table shows the mode the model saw the page in (`image`: a screenshot each
-step; `dom`: the page map and no picture, see `docs/dom-mode-plan.md`), the agent's own verdict
+step; `dom`: the page map and no picture, see `docs/dom-mode-plan.md`; `hybrid`: the map, and
+a picture beside it when a signal asks for one, see `docs/agent-plan.md`), the agent's own verdict
 (`done`, `need_person`, `stuck`), the judge's verdict on the screen (`pass` or `fail`, with its
 reason), the judge's verdict on the agent's answer in words (`pass`, `fail`, or `none` when it
 gave none: the same call grades it against what the screenshots show), the steps, the time and

@@ -9,7 +9,8 @@
 //!   --decider <id> | none    the decision model on a Decisions API (default openai/gpt-6-luna-decisions)
 //!   --decisions openrouter | openai
 //!   --reasoning <effort>     none, low, medium or high for the driving model (default none)
-//!   --mode image | dom       how the model sees the page (default image; a `mode:` line in the task wins)
+//!   --mode image | dom | hybrid   how the model sees the page: a screenshot, the page map, or the map with a
+//!                            picture when a signal asks for one (default image; a `mode:` line in the task wins)
 //!   --profile <file>         who the run acts as (default: profile.md in the app's data folder)
 //!   --trace <dir>            where to write the run's trace (default: traces/ in the current folder)
 //!   --env-file <file>        a file of KEY=VALUE lines to read the keys from
@@ -128,7 +129,7 @@ fn options() -> Result<Options, String> {
     Ok(out)
 }
 
-const USAGE: &str = "usage: acorn-runner <task.md> [--socket <path>] [--model <id>] [--intake-model <id>] [--decider <id>|none] [--decisions openrouter|openai] [--reasoning <effort>] [--mode image|dom] [--profile <file>] [--trace <dir>] [--env-file <file>]";
+const USAGE: &str = "usage: acorn-runner <task.md> [--socket <path>] [--model <id>] [--intake-model <id>] [--decider <id>|none] [--decisions openrouter|openai] [--reasoning <effort>] [--mode image|dom|hybrid] [--profile <file>] [--trace <dir>] [--env-file <file>]";
 
 /// Prints one event for the app.
 fn emit(event: Value) {

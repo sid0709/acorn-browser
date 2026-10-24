@@ -50,6 +50,11 @@ pub enum Mode {
     Image,
     /// The page map each step (`page.rs`) and no picture; actions name nodes by number.
     Dom,
+    /// The page map each step, and a picture of the screen beside it when a signal asks for
+    /// one: a map too thin for the page, a check the checker could not tell twice, a click
+    /// that missed or was covered, a drag, a page with no map at all. Actions name nodes by
+    /// number, or a point when the map has no node for what the picture shows.
+    Hybrid,
 }
 
 impl Task {
@@ -71,8 +76,15 @@ impl Task {
     }
 
     /// Whether the model sees the page map and no picture.
+    /// Whether the model reads the page map (DOM mode, or hybrid mode, which adds a picture on
+    /// a signal).
     pub fn dom_mode(&self) -> bool {
-        self.mode == Mode::Dom
+        matches!(self.mode, Mode::Dom | Mode::Hybrid)
+    }
+
+    /// Whether a picture of the screen joins the map when a signal asks for one.
+    pub fn hybrid(&self) -> bool {
+        self.mode == Mode::Hybrid
     }
 
     /// Sets what the run may do on its own for one kind of irreversible action.
