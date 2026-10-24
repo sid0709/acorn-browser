@@ -16,8 +16,14 @@ Status: stage 0 is done (`feat/answer-in-words`, #17), stage 1 is done (`feat/in
 #18: the reading of the request runs while the site opens, and the intake may go to a faster
 model), stage 2 is done (`feat/whole-page-map`, #19) and stage 3 is done (`feat/hybrid-pictures`:
 `--mode hybrid`, a picture on a signal; on the five bench pages it scores as DOM mode does
-and is the mode for pages the map cannot read). Stage 4's site notes are in progress
-(`feat/site-notes`); its model tiers wait for a fast model to be named. The measurements shaped stage 2:
+and is the mode for pages the map cannot read). Stage 4's site notes are done
+(`feat/site-notes`, #21); its model tiers wait for a fast model to be named. With the done
+check reading the look before as well (`fix/done-check-two-pages`), the five levels run in
+305 s in DOM mode with the notes of two earlier runs (`bench/results/20261024-050621.md`:
+L1 64 s, L2 51 s, L3 86 s, L4 16 s, L5 88 s; 162 s of it waiting on the models), from 951 s
+at stage 0. What is left between that and the rival's 135 s is the provider's latency, about
+5 s a call, and the harness's own 4.6 s a step, to be measured part by part next. The
+measurements shaped stage 2:
 the `read` move needed no new move, since the map holds every node of the page and only
 rendered one screen of it, so the map now lists the whole page and the model acts on any node
 by number without scrolling; the person's messages needed only a way to reach the runner,

@@ -28,7 +28,22 @@ its picture in image mode). When the "done" comes on another page than that look
 check is shown the look before first, told the task may have been done across the two, and
 asked to read them together. A test runs the list-then-thread case through the gate.
 
-**Bench after.** (filled in once the five levels have run)
+**Bench after.** `bench/results/20261024-050621.md`, DOM mode, the site notes of the two runs
+before known: every mission ended `done` for the first time; 4 of 5 on the screen, 3 of 5
+answers right, 305 s of which 162 s waiting on the models (from 467 s at stage 2 and 951 s at
+stage 0). L3 done in 7 steps and 86 s, the list-then-thread proof confirmed. L4 done in 2 steps
+and 16 s: its note named the checker's result page and the model went straight to it; the
+screen judge failed that for not showing the answers given on the way, the answer judge
+passed it. L5 done and passed on the screen in 10 steps: the note from its stuck run ("a
+timestamp address opens a capture directly") took it to the capture of 1 January 2005. L1 64 s,
+L2 51 s. The harness's own time came to about 4.6 s a step over 31 steps.
+
+**Left open.** The provider's latency is now half the time (162 s of 305 s, about 5 s a call);
+the harness's 4.6 s a step is the next thing to measure part by part (the settle after an
+action, the map, the picture). A note that names the page with the answer takes the bench's
+judge by surprise when the mission asks to "show the page that says so" and the judge wants
+the way there as well; the mission's key points, or the judge's screenshot choice, may need to
+say which.
 
 ## 2026-10-24 — Stage 4 of the agent plan: site notes, what a run leaves for the next run on the site
 
