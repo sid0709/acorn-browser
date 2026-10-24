@@ -498,6 +498,7 @@ impl Agent {
             entry.dropped = step.dropped.clone();
             entry.usage = s.usage;
             self.record(s, entry, &obs.screenshot, &obs.survey, obs.page.as_ref(), &step.actions, Vec::new());
+            s.remember_look(&obs, obs.page.as_ref().filter(|_| s.task.dom_mode()).map(|page| page.text(&obs.viewport)));
             return Ok(step);
         }
         // A plan refused whole, the same way, step after step, is a loop the model cannot see out
@@ -780,6 +781,7 @@ impl Agent {
         entry.check = s.last_check.take();
         entry.usage = s.usage;
         self.record(s, entry, &obs.screenshot, &obs.survey, obs.page.as_ref(), &step.actions, calls);
+        s.remember_look(&obs, map);
         Ok(step)
     }
 

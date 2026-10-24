@@ -372,7 +372,23 @@ impl Agent {
         let decider = self.decider.as_ref()?;
         let started = SystemTime::now();
         let proof = reply.proof.as_deref().map(str::trim).unwrap_or("");
-        let answered = decider.decide(Decision { state: page_state(obs, s.task.dom_mode(), s.task.hybrid()), questions: done_question(&s.task, proof) });
+        // A proof may span two pages: a list sorted by the quality the task names, then the
+        // item at its top opened. The look before this one, when it was on another page, is
+        // shown first, so the checker can read the two together.
+        let mut state = page_state(obs, s.task.dom_mode(), s.task.hybrid());
+        let before = s.last_look.as_ref().filter(|look| crate::observe::without_fragment(&look.url) != crate::observe::without_fragment(&obs.url));
+        if let Some(before) = before {
+            let mut parts = vec![Part::Text(format!("The look before this one was on another page, {}. The task may have been done across the two: what that page settled (a list sorted by the quality the task names, with its top item), and what this page shows (that item open). That page showed:", before.url))];
+            match &before.map {
+                Some(map) => parts.push(Part::Text(map.clone())),
+                None if !before.screenshot.is_empty() => parts.push(Part::Image(before.screenshot.clone())),
+                None => {}
+            }
+            parts.push(Part::Text("The page the run is on now:".to_string()));
+            parts.extend(state);
+            state = parts;
+        }
+        let answered = decider.decide(Decision { state, questions: done_question(&s.task, proof, before.is_some()) });
         s.pending_calls.push(ModelCall::decision("the page shows the task done", answered.as_ref(), started));
         // A checker that cannot answer is not a reason to refuse the model's word.
         let verdicts = answered.ok()?;
@@ -421,14 +437,18 @@ fn hold_for_answer(s: &mut Session, reply: &Reply) -> Option<String> {
 }
 
 /// Asks whether the screen shows the task complete, in the task's own terms, and in the light of
-/// what the model named as the proof when it named one.
-fn done_question(task: &Task, proof: &str) -> BTreeMap<String, Question> {
+/// what the model named as the proof when it named one; with `two_pages`, the look before is
+/// shown too, and the two together may show it.
+fn done_question(task: &Task, proof: &str, two_pages: bool) -> BTreeMap<String, Question> {
     let mut wording = format!("The task was: {}.", task.goal.trim());
     if !task.done_when.trim().is_empty() {
         wording.push_str(&format!(" It is done when the page shows: {}.", task.done_when.trim()));
     }
     if !proof.is_empty() {
         wording.push_str(&format!(" The agent says the proof on this screen is: {proof:?}. Look for that on the screen; if it is there and it means what the agent says, the task is done, even when the page words it differently from the task."));
+    }
+    if two_pages {
+        wording.push_str(" The look before this one is shown first: when it settled part of the task (a list sorted by the quality the task names, with this item at its top) and this page shows the rest (that item open), the two together show the task done.");
     }
     let mut questions = BTreeMap::new();
     questions.insert(
@@ -658,6 +678,29 @@ mod tests {
         let third = agent.step(&id, look(false, &["s2a2"])).unwrap();
         assert!(seen.lock().unwrap()[2].contains("the leaving action was not run"));
         assert!(third.actions.iter().any(|a| matches!(a.kind, Kind::Back)));
+    }
+
+    /// A proof that spans two pages: the list sorted by replies, then the top thread opened.
+    /// The done check is shown the look before, on the list, beside the thread's page.
+    #[test]
+    fn a_done_is_checked_against_the_look_before_when_it_was_on_another_page() {
+        let open = r#"{"status":"working","message":"Opening the top thread.","actions":[{"kind":"click","x":10,"y":10,"label":"The Banter Thread"}]}"#;
+        let done = r#"{"status":"done","message":"Open.","proof":"the sorted list had The Banter Thread at the top; it is open","answer":"The Banter Thread, 5,518 replies","actions":[]}"#;
+        let (model, _) = Sequenced::new(&[open, done]);
+        let (decider, questions, states) = Asked::recording(&[(ASK_DONE, 0.9)]);
+        let agent = Agent::new(Config { max_stale: 100, ..Config::default() }, model).with_decider(decider);
+        let id = agent.start(Task::new("open the discussion with the most replies"), Profile::default());
+        let mut list = look(false, &[]);
+        list.url = "https://forum.test/top?order=replies".into();
+        assert_eq!(agent.step(&id, list).unwrap().status, Status::Working);
+        let mut thread = look(true, &["s1a1"]);
+        thread.url = "https://forum.test/t/the-banter-thread".into();
+        assert_eq!(agent.step(&id, thread).unwrap().status, Status::Done);
+        let states = states.lock().unwrap();
+        let (images, text) = states.last().unwrap();
+        assert_eq!(*images, 2, "the look before and this one: {text}");
+        assert!(text.contains("The look before this one was on another page, https://forum.test/top?order=replies"), "{text}");
+        assert!(questions.lock().unwrap().iter().any(|q| q.contains("the two together show the task done")));
     }
 
     #[test]

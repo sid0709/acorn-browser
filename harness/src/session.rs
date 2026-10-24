@@ -11,7 +11,7 @@ use crate::focus::FocusTarget;
 use crate::gate::{CommitState, FieldHold, ListHold};
 use crate::map::{Coverage, Settled};
 use crate::memory::Memory;
-use crate::observe::{ActionResult, Viewport};
+use crate::observe::{ActionResult, Observation, Viewport};
 use crate::ports::Usage;
 use crate::profile::Profile;
 use crate::review::{Expectation, Reviews};
@@ -21,6 +21,18 @@ use crate::todo::FieldState;
 use crate::trace::{CheckTrace, ModelCall};
 
 /// One application of the harness to one task, from the first look to the end.
+/// A look kept for the done check of the next: where it was and what it showed.
+#[derive(Clone, Debug, Default)]
+pub struct LastLook {
+    pub url: String,
+    /// The map's text in DOM mode; `None` in image mode, where the picture stands for it.
+    pub map: Option<String>,
+    pub screenshot: String,
+}
+
+/// The most characters of a look's map kept for the next look's done check.
+const LAST_LOOK_MAP_CHARS: usize = 12_000;
+
 #[derive(Debug)]
 pub struct Session {
     pub id: String,
@@ -71,6 +83,10 @@ pub struct Session {
     pub picture_due: Option<String>,
     /// What the model said, at the end, a run on this site should know next time.
     pub learned: Vec<String>,
+    /// The look before this one: its address and, in DOM mode, its map's text, in image mode
+    /// its picture. A "done" whose proof spans two pages (a list sorted and its top item named
+    /// there, that item open here) is checked against both.
+    pub last_look: Option<LastLook>,
     /// How many checks in a row the checker could not tell: the second asks for a picture.
     pub unsure_checks: u32,
     /// The click that sends the page, as the last plan kept it; how many times a send was held
@@ -200,6 +216,7 @@ impl Session {
             last_plan_read_only: false,
             picture_due: None,
             learned: Vec::new(),
+            last_look: None,
             unsure_checks: 0,
             commit: CommitState::default(),
             list_hold: ListHold::default(),
@@ -261,6 +278,15 @@ impl Session {
     /// Whether the run has used its steps.
     pub fn at_step_limit(&self) -> bool {
         self.step >= self.step_limit
+    }
+
+    /// Keeps this look for the done check of the next, which may read the two together.
+    pub(crate) fn remember_look(&mut self, obs: &Observation, map: Option<String>) {
+        self.last_look = Some(LastLook {
+            url: obs.url.clone(),
+            screenshot: if map.is_none() { obs.screenshot.clone() } else { String::new() },
+            map: map.map(|text| crate::model::clip_text(&text, LAST_LOOK_MAP_CHARS)),
+        });
     }
 
     pub fn touch(&mut self) {

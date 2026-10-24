@@ -71,22 +71,35 @@ impl Sure {
     }
 }
 
-/// Answers as `Sure` does, and keeps the wording of every question it was asked.
+/// Answers as `Sure` does, and keeps the wording of every question it was asked, and what
+/// state each decision showed it (how many pictures, and its texts joined).
 pub(crate) struct Asked {
     sure: Sure,
     pub questions: Arc<Mutex<Vec<String>>>,
+    pub states: Arc<Mutex<Vec<(usize, String)>>>,
 }
 
 impl Asked {
     pub fn of(answers: &[(&str, f64)]) -> (Box<Asked>, Arc<Mutex<Vec<String>>>) {
+        let (asked, questions, _) = Self::recording(answers);
+        (asked, questions)
+    }
+
+    /// The decider, the questions it is asked, and the states it is shown.
+    pub fn recording(answers: &[(&str, f64)]) -> (Box<Asked>, Arc<Mutex<Vec<String>>>, Arc<Mutex<Vec<(usize, String)>>>) {
         let questions = Arc::new(Mutex::new(Vec::new()));
-        (Box::new(Asked { sure: *Sure::of(answers), questions: questions.clone() }), questions)
+        let states = Arc::new(Mutex::new(Vec::new()));
+        (Box::new(Asked { sure: *Sure::of(answers), questions: questions.clone(), states: states.clone() }), questions, states)
     }
 }
 
 impl Decider for Asked {
     fn decide(&self, decision: Decision) -> Result<Verdicts, Error> {
+        use crate::ports::Part;
         self.questions.lock().unwrap().extend(decision.questions.values().map(|q| q.instructions.clone()));
+        let images = decision.state.iter().filter(|part| matches!(part, Part::Image(_))).count();
+        let texts = decision.state.iter().filter_map(|part| if let Part::Text(text) = part { Some(text.as_str()) } else { None }).collect::<Vec<_>>().join("\n");
+        self.states.lock().unwrap().push((images, texts));
         self.sure.decide(decision)
     }
 

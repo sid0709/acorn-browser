@@ -7,6 +7,44 @@ and why that rather than a patch; and what the bench said afterwards. A commit m
 the what; this log keeps the why, so that a rule in the code can be traced to the run that
 asked for it. Newest first.
 
+## 2026-10-24 — The done check reads the look before, when the proof spans two pages
+
+Branch `fix/done-check-two-pages`. Left open by stage 2 and seen in every run since.
+
+**Observed.** L3 (the discussion with the most replies) found The Banter Thread on the list
+sorted by replies and opened it in run after run (`20261023-162044`, `20261024-044650`,
+`20261024-045348`), and ended `stuck` each time: the thread's page shows its posts, not its
+reply count, so the done check, which reads the page the run is on, could not confirm "the
+most replies", and two "done"s were sent back. The judge, reading the screenshots in order,
+passed the same runs. The model also spent five to ten steps going back to the list to show
+both, which the prompt now tells it not to do.
+
+**Cause.** `hold_done` gave the decision model the current page alone. A proof that spans two
+pages (a list sorted by the quality the task names, then the item at its top opened) has no
+single page that shows it.
+
+**Changed.** The session keeps the look before (its address, and its map's text in DOM mode or
+its picture in image mode). When the "done" comes on another page than that look, the done
+check is shown the look before first, told the task may have been done across the two, and
+asked to read them together. A test runs the list-then-thread case through the gate.
+
+**Bench after.** `bench/results/20261024-050621.md`, DOM mode, the site notes of the two runs
+before known: every mission ended `done` for the first time; 4 of 5 on the screen, 3 of 5
+answers right, 305 s of which 162 s waiting on the models (from 467 s at stage 2 and 951 s at
+stage 0). L3 done in 7 steps and 86 s, the list-then-thread proof confirmed. L4 done in 2 steps
+and 16 s: its note named the checker's result page and the model went straight to it; the
+screen judge failed that for not showing the answers given on the way, the answer judge
+passed it. L5 done and passed on the screen in 10 steps: the note from its stuck run ("a
+timestamp address opens a capture directly") took it to the capture of 1 January 2005. L1 64 s,
+L2 51 s. The harness's own time came to about 4.6 s a step over 31 steps.
+
+**Left open.** The provider's latency is now half the time (162 s of 305 s, about 5 s a call);
+the harness's 4.6 s a step is the next thing to measure part by part (the settle after an
+action, the map, the picture). A note that names the page with the answer takes the bench's
+judge by surprise when the mission asks to "show the page that says so" and the judge wants
+the way there as well; the mission's key points, or the judge's screenshot choice, may need to
+say which.
+
 ## 2026-10-24 — Stage 4 of the agent plan: site notes, what a run leaves for the next run on the site
 
 Branch `feat/site-notes`. The plan's stage 4 has two parts, the model tiers and the site
