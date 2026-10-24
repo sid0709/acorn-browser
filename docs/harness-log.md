@@ -7,6 +7,29 @@ and why that rather than a patch; and what the bench said afterwards. A commit m
 the what; this log keeps the why, so that a rule in the code can be traced to the run that
 asked for it. Newest first.
 
+## 2026-10-24 — The done check reads the look before, when the proof spans two pages
+
+Branch `fix/done-check-two-pages`. Left open by stage 2 and seen in every run since.
+
+**Observed.** L3 (the discussion with the most replies) found The Banter Thread on the list
+sorted by replies and opened it in run after run (`20261023-162044`, `20261024-044650`,
+`20261024-045348`), and ended `stuck` each time: the thread's page shows its posts, not its
+reply count, so the done check, which reads the page the run is on, could not confirm "the
+most replies", and two "done"s were sent back. The judge, reading the screenshots in order,
+passed the same runs. The model also spent five to ten steps going back to the list to show
+both, which the prompt now tells it not to do.
+
+**Cause.** `hold_done` gave the decision model the current page alone. A proof that spans two
+pages (a list sorted by the quality the task names, then the item at its top opened) has no
+single page that shows it.
+
+**Changed.** The session keeps the look before (its address, and its map's text in DOM mode or
+its picture in image mode). When the "done" comes on another page than that look, the done
+check is shown the look before first, told the task may have been done across the two, and
+asked to read them together. A test runs the list-then-thread case through the gate.
+
+**Bench after.** (filled in once the five levels have run)
+
 ## 2026-10-24 — Stage 4 of the agent plan: site notes, what a run leaves for the next run on the site
 
 Branch `feat/site-notes`. The plan's stage 4 has two parts, the model tiers and the site
