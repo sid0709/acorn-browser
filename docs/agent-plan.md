@@ -16,7 +16,8 @@ Status: stage 0 is done (`feat/answer-in-words`, #17), stage 1 is done (`feat/in
 #18: the reading of the request runs while the site opens, and the intake may go to a faster
 model), stage 2 is done (`feat/whole-page-map`, #19) and stage 3 is done (`feat/hybrid-pictures`:
 `--mode hybrid`, a picture on a signal; on the five bench pages it scores as DOM mode does
-and is the mode for pages the map cannot read). Stage 4 is next. The measurements shaped stage 2:
+and is the mode for pages the map cannot read). Stage 4's site notes are in progress
+(`feat/site-notes`); its model tiers wait for a fast model to be named. The measurements shaped stage 2:
 the `read` move needed no new move, since the map holds every node of the page and only
 rendered one screen of it, so the map now lists the whole page and the model acts on any node
 by number without scrolling; the person's messages needed only a way to reach the runner,

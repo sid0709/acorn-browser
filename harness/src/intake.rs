@@ -61,11 +61,14 @@ struct RawSheet {
     summary: String,
 }
 
-/// Asks the model for the sheet of a request.
-pub fn understand(model: &dyn Model, request: &str, profile: &Profile) -> Result<Sheet, Error> {
+/// Asks the model for the sheet of a request. `site_notes` is what earlier runs learned of the
+/// site the request names, when it names one: the sheet starts on the page that answered a
+/// request like it before.
+pub fn understand(model: &dyn Model, request: &str, profile: &Profile, site_notes: &[String]) -> Result<Sheet, Error> {
     let mut values: BTreeMap<&str, String> = BTreeMap::new();
     values.insert("request", request.trim().to_string());
     values.insert("profile", profile.facts.trim().to_string());
+    values.insert("site_notes", site_notes.iter().map(|line| format!("- {}", line.trim())).collect::<Vec<_>>().join("\n"));
     let response = model.complete(ModelRequest {
         messages: vec![Message { role: Role::User, text: render(INTAKE_TEMPLATE, &values), images: vec![], cache: false }],
         schema_name: "task_sheet".to_string(),
@@ -198,7 +201,7 @@ mod tests {
     #[test]
     fn a_request_becomes_a_sheet_that_fills_what_the_task_lacks() {
         let model = Fixed(r#"{"start_url":"https://excalidraw.com","done_when":"the canvas shows a flowchart","approach":["If a shape tool is in view, pick the rectangle first.","  ","Join the boxes with the arrow tool."],"watch_out":["A library panel may cover the canvas; close it."],"allow":{"send":"ask","pay":"never","post":"auto","delete":"ask","create_account":"ask"},"relentless":true,"summary":"Draw a flowchart in Excalidraw"}"#);
-        let sheet = understand(&model, "draw a flowchart of a login flow in excalidraw", &Profile::new("")).unwrap();
+        let sheet = understand(&model, "draw a flowchart of a login flow in excalidraw", &Profile::new(""), &[]).unwrap();
         assert_eq!(sheet.start_url.as_deref(), Some("https://excalidraw.com"));
         assert_eq!(sheet.allowances.get(&Irreversible::Post), Some(&Allowance::Auto));
         assert!(sheet.relentless);
@@ -221,9 +224,9 @@ mod tests {
     #[test]
     fn an_address_that_is_not_one_is_dropped() {
         let model = Fixed(r#"{"start_url":"excalidraw","done_when":"","allow":{},"relentless":false,"summary":""}"#);
-        let sheet = understand(&model, "draw a flowchart", &Profile::new("")).unwrap();
+        let sheet = understand(&model, "draw a flowchart", &Profile::new(""), &[]).unwrap();
         assert_eq!(sheet.start_url, None);
         let bad = Fixed("not json");
-        assert!(understand(&bad, "draw a flowchart", &Profile::new("")).is_err());
+        assert!(understand(&bad, "draw a flowchart", &Profile::new(""), &[]).is_err());
     }
 }

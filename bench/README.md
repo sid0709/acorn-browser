@@ -12,7 +12,13 @@ bench/run.py --only L4-govuk-visa --repeat 2
 bench/run.py --missions bench/missions/basics --no-judge
 bench/run.py --mode both              # each mission in image mode, then in DOM mode
 bench/run.py --mode hybrid            # the map, and a picture when a signal asks for one
+bench/run.py --no-notes               # every mission as a first run on its site: no site notes read or kept
 ```
+
+A run is given what earlier runs learned of its site (the runner keeps `site-notes.json` in
+the app's data folder: the address of the page that answered, a control that mattered, a trap)
+and leaves what it learned for the next. The second run of a mission is therefore the number
+to compare with a rival that has seen the site before; `--no-notes` measures the first.
 
 ## The missions
 

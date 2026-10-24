@@ -109,7 +109,8 @@ def run_mission(runner, task_file, trace_dir, extra):
             row["run"] = event.get("run", "")
             row["mode"] = event.get("mode", "")
             row["first_look"] = float(event.get("seconds", 0))
-            print(f"  first look after {row['first_look']:.0f} s")
+            notes = int(event.get("siteNotes", 0))
+            print(f"  first look after {row['first_look']:.0f} s" + (f", with {notes} notes of the site" if notes else ""))
         elif kind == "understood":
             row["understood"] = event.get("summary", "")
             print(f"  understood after {float(event.get('seconds', 0)):.0f} s: {row['understood']}  [{event.get('startUrl') or '(current page)'}]")
@@ -127,6 +128,8 @@ def run_mission(runner, task_file, trace_dir, extra):
             row["answer"] = event.get("answer", "") or ""
             row["seconds"] = float(event.get("seconds", 0))
             row["model_seconds"] = float(event.get("modelSeconds", 0))
+            for line in event.get("learned") or []:
+                print(f"  learned: {line}")
             row["cost"] = float(event.get("cost", 0))
         elif kind == "error":
             row["status"] = "error"
@@ -290,6 +293,7 @@ def main():
     parser.add_argument("--mode", choices=["image", "dom", "hybrid", "both"], default="image", help="how the model sees the page: a screenshot (image), the page map and no picture (dom), the map with a picture when a signal asks for one (hybrid), or each mission in image and DOM mode, one after the other (both)")
     parser.add_argument("--no-site", action="store_true", help="do not give the runner the mission's site: it must find it from the request")
     parser.add_argument("--no-judge", action="store_true", help="skip the judge; the agent's own verdict is the score")
+    parser.add_argument("--no-notes", action="store_true", help="give the runner no site notes from earlier runs, and keep none: every mission as a first run on its site")
     args = parser.parse_args()
 
     runner = find_runner(args.runner)
@@ -305,6 +309,8 @@ def main():
         extra += ["--intake-model", args.intake_model]
     if args.decider:
         extra += ["--decider", args.decider]
+    if args.no_notes:
+        extra += ["--no-site-notes"]
     modes = ["image", "dom"] if args.mode == "both" else [args.mode]
     key = "" if args.no_judge else read_key()
     if not args.no_judge and not key:
