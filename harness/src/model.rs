@@ -52,6 +52,10 @@ pub struct Reply {
     /// a task that asks for a state rather than a fact, what was done and what the page shows.
     #[serde(default)]
     pub answer: Option<String>,
+    /// With a status that ends the run: what a run on this site should know next time, one to
+    /// three lines: the address of the page that answered, a control that mattered, a trap.
+    #[serde(default)]
+    pub learned: Option<Vec<String>>,
     /// Why the run ends for the person, when it does.
     #[serde(default)]
     pub stop: Option<StopInfo>,
@@ -544,6 +548,7 @@ pub fn reply_schema(survey: bool, checks: bool, dom: bool, points: bool) -> Valu
         ("message", string.clone()),
         ("proof", null_string.clone()),
         ("answer", null_string.clone()),
+        ("learned", json!({"type": ["array", "null"], "items": {"type": "string"}})),
         ("stop", stop),
         ("question", null_string.clone()),
         ("assumed", json!({"type": ["array", "null"], "items": {"type": "string"}})),
@@ -679,13 +684,15 @@ mod tests {
         assert_eq!(reply.status, Status::Working);
         assert_eq!(reply.actions[0].kind, "wait");
         assert!(parse_reply("").is_err());
-        let reply = parse_reply("{\"status\":\"done\",\"message\":\"\",\"proof\":\"the row shows 25 kg\",\"answer\":\"Economy Classic: 25 kg\",\"actions\":[]}").unwrap();
+        let reply = parse_reply("{\"status\":\"done\",\"message\":\"\",\"proof\":\"the row shows 25 kg\",\"answer\":\"Economy Classic: 25 kg\",\"learned\":[\"The table is at /en/baggage/allowance.html\"],\"actions\":[]}").unwrap();
         assert_eq!(reply.proof.as_deref(), Some("the row shows 25 kg"));
         assert_eq!(reply.answer.as_deref(), Some("Economy Classic: 25 kg"));
+        assert_eq!(reply.learned.as_deref(), Some(&["The table is at /en/baggage/allowance.html".to_string()][..]));
         let schema = reply_schema(true, true, false, false).to_string();
         assert!(schema.find("\"observation\"").unwrap() < schema.find("\"actions\"").unwrap());
         assert!(schema.contains("\"proof\""));
         assert!(schema.contains("\"answer\""));
+        assert!(schema.contains("\"learned\""));
         assert!(schema.contains("\"choose\""));
         assert!(schema.contains("\"survey\""));
         assert!(schema.contains("\"needs_person\""));

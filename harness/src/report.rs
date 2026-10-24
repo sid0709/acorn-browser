@@ -44,6 +44,10 @@ pub struct Report {
     /// The model's own notes at the end.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub memo: String,
+    /// What a run on this site should know next time, in the model's words, for the site's
+    /// notes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub learned: Vec<String>,
 }
 
 impl Session {
@@ -71,6 +75,7 @@ impl Session {
             left: self.fields.iter().filter(|f| matches!(f.state, FieldStatus::Empty | FieldStatus::NeedsPerson)).cloned().collect(),
             questions: self.questions.clone(),
             memo: self.memo.clone(),
+            learned: self.learned.clone(),
         }
     }
 }
@@ -94,7 +99,7 @@ mod tests {
 
     #[test]
     fn the_end_report_carries_what_was_assumed_and_asked() {
-        let reply = r#"{"status":"done","message":"Ordered.","answer":"A kettle was ordered with standard delivery.","assumed":["Chose standard delivery"," Chose standard delivery ","Left the gift note empty"],"question":"Did you want a gift note?","actions":[]}"#;
+        let reply = r#"{"status":"done","message":"Ordered.","answer":"A kettle was ordered with standard delivery.","learned":["The checkout asks for a gift note last"," ",""],"assumed":["Chose standard delivery"," Chose standard delivery ","Left the gift note empty"],"question":"Did you want a gift note?","actions":[]}"#;
         let (model, _) = Replying::new(reply);
         let agent = Agent::new(Config::default(), model);
         let id = agent.start(Task::new("buy a kettle"), Profile::default());
@@ -105,6 +110,7 @@ mod tests {
         assert_eq!(report.steps, 1);
         assert_eq!(report.assumed, vec!["Chose standard delivery", "Left the gift note empty"]);
         assert_eq!(report.questions.len(), 1);
+        assert_eq!(report.learned, vec!["The checkout asks for a gift note last"]);
         assert_eq!(agent.report(&id).unwrap(), report);
     }
 }

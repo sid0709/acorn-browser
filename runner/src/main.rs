@@ -14,6 +14,8 @@
 //!   --profile <file>         who the run acts as (default: profile.md in the app's data folder)
 //!   --trace <dir>            where to write the run's trace (default: traces/ in the current folder)
 //!   --env-file <file>        a file of KEY=VALUE lines to read the keys from
+//!   --site-notes <file>      where what runs learn of each site is kept (default: site-notes.json in the
+//!                            app's data folder); --no-site-notes reads and keeps none
 //! ```
 //!
 //! The task file is the kit's: `key: value` lines between `---` markers, then the goal; a file
@@ -28,6 +30,7 @@
 
 mod browser;
 mod decide;
+mod notes;
 mod taskfile;
 
 use std::path::PathBuf;
@@ -65,6 +68,8 @@ struct Options {
     profile: PathBuf,
     trace: PathBuf,
     env_file: Option<PathBuf>,
+    /// Where what runs learn of each site is kept; `None` reads and keeps none.
+    site_notes: Option<PathBuf>,
 }
 
 /// The app's data folder, where its socket and settings live.
@@ -87,6 +92,7 @@ fn options() -> Result<Options, String> {
         profile: app_dir().join("profile.md"),
         trace: PathBuf::from("traces"),
         env_file: None,
+        site_notes: Some(app_dir().join("site-notes.json")),
     };
     let mut decider_named = false;
     while let Some(arg) = args.next() {
@@ -112,6 +118,8 @@ fn options() -> Result<Options, String> {
             "--profile" => out.profile = PathBuf::from(value("--profile")?),
             "--trace" => out.trace = PathBuf::from(value("--trace")?),
             "--env-file" => out.env_file = Some(PathBuf::from(value("--env-file")?)),
+            "--site-notes" => out.site_notes = Some(PathBuf::from(value("--site-notes")?)),
+            "--no-site-notes" => out.site_notes = None,
             "--help" | "-h" => return Err(USAGE.to_string()),
             other if other.starts_with("--") => return Err(format!("unknown option {other}\n{USAGE}")),
             other => out.task = PathBuf::from(other),
@@ -129,7 +137,7 @@ fn options() -> Result<Options, String> {
     Ok(out)
 }
 
-const USAGE: &str = "usage: acorn-runner <task.md> [--socket <path>] [--model <id>] [--intake-model <id>] [--decider <id>|none] [--decisions openrouter|openai] [--reasoning <effort>] [--mode image|dom|hybrid] [--profile <file>] [--trace <dir>] [--env-file <file>]";
+const USAGE: &str = "usage: acorn-runner <task.md> [--socket <path>] [--model <id>] [--intake-model <id>] [--decider <id>|none] [--decisions openrouter|openai] [--reasoning <effort>] [--mode image|dom|hybrid] [--profile <file>] [--trace <dir>] [--env-file <file>] [--site-notes <file> | --no-site-notes]";
 
 /// Prints one event for the app.
 fn emit(event: Value) {
@@ -205,6 +213,15 @@ fn run() -> Result<i32, String> {
     // names its site, the two go on at the same time, and the first look comes when the slower
     // of them is done, not after both. The reading may go to a model of its own, a faster one.
     let profile = Profile::new(facts.clone());
+    // What earlier runs learned of the site, when the task names it: the intake reads it too.
+    let store = options.site_notes.as_deref().map(notes::load);
+    let notes_of = |url: Option<&str>| -> Vec<String> {
+        match (&store, url) {
+            (Some(store), Some(url)) => notes::for_site(store, &notes::site_of(url)),
+            _ => Vec::new(),
+        }
+    };
+    loaded.task.site_notes = notes_of(loaded.task.start_url.as_deref());
     let reader = options.intake_model.as_ref().filter(|m| *m != &options.model).map(|m| Metered {
         inner: OpenRouter::new(key.clone(), m.clone(), OPENROUTER_URL, options.reasoning.clone(), Box::new(UreqTransport::default())),
         meter: model_meter.clone(),
@@ -216,26 +233,27 @@ fn run() -> Result<i32, String> {
         }
         Ok(browser)
     };
-    let read = |goal: &str| {
+    let read = |goal: &str, site_notes: &[String]| {
         let model: &dyn harness::ports::Model = match &reader {
             Some(reader) => reader,
             None => &model,
         };
-        intake::understand(model, goal, &profile).map_err(|e| format!("The request could not be understood: {e}"))
+        intake::understand(model, goal, &profile, site_notes).map_err(|e| format!("The request could not be understood: {e}"))
     };
     let (sheet, browser) = if !intake::needed(&loaded.task) {
         (None, connect(loaded.task.start_url.as_deref())?)
     } else if let Some(site) = loaded.task.start_url.clone() {
         std::thread::scope(|scope| -> Result<_, String> {
-            let reading = scope.spawn(|| read(&loaded.task.goal));
+            let reading = scope.spawn(|| read(&loaded.task.goal, &loaded.task.site_notes));
             let browser = connect(Some(&site));
             let sheet = reading.join().map_err(|_| "The request could not be understood: the reading stopped".to_string())??;
             Ok((Some(sheet), browser?))
         })?
     } else {
-        // The sheet names the site, so it comes first.
-        let sheet = read(&loaded.task.goal)?;
+        // The sheet names the site, so it comes first; the site's notes come with it.
+        let sheet = read(&loaded.task.goal, &[])?;
         intake::apply(&sheet, &mut loaded.task);
+        loaded.task.site_notes = notes_of(loaded.task.start_url.as_deref());
         (Some(sheet), connect(loaded.task.start_url.as_deref())?)
     };
     if let Some(sheet) = &sheet {
@@ -261,12 +279,14 @@ fn run() -> Result<i32, String> {
     let max_steps = loaded.task.persistence.max_steps;
     let mode_name = serde_json::to_value(loaded.task.mode).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
     let goal_line = loaded.task.goal.lines().next().unwrap_or("").to_string();
+    let goal = loaded.task.goal.clone();
     let start_url = loaded.task.start_url.clone();
+    let site_notes = loaded.task.site_notes.len();
     let id = agent.start(loaded.task, Profile::new(facts));
     emit(json!({
         "event": "start", "run": id, "goal": goal_line, "startUrl": start_url, "model": options.model, "mode": mode_name,
         "checker": options.decider, "maxSteps": max_steps, "trace": options.trace.join(&id).display().to_string(),
-        "seconds": started.elapsed().as_secs_f64(),
+        "seconds": started.elapsed().as_secs_f64(), "siteNotes": site_notes,
     }));
 
     // The person may write while the run goes on: the app sends each message as a JSON line
@@ -307,7 +327,23 @@ fn run() -> Result<i32, String> {
         survey = step.survey;
         browser.after(&step);
     };
-    emit(end_event(&last, started.elapsed().as_secs_f64(), model_meter.read(), check_meter.read()));
+    // What the run learned of the site is kept for the next run there.
+    let learned = last.report.as_ref().map(|r| r.learned.clone()).unwrap_or_default();
+    if let (Some(path), Some(mut store), Some(url)) = (options.site_notes.as_deref(), store, start_url.as_deref())
+        && !learned.is_empty()
+    {
+        let today = harness::trace::rfc3339(std::time::SystemTime::now())[..10].to_string();
+        if notes::learn(&mut store, &notes::site_of(url), &learned, &goal, &today) > 0
+            && let Err(why) = notes::save(path, &store)
+        {
+            eprintln!("The site notes could not be kept: {why}");
+        }
+    }
+    let mut end = end_event(&last, started.elapsed().as_secs_f64(), model_meter.read(), check_meter.read());
+    if !learned.is_empty() {
+        end["learned"] = json!(learned);
+    }
+    emit(end);
     Ok(if last.status == Status::Done { 0 } else { 1 })
 }
 

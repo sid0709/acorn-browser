@@ -7,6 +7,36 @@ and why that rather than a patch; and what the bench said afterwards. A commit m
 the what; this log keeps the why, so that a rule in the code can be traced to the run that
 asked for it. Newest first.
 
+## 2026-10-24 — Stage 4 of the agent plan: site notes, what a run leaves for the next run on the site
+
+Branch `feat/site-notes`. The plan's stage 4 has two parts, the model tiers and the site
+notes; the notes come first, since every run so far began each site from nothing, and the
+rival's advantage on a second visit would be the same as ours.
+
+**Observed.** Each run on the bench found the same things again: that the baggage table is at
+`/en/baggage/allowance.html`, that the forum lives at `discussions.flightaware.com` and sorts
+by replies through the Replies column after the All time filter, that `web/2005/` on the
+Wayback Machine is the last capture of 2005 and `web/20050101/` the nearest to the day. L3's
+wrong pick in `20261023-151826` (the top row before the sort) and L5's wrong capture in
+`20261023-145326` were both things an earlier run had learned and lost.
+
+**Changed.**
+1. The reply has `learned`, with a status that ends the run: one to three lines a run on this
+   site should know next time, each a fact of the site, not of the task (an address, a control
+   that mattered, a trap), never a guess. The harness keeps up to three in the session and the
+   report (`Report.learned`); the runner's end event carries them.
+2. The runner keeps them by site (`site-notes.json` in the app's data folder; `--site-notes
+   <file>`, `--no-site-notes`): the site is the last two labels of the host, a line is kept
+   once (a known line moves to the front), newest first, twelve per site, eight shown to a run.
+3. A run is given its site's notes with the task (`Task.site_notes`), which the prompts show
+   as "What earlier runs learned of this site (use it, and trust the page over it when they
+   differ)"; the intake reads them too, and takes the address of the page that answered a
+   request like this one as the start address.
+4. The bench passes `--no-notes` to run every mission as a first run, and prints the notes
+   known at the start and the lines learned at the end.
+
+**Bench after.** (filled in once the five levels have run twice: once learning, once knowing)
+
 ## 2026-10-23 — Stage 3 of the agent plan: a picture when the map is not enough (hybrid mode)
 
 Branch `feat/hybrid-pictures`. DOM mode has no picture by design, so the bench is honest

@@ -39,6 +39,10 @@ pub struct Task {
     pub survey: bool,
     /// How the model sees the page: as a screenshot, or as the page map and no picture.
     pub mode: Mode,
+    /// What earlier runs learned of the site the task is on: the address of the page that
+    /// answered, a control that mattered, a trap. Shown to the model, which trusts the page
+    /// over them. Empty for a first run.
+    pub site_notes: Vec<String>,
 }
 
 /// The two ways the model sees a page.
@@ -72,6 +76,7 @@ impl Task {
             allowances: BTreeMap::new(),
             survey: true,
             mode: Mode::Image,
+            site_notes: Vec::new(),
         }
     }
 

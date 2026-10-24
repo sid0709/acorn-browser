@@ -740,6 +740,11 @@ impl Agent {
         let dropped = withheld;
         let survey = reply.status == Status::Working && self.survey_next(s, survey_asked);
         s.last_plan_read_only = !actions.is_empty() && actions.iter().all(|a| matches!(a.kind, Kind::Read));
+        if reply.status != Status::Working
+            && let Some(learned) = &reply.learned
+        {
+            s.learned = learned.iter().map(|line| line.trim()).filter(|line| !line.is_empty()).take(MAX_LEARNED).map(|line| model::clip_text(line, MAX_LEARNED_CHARS)).collect();
+        }
         if hybrid && actions.iter().any(|a| matches!(a.kind, Kind::Drag { .. })) {
             s.picture_due = Some("a drag was made, which the map cannot show the effect of".to_string());
         }
@@ -811,6 +816,9 @@ impl Agent {
 /// Fewer nodes than this in a map is too thin for a page a person would read: in hybrid mode
 /// a picture comes with it.
 const THIN_MAP_NODES: usize = 6;
+/// The most lines, and characters a line, a run may leave for the next run on the site.
+const MAX_LEARNED: usize = 3;
+const MAX_LEARNED_CHARS: usize = 240;
 /// What the browser says of an action that missed what it aimed at: a sign the map and the
 /// screen disagree, which in hybrid mode asks for a picture.
 const MISSED_AIM: &[&str] = &["is covered by", "has no size on the screen", "is no longer on the page", "could not be scrolled"];
